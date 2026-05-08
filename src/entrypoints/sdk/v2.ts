@@ -102,6 +102,13 @@ export type SDKSessionOptions = {
   onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
+  /** Custom system prompt for persistent SDK sessions. */
+  systemPrompt?:
+    | string
+    | { type: 'preset'; preset: string; append?: string }
+    | { type: 'custom'; content: string }
+  /** When true, yields stream_event messages for token-by-token streaming. */
+  includePartialMessages?: boolean
 }
 
 /**
@@ -516,6 +523,16 @@ function createEngineFromOptions(
     sessionId,
   )
 
+  let customSystemPrompt: string | undefined
+  let appendSystemPrompt: string | undefined
+  if (typeof options.systemPrompt === 'string') {
+    customSystemPrompt = options.systemPrompt
+  } else if (options.systemPrompt?.type === 'custom') {
+    customSystemPrompt = options.systemPrompt.content
+  } else if (options.systemPrompt?.type === 'preset' && options.systemPrompt.append) {
+    appendSystemPrompt = options.systemPrompt.append
+  }
+
   // Abort controller
   const ac = abortController ?? new AbortController()
 
@@ -530,9 +547,12 @@ function createEngineFromOptions(
     getAppState: () => appStateStore.getState(),
     setAppState: (f: (prev: AppState) => AppState) => appStateStore.setState(f),
     readFileCache,
+    customSystemPrompt,
+    appendSystemPrompt,
     userSpecifiedModel: model,
     abortController: ac,
     thinkingConfig,
+    includePartialMessages: options.includePartialMessages ?? false,
     ...(initialMessages ? { initialMessages } : {}),
   }
 

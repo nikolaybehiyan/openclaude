@@ -71,6 +71,24 @@ describe('V2: session creation', () => {
     })
     expect(session.sessionId).toBeDefined()
   })
+
+  test('createSession() accepts includePartialMessages for streaming hosts', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      includePartialMessages: true,
+    })
+    expect(session.sessionId).toBeDefined()
+    expect((session as any)._engine?.config?.includePartialMessages).toBe(true)
+  })
+
+  test('createSession() accepts custom system prompt for persistent hosts', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      systemPrompt: { type: 'custom', content: 'Use the project voice' },
+    })
+    expect(session.sessionId).toBeDefined()
+    expect((session as any)._engine?.config?.customSystemPrompt).toBe('Use the project voice')
+  })
 })
 
 describe('V2: session interrupt', () => {

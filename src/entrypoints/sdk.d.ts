@@ -378,6 +378,13 @@ export type SDKSessionOptions = {
   onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
+  /** Custom system prompt for persistent SDK sessions. */
+  systemPrompt?:
+    | string
+    | { type: 'preset'; preset: string; append?: string }
+    | { type: 'custom'; content: string }
+  /** When true, yields stream_event messages for token-by-token streaming. */
+  includePartialMessages?: boolean
 }
 
 export interface SDKSession {
