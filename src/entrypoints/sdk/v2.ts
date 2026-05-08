@@ -19,6 +19,7 @@ import {
 } from '../../Tool.js'
 import { getTools } from '../../tools.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
+import type { ThinkingConfig } from '../../utils/thinking.js'
 import { init } from '../init.js'
 import {
   resolveSessionFilePath,
@@ -107,6 +108,8 @@ export type SDKSessionOptions = {
     | string
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Thinking configuration for persistent SDK sessions. */
+  thinkingConfig?: ThinkingConfig
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
 }
@@ -497,11 +500,11 @@ function createEngineFromOptions(
   // thinkingEnabled defaults to true via getDefaultAppState() -> shouldEnableThinkingByDefault()
   // Explicit false disables thinking, undefined defaults to enabled (adaptive mode)
   const thinkingEnabled = stateWithPermissions.thinkingEnabled ?? true
-  const thinkingConfig = thinkingEnabled
+  const thinkingConfig = options.thinkingConfig ?? (thinkingEnabled
     ? (stateWithPermissions.thinkingBudgetTokens
       ? { type: 'enabled' as const, budgetTokens: stateWithPermissions.thinkingBudgetTokens }
       : { type: 'adaptive' as const })
-    : { type: 'disabled' as const }
+    : { type: 'disabled' as const })
 
   // Get tools filtered by permission context
   const tools = getTools(permissionContext)

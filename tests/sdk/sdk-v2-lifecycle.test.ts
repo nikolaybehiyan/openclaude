@@ -89,6 +89,15 @@ describe('V2: session creation', () => {
     expect(session.sessionId).toBeDefined()
     expect((session as any)._engine?.config?.customSystemPrompt).toBe('Use the project voice')
   })
+
+  test('createSession() accepts explicit thinking config for persistent hosts', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      thinkingConfig: { type: 'disabled' },
+    })
+    expect(session.sessionId).toBeDefined()
+    expect((session as any)._engine?.config?.thinkingConfig).toEqual({ type: 'disabled' })
+  })
 })
 
 describe('V2: session interrupt', () => {

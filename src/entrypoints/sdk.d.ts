@@ -53,6 +53,11 @@ export type SDKAssistantMessageError =
   | 'unknown'
   | 'max_output_tokens'
 
+export type ThinkingConfig =
+  | { type: 'adaptive' }
+  | { type: 'enabled'; budgetTokens: number }
+  | { type: 'disabled' }
+
 export function sdkErrorFromType(
   errorType: SDKAssistantMessageError,
   message?: string,
@@ -383,6 +388,8 @@ export type SDKSessionOptions = {
     | string
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Thinking configuration for persistent SDK sessions. */
+  thinkingConfig?: ThinkingConfig
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
 }
