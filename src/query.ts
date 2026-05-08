@@ -189,6 +189,7 @@ export type QueryParams = {
   fallbackModel?: string
   querySource: QuerySource
   maxOutputTokensOverride?: number
+  temperatureOverride?: number
   maxTurns?: number
   skipCacheWrite?: boolean
   // API task_budget (output_config.task_budget, beta task-budgets-2026-03-13).
@@ -271,6 +272,7 @@ async function* queryLoop(
     canUseTool,
     fallbackModel,
     querySource,
+    temperatureOverride,
     maxTurns,
     skipCacheWrite,
   } = params
@@ -762,6 +764,7 @@ async function* queryLoop(
               hasAppendSystemPrompt:
                 !!toolUseContext.options.appendSystemPrompt,
               maxOutputTokensOverride,
+              temperatureOverride,
               fetchOverride: dumpPromptsFetch,
               mcpTools: appState.mcp.tools,
               hasPendingMcpServers: appState.mcp.clients.some(

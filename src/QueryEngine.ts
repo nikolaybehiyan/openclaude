@@ -141,6 +141,8 @@ export type QueryEngineConfig = {
   userSpecifiedModel?: string
   fallbackModel?: string
   thinkingConfig?: ThinkingConfig
+  maxOutputTokensOverride?: number
+  temperatureOverride?: number
   maxTurns?: number
   maxBudgetUsd?: number
   taskBudget?: { total: number }
@@ -215,6 +217,8 @@ export class QueryEngine {
       mcpClients,
       verbose = false,
       thinkingConfig,
+      maxOutputTokensOverride,
+      temperatureOverride,
       maxTurns,
       maxBudgetUsd,
       taskBudget,
@@ -680,6 +684,8 @@ export class QueryEngine {
       fallbackModel,
       querySource: 'sdk',
       maxTurns,
+      maxOutputTokensOverride,
+      temperatureOverride,
       taskBudget,
     })) {
       // Record assistant, user, and compact boundary messages
@@ -1328,6 +1334,8 @@ export async function* ask({
   mcpClients,
   verbose = false,
   thinkingConfig,
+  maxOutputTokensOverride,
+  temperatureOverride,
   maxTurns,
   maxBudgetUsd,
   taskBudget,
@@ -1359,6 +1367,8 @@ export async function* ask({
   verbose?: boolean
   mcpClients: MCPServerConnection[]
   thinkingConfig?: ThinkingConfig
+  maxOutputTokensOverride?: number
+  temperatureOverride?: number
   maxTurns?: number
   maxBudgetUsd?: number
   taskBudget?: { total: number }
@@ -1397,6 +1407,8 @@ export async function* ask({
     userSpecifiedModel,
     fallbackModel,
     thinkingConfig,
+    maxOutputTokensOverride,
+    temperatureOverride,
     maxTurns,
     maxBudgetUsd,
     taskBudget,

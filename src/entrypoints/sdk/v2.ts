@@ -110,6 +110,10 @@ export type SDKSessionOptions = {
     | { type: 'custom'; content: string }
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
+  /** Override max output tokens for the model request. */
+  maxOutputTokens?: number
+  /** Override request temperature when the API layer permits it. */
+  temperature?: number
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
 }
@@ -555,6 +559,8 @@ function createEngineFromOptions(
     userSpecifiedModel: model,
     abortController: ac,
     thinkingConfig,
+    maxOutputTokensOverride: options.maxOutputTokens,
+    temperatureOverride: options.temperature,
     includePartialMessages: options.includePartialMessages ?? false,
     ...(initialMessages ? { initialMessages } : {}),
   }

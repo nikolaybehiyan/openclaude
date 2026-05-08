@@ -98,6 +98,17 @@ describe('V2: session creation', () => {
     expect(session.sessionId).toBeDefined()
     expect((session as any)._engine?.config?.thinkingConfig).toEqual({ type: 'disabled' })
   })
+
+  test('createSession() accepts sampling overrides for persistent hosts', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      maxOutputTokens: 4096,
+      temperature: 1,
+    })
+    expect(session.sessionId).toBeDefined()
+    expect((session as any)._engine?.config?.maxOutputTokensOverride).toBe(4096)
+    expect((session as any)._engine?.config?.temperatureOverride).toBe(1)
+  })
 })
 
 describe('V2: session interrupt', () => {
