@@ -70,6 +70,7 @@ import {
 } from './transcript.js'
 import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
+import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
 
 // ============================================================================
 // V2 API Types
@@ -346,10 +347,12 @@ class SDKSessionImpl implements SDKSession {
         try {
           for await (const engineMsg of self.engine.submitMessage(content)) {
             yield engineMsg
+            yield* drainSdkEvents()
             yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
           }
-          // Final drain for timeout/failure messages that fired on the last engine yield
+          // Final drain for task/progress/timeout/failure messages that fired on the last engine yield
+          yield* drainSdkEvents()
           yield* self.drainTimeoutQueue()
           yield* self.drainAgentFailureQueue()
         } finally {
