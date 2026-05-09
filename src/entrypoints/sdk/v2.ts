@@ -73,6 +73,7 @@ import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
 import { getRunningTasks } from '../../utils/task/framework.js'
 import { isBackgroundTask } from '../../tasks/types.js'
+import { stopTask } from '../../tasks/stopTask.js'
 import { sleep } from '../../utils/sleep.js'
 
 // ============================================================================
@@ -162,6 +163,8 @@ export interface SDKSession {
   getMessages(): SDKMessage[]
   /** Abort the current in-flight query. */
   interrupt(): void
+  /** Stop one running background task by source task id. */
+  stopTask(taskId: string): Promise<SDKStopTaskResult>
   /** Close the session and release resources. */
   close(): void
   /**
@@ -178,6 +181,12 @@ export interface SDKSession {
  * Re-exports the full generated type from coreTypes.generated.ts.
  */
 export type SDKResultMessage = GeneratedSDKResultMessage
+
+export type SDKStopTaskResult = {
+  taskId: string
+  taskType: string
+  command: string | undefined
+}
 
 // ============================================================================
 // SdkMcpToolDefinition — tool() return type
@@ -416,6 +425,13 @@ class SDKSessionImpl implements SDKSession {
     }
     this.timeoutQueue.length = 0
     this.pendingPermissionPrompts.clear()
+  }
+
+  async stopTask(taskId: string): Promise<SDKStopTaskResult> {
+    return await stopTask(taskId, {
+      getAppState: () => this.appStateStore.getState(),
+      setAppState: (f: (prev: AppState) => AppState) => this.appStateStore.setState(f),
+    })
   }
 
   close(): void {

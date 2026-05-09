@@ -407,10 +407,18 @@ export interface SDKSession {
   sendMessage(content: string): AsyncIterable<SDKMessage>
   getMessages(): SDKMessage[]
   interrupt(): void
+  /** Stop one running background task by source task id. */
+  stopTask(taskId: string): Promise<SDKStopTaskResult>
   /** Close the session and release resources (MCP connections, etc.). */
   close(): void
   /** Respond to a pending permission prompt. */
   respondToPermission(toolUseId: string, decision: PermissionResult): void
+}
+
+export type SDKStopTaskResult = {
+  taskId: string
+  taskType: string
+  command: string | undefined
 }
 
 // ============================================================================
