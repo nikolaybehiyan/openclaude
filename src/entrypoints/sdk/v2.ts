@@ -71,6 +71,9 @@ import {
 import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
+import { getRunningTasks } from '../../utils/task/framework.js'
+import { isBackgroundTask } from '../../tasks/types.js'
+import { sleep } from '../../utils/sleep.js'
 
 // ============================================================================
 // V2 API Types
@@ -345,16 +348,30 @@ class SDKSessionImpl implements SDKSession {
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
 
         try {
+          let heldBackResult: SDKMessage | null = null
           for await (const engineMsg of self.engine.submitMessage(content)) {
-            yield engineMsg
+            if (engineMsg.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
+              heldBackResult = engineMsg
+            } else {
+              yield engineMsg
+            }
             yield* drainSdkEvents()
             yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
+          }
+          while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
+            yield* drainSdkEvents()
+            yield* self.drainTimeoutQueue()
+            yield* self.drainAgentFailureQueue()
+            await sleep(100, self._abortController?.signal, { unref: true })
           }
           // Final drain for task/progress/timeout/failure messages that fired on the last engine yield
           yield* drainSdkEvents()
           yield* self.drainTimeoutQueue()
           yield* self.drainAgentFailureQueue()
+          if (heldBackResult) {
+            yield heldBackResult
+          }
         } finally {
           self.timeoutQueue.length = 0
           self.agentFailureQueue.length = 0
@@ -367,6 +384,22 @@ class SDKSessionImpl implements SDKSession {
 
   getMessages(): SDKMessage[] {
     return this.engine.getMessages().map(msg => mapMessageToSDK(msg as Record<string, unknown>))
+  }
+
+  private hasRunningBackgroundTasks(): boolean {
+    const state = this.appStateStore.getState()
+    return getRunningTasks(state).some(
+      task => isBackgroundTask(task) && task.type !== 'in_process_teammate',
+    )
+  }
+
+  private shouldHoldResultForBackgroundTasks(): boolean {
+    const state = this.appStateStore.getState()
+    return getRunningTasks(state).some(
+      task =>
+        (task.type === 'local_agent' || task.type === 'local_workflow') &&
+        isBackgroundTask(task),
+    )
   }
 
   interrupt(): void {
