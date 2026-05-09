@@ -31,6 +31,7 @@ import { stat } from 'fs/promises'
 import {
   switchSession,
   runWithSdkContext,
+  setFlagSettingsInline,
 } from '../../bootstrap/state.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
@@ -67,6 +68,8 @@ import {
   buildConversationChain as buildChain,
   stripExtraFields as stripChainFields,
 } from './transcript.js'
+import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
+import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 
 // ============================================================================
 // V2 API Types
@@ -108,12 +111,16 @@ export type SDKSessionOptions = {
     | string
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Additional system prompt text appended after the selected base/custom prompt. */
+  appendSystemPrompt?: string
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
   /** Override max output tokens for the model request. */
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** In-memory flag settings for this session. Used by managed/headless hosts. */
+  settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
 }
@@ -271,6 +278,19 @@ class SDKSessionImpl implements SDKSession {
     const inner = runWithSdkContext(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+        if (self.options.settings?.sandbox) {
+          const unavailable = SandboxManager.getSandboxUnavailableReason()
+          if (unavailable) {
+            throw new Error(`Sandbox runtime is required but unavailable: ${unavailable}`)
+          }
+        }
+        await SandboxManager.initialize(async () => false)
+        if (
+          self.options.settings?.sandbox &&
+          !SandboxManager.isSandboxingEnabled()
+        ) {
+          throw new Error('Sandbox runtime is required but did not initialize')
+        }
 
         // Load agent definitions once (not on every sendMessage call)
         if (!self.agentsLoaded) {
@@ -476,6 +496,7 @@ function createEngineFromOptions(
   if (!cwd) {
     throw new Error('SDKSessionOptions requires cwd')
   }
+  applySessionFlagSettings(options.settings)
 
   // NOTE: cwd is NOT set on global state here. SDKSessionImpl.sendMessage()
   // sets/restores it per-message via the cwd mutex to prevent concurrent
@@ -539,6 +560,11 @@ function createEngineFromOptions(
   } else if (options.systemPrompt?.type === 'preset' && options.systemPrompt.append) {
     appendSystemPrompt = options.systemPrompt.append
   }
+  if (typeof options.appendSystemPrompt === 'string' && options.appendSystemPrompt.trim()) {
+    appendSystemPrompt = appendSystemPrompt
+      ? `${appendSystemPrompt}\n\n${options.appendSystemPrompt}`
+      : options.appendSystemPrompt
+  }
 
   // Abort controller
   const ac = abortController ?? new AbortController()
@@ -568,6 +594,14 @@ function createEngineFromOptions(
   const engine = new QueryEngine(engineConfig)
 
   return { engine, appStateStore, abortController: ac }
+}
+
+function applySessionFlagSettings(settings?: Record<string, unknown>): void {
+  if (!settings || Object.keys(settings).length === 0) {
+    return
+  }
+  setFlagSettingsInline(settings)
+  settingsChangeDetector.notifyChange('flagSettings')
 }
 
 // ============================================================================

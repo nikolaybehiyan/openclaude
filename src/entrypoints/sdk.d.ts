@@ -388,12 +388,16 @@ export type SDKSessionOptions = {
     | string
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Additional system prompt text appended after the selected base/custom prompt. */
+  appendSystemPrompt?: string
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
   /** Override max output tokens for the model request. */
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** In-memory flag settings for this session. Used by managed/headless hosts. */
+  settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
 }
