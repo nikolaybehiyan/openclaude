@@ -102,6 +102,7 @@ export type { Query } from './query.js'
 export type {
   SDKSessionOptions,
   SDKResultMessage,
+  SDKStopTaskResult,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'
