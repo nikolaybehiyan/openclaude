@@ -404,11 +404,19 @@ export type SDKSessionOptions = {
 
 export interface SDKSession {
   sessionId: string
-  sendMessage(content: string): AsyncIterable<SDKMessage>
+  sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  /** Regenerate an assistant response from an existing user message UUID. */
+  retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
+  /** Replace SDK session history with a host-provided active conversation path. */
+  unstable_syncMessages(messages: unknown[]): void
   getMessages(): SDKMessage[]
   interrupt(): void
   /** Stop one running background task by source task id. */
   stopTask(taskId: string): Promise<SDKStopTaskResult>
+  /** Generate a source-compatible AI session title from a first-message description. */
+  generateSessionTitle(description: string): Promise<string | null>
+  /** Answer a source-compatible side question using the last completed turn cache context. */
+  sideQuestion(question: string): Promise<SDKSideQuestionResult>
   /** Close the session and release resources (MCP connections, etc.). */
   close(): void
   /** Respond to a pending permission prompt. */
@@ -419,6 +427,11 @@ export type SDKStopTaskResult = {
   taskId: string
   taskType: string
   command: string | undefined
+}
+
+export type SDKSideQuestionResult = {
+  response: string | null
+  usage: Record<string, unknown>
 }
 
 // ============================================================================

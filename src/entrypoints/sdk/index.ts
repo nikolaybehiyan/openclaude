@@ -103,6 +103,7 @@ export type {
   SDKSessionOptions,
   SDKResultMessage,
   SDKStopTaskResult,
+  SDKSideQuestionResult,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'

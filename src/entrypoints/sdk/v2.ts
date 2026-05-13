@@ -75,6 +75,10 @@ import { getRunningTasks } from '../../utils/task/framework.js'
 import { isBackgroundTask } from '../../tasks/types.js'
 import { stopTask } from '../../tasks/stopTask.js'
 import { sleep } from '../../utils/sleep.js'
+import { generateSessionTitle as generateSourceSessionTitle } from '../../utils/sessionTitle.js'
+import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
+import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
+import { createAbortController } from '../../utils/abortController.js'
 
 // ============================================================================
 // V2 API Types
@@ -158,13 +162,21 @@ export interface SDKSession {
   /** Unique identifier for this session. */
   sessionId: string
   /** Send a message and yield responses as an AsyncIterable of SDKMessage. */
-  sendMessage(content: string): AsyncIterable<SDKMessage>
+  sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  /** Regenerate an assistant response from an existing user message UUID. */
+  retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
+  /** Replace SDK session history with a host-provided active conversation path. */
+  unstable_syncMessages(messages: unknown[]): void
   /** Return all messages accumulated so far in this session. */
   getMessages(): SDKMessage[]
   /** Abort the current in-flight query. */
   interrupt(): void
   /** Stop one running background task by source task id. */
   stopTask(taskId: string): Promise<SDKStopTaskResult>
+  /** Generate a source-compatible AI session title from a first-message description. */
+  generateSessionTitle(description: string): Promise<string | null>
+  /** Answer a source-compatible side question using the last completed turn cache context. */
+  sideQuestion(question: string): Promise<SDKSideQuestionResult>
   /** Close the session and release resources. */
   close(): void
   /**
@@ -186,6 +198,11 @@ export type SDKStopTaskResult = {
   taskId: string
   taskType: string
   command: string | undefined
+}
+
+export type SDKSideQuestionResult = {
+  response: string | null
+  usage: Record<string, unknown>
 }
 
 // ============================================================================
@@ -279,7 +296,7 @@ class SDKSessionImpl implements SDKSession {
     return this._sessionId
   }
 
-  async *sendMessage(content: string): AsyncIterable<SDKMessage> {
+  async *sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage> {
     const sdkContext = {
       sessionId: this._sessionId as SessionId,
       sessionProjectDir: this._sessionProjectDir,
@@ -358,7 +375,7 @@ class SDKSessionImpl implements SDKSession {
 
         try {
           let heldBackResult: SDKMessage | null = null
-          for await (const engineMsg of self.engine.submitMessage(content)) {
+          for await (const engineMsg of self.engine.submitMessage(content, options)) {
             if (engineMsg.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
               heldBackResult = engineMsg
             } else {
@@ -393,6 +410,160 @@ class SDKSessionImpl implements SDKSession {
 
   getMessages(): SDKMessage[] {
     return this.engine.getMessages().map(msg => mapMessageToSDK(msg as Record<string, unknown>))
+  }
+
+  unstable_syncMessages(messages: unknown[]): void {
+    if (!Array.isArray(messages)) {
+      throw new Error('SDKSessionImpl: messages must be an array')
+    }
+    this.replaceEngineWithInitialMessages(messages as any[])
+  }
+
+  async *retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage> {
+    const sdkContext = {
+      sessionId: this._sessionId as SessionId,
+      sessionProjectDir: this._sessionProjectDir,
+      cwd: this.options.cwd,
+      originalCwd: this.options.cwd,
+    }
+
+    const self = this
+    const inner = runWithSdkContext(sdkContext, () => {
+      return (async function* (): AsyncGenerator<SDKMessage> {
+        await init()
+        if (self.options.settings?.sandbox) {
+          const unavailable = SandboxManager.getSandboxUnavailableReason()
+          if (unavailable) {
+            throw new Error(`Sandbox runtime is required but unavailable: ${unavailable}`)
+          }
+        }
+        await SandboxManager.initialize(async () => false)
+        if (
+          self.options.settings?.sandbox &&
+          !SandboxManager.isSandboxingEnabled()
+        ) {
+          throw new Error('Sandbox runtime is required but did not initialize')
+        }
+        const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
+        if (!self.agentsLoaded) {
+          try {
+            const agentDefs = await getAgentDefinitionsWithOverrides(self.options.cwd)
+            self.appStateStore.setState(prev => ({
+              ...prev,
+              agentDefinitions: agentDefs,
+            }))
+            if (agentDefs.activeAgents.length > 0) {
+              self.engine.injectAgents(agentDefs.activeAgents)
+            }
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err)
+            console.warn('SDK: agent loading failed:', errorMessage)
+            self.pushAgentFailure({
+              type: 'agent_load_failure',
+              stage: 'definitions',
+              error_message: errorMessage,
+            })
+          }
+          self.agentsLoaded = true
+        }
+        if (!self.mcpConnected && self.mcpServers && Object.keys(self.mcpServers).length > 0) {
+          try {
+            const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(self.mcpServers)
+            if (mcpClients.length > 0) {
+              self.engine.setMcpClients(mcpClients)
+            }
+            if (mcpTools.length > 0) {
+              const permissionContext = self.appStateStore.getState().toolPermissionContext
+              const allTools = [...getTools(permissionContext)]
+              for (const mcpTool of mcpTools) {
+                if (!allTools.some(t => t.name === mcpTool.name)) {
+                  allTools.push(mcpTool)
+                }
+              }
+              self.engine.updateTools(allTools)
+            }
+          } catch (err) {
+            console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
+          }
+          self.mcpConnected = true
+        }
+        switchSession(self._sessionId as SessionId, self._sessionProjectDir)
+        let heldBackResult: SDKMessage | null = null
+        try {
+          for await (const engineMsg of self.engine.submitMessage(retryPrompt, { uuid: parentUserMessageUuid })) {
+            if (engineMsg.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
+              heldBackResult = engineMsg
+            } else {
+              yield engineMsg
+            }
+            yield* drainSdkEvents()
+            yield* self.drainTimeoutQueue()
+            yield* self.drainAgentFailureQueue()
+          }
+          while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
+            yield* drainSdkEvents()
+            yield* self.drainTimeoutQueue()
+            yield* self.drainAgentFailureQueue()
+            await sleep(100, self._abortController?.signal, { unref: true })
+          }
+          yield* drainSdkEvents()
+          yield* self.drainTimeoutQueue()
+          yield* self.drainAgentFailureQueue()
+          if (heldBackResult) {
+            yield heldBackResult
+          }
+        } finally {
+          self.timeoutQueue.length = 0
+          self.agentFailureQueue.length = 0
+        }
+      })()
+    })
+
+    yield* inner
+  }
+
+  private recreateEngineAtUserMessage(parentUserMessageUuid: string): string | any[] {
+    const parentUUID = parentUserMessageUuid.trim()
+    if (!parentUUID) {
+      throw new Error('SDKSessionImpl: retry parent user message UUID is required')
+    }
+    const messages = [...this.engine.getMessages()] as Array<Record<string, any>>
+    const parentIndex = messages.findIndex(msg => msg.uuid === parentUUID)
+    if (parentIndex < 0) {
+      throw new Error(`SDKSessionImpl: retry parent user message ${parentUUID} was not found in session`)
+    }
+    const parentMessage = messages[parentIndex]
+    if (parentMessage.type !== 'user' || parentMessage.toolUseResult || parentMessage.isMeta) {
+      throw new Error(`SDKSessionImpl: retry parent message ${parentUUID} is not a selectable user message`)
+    }
+    const content = parentMessage.message?.content
+    if (typeof content !== 'string' && !Array.isArray(content)) {
+      throw new Error(`SDKSessionImpl: retry parent message ${parentUUID} has unsupported content`)
+    }
+    this.replaceEngineWithInitialMessages(messages.slice(0, parentIndex) as any[])
+    return content
+  }
+
+  private replaceEngineWithInitialMessages(messages: any[]): void {
+    const oldMcpClients = this._engine?.getMcpClients?.() ?? []
+    for (const client of oldMcpClients) {
+      if (client.type === 'connected' && client.cleanup) {
+        void client.cleanup().catch(err => {
+          console.warn('SDK: MCP client cleanup error before session history replacement:', err instanceof Error ? err.message : String(err))
+        })
+      }
+    }
+    const { engine, appStateStore, abortController } = createEngineFromOptions(
+      this.options,
+      this,
+      messages,
+      this._sessionId,
+    )
+    this._engine = engine
+    this._appStateStore = appStateStore
+    this._abortController = abortController
+    this.agentsLoaded = false
+    this.mcpConnected = false
   }
 
   private hasRunningBackgroundTasks(): boolean {
@@ -432,6 +603,34 @@ class SDKSessionImpl implements SDKSession {
       getAppState: () => this.appStateStore.getState(),
       setAppState: (f: (prev: AppState) => AppState) => this.appStateStore.setState(f),
     })
+  }
+
+  async generateSessionTitle(description: string): Promise<string | null> {
+    const controller = this._abortController && !this._abortController.signal.aborted
+      ? this._abortController
+      : createAbortController()
+    return await generateSourceSessionTitle(description, controller.signal)
+  }
+
+  async sideQuestion(question: string): Promise<SDKSideQuestionResult> {
+    const saved = getLastCacheSafeParams()
+    if (!saved) {
+      throw new Error('SDKSessionImpl: side_question cache context is unavailable until a turn completes')
+    }
+    const result = await runSourceSideQuestion({
+      question,
+      cacheSafeParams: {
+        ...saved,
+        toolUseContext: {
+          ...saved.toolUseContext,
+          abortController: createAbortController(),
+        },
+      },
+    })
+    return {
+      response: result.response,
+      usage: result.usage as unknown as Record<string, unknown>,
+    }
   }
 
   close(): void {
