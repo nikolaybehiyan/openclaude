@@ -12,6 +12,36 @@ import type { PermissionResolveDecision } from '../../src/entrypoints/sdk/permis
 import { getEmptyToolPermissionContext } from '../../src/Tool.js'
 import { filterToolsByDenyRules } from '../../src/tools.js'
 
+const askFallback = async () => ({
+  behavior: 'ask' as const,
+  message: 'Permission required',
+})
+
+function permissionTestContext() {
+  const toolPermissionContext = getEmptyToolPermissionContext()
+  return {
+    abortController: new AbortController(),
+    getAppState: () => ({ toolPermissionContext }),
+  } as any
+}
+
+function testTool(permissionResult: any) {
+  return {
+    name: 'TestTool',
+    inputSchema: { parse: (input: unknown) => input },
+    checkPermissions: vi.fn(async () => permissionResult),
+  } as any
+}
+
+async function waitForPendingPermission(permissionTarget: ReturnType<typeof createPermissionTarget>, toolUseID: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const pending = permissionTarget.pendingPermissionPrompts.get(toolUseID)
+    if (pending) return pending
+    await new Promise(resolve => setTimeout(resolve, 1))
+  }
+  return undefined
+}
+
 describe('buildPermissionContext', () => {
   test('returns default mode when no permissionMode specified', () => {
     const ctx = buildPermissionContext({ cwd: '/tmp' })
@@ -107,20 +137,21 @@ describe('disallowedTools tool filtering', () => {
 })
 
 describe('createDefaultCanUseTool', () => {
-  test('denies all tool uses', async () => {
+  test('delegates tool decisions to the OpenClaude permission engine', async () => {
     const ctx = getEmptyToolPermissionContext()
     const canUseTool = createDefaultCanUseTool(ctx)
 
     const result = await canUseTool(
-      { name: 'TestTool' } as any,
+      testTool({ behavior: 'deny' as const, message: 'blocked by tool permissions' }),
       { command: 'rm -rf /' },
-      {} as any,
+      permissionTestContext(),
       {} as any,
       undefined,
       undefined,
     )
 
     expect(result.behavior).toBe('deny')
+    expect(result.message).toBe('blocked by tool permissions')
   })
 
   test('honors forceDecision when provided', async () => {
@@ -168,6 +199,50 @@ describe('createDefaultCanUseTool', () => {
 })
 
 describe('createExternalCanUseTool synchronous host response', () => {
+  test('does not call host callback when the OpenClaude engine already allowed or denied', async () => {
+    const userFn = vi.fn(async () => ({ behavior: 'allow' as const }))
+    const onPermissionRequest = vi.fn()
+    const permissionTarget = createPermissionTarget()
+
+    const allowCanUseTool = createExternalCanUseTool(
+      userFn,
+      async () => ({ behavior: 'allow' as const }),
+      permissionTarget,
+      onPermissionRequest,
+    )
+
+    const allowResult = await allowCanUseTool(
+      { name: 'TestTool' } as any,
+      {},
+      {} as any,
+      {} as any,
+      'allow-id',
+      undefined,
+    )
+
+    const denyCanUseTool = createExternalCanUseTool(
+      userFn,
+      async () => ({ behavior: 'deny' as const, message: 'blocked by OpenClaude engine' }),
+      permissionTarget,
+      onPermissionRequest,
+    )
+
+    const denyResult = await denyCanUseTool(
+      { name: 'TestTool' } as any,
+      {},
+      {} as any,
+      {} as any,
+      'deny-id',
+      undefined,
+    )
+
+    expect(allowResult.behavior).toBe('allow')
+    expect(denyResult.behavior).toBe('deny')
+    expect(denyResult.message).toBe('blocked by OpenClaude engine')
+    expect(userFn).not.toHaveBeenCalled()
+    expect(onPermissionRequest).not.toHaveBeenCalled()
+  })
+
   test('synchronous host response from onPermissionRequest is received', async () => {
     // Regression test: onPermissionRequest must fire AFTER registerPendingPermission
     // so a host that responds synchronously finds the entry in the map.
@@ -182,7 +257,7 @@ describe('createExternalCanUseTool synchronous host response', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -224,7 +299,7 @@ describe('createExternalCanUseTool synchronous host response', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -262,7 +337,7 @@ describe('createExternalCanUseTool synchronous host response', () => {
     // Note: sessionId parameter intentionally omitted
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -299,7 +374,7 @@ describe('createExternalCanUseTool race condition', () => {
     const timeoutMs = 50
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       onTimeout,
@@ -356,7 +431,7 @@ describe('createExternalCanUseTool race condition', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       onTimeout,
@@ -377,7 +452,7 @@ describe('createExternalCanUseTool race condition', () => {
 
     // Respond immediately after starting to simulate very fast host response
     // This tests that the first response wins, not the timeout
-    const pending = permissionTarget.pendingPermissionPrompts.get(toolUseID)
+    const pending = await waitForPendingPermission(permissionTarget, toolUseID)
     if (pending) {
       pending.resolve({ behavior: 'allow' as const, updatedInput: { test: true } })
     }
@@ -397,7 +472,7 @@ describe('createExternalCanUseTool race condition', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       onTimeout,
@@ -418,7 +493,7 @@ describe('createExternalCanUseTool race condition', () => {
 
     // Grab a reference to the resolve BEFORE timeout fires — simulates host
     // capturing the callback while the permission prompt is still pending
-    const staleResolve = permissionTarget.pendingPermissionPrompts.get(toolUseID)
+    const staleResolve = await waitForPendingPermission(permissionTarget, toolUseID)
     expect(staleResolve).toBeDefined()
 
     // Wait LONGER than the 50ms timeout — timeout fires first, resolves with deny
@@ -584,7 +659,7 @@ describe('createExternalCanUseTool error handling', () => {
 
     const canUseTool = createExternalCanUseTool(
       userFn,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
     )
 
@@ -613,7 +688,7 @@ describe('createExternalCanUseTool error handling', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       throwingCallback,
       undefined,
@@ -640,11 +715,8 @@ describe('createExternalCanUseTool error handling', () => {
 })
 
 describe('createExternalCanUseTool warning suppression', () => {
-  test('fallback warning not emitted when userFn allows tool', async () => {
-    const ctx = getEmptyToolPermissionContext()
-    const logger = { warn: vi.fn() }
-    const fallback = createDefaultCanUseTool(ctx, logger)
-
+  test('user callback resolves only after the OpenClaude engine asks', async () => {
+    const fallback = vi.fn(askFallback)
     const userFn = vi.fn(async () => ({ behavior: 'allow' as const }))
 
     const permissionTarget = createPermissionTarget()
@@ -656,15 +728,12 @@ describe('createExternalCanUseTool warning suppression', () => {
 
     await canUseTool({ name: 'TestTool' } as any, {}, {} as any, {} as any, 'test-id', undefined)
 
-    // User callback allowed the tool — default fallback warning should NOT fire
-    expect(logger.warn).not.toHaveBeenCalled()
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(userFn).toHaveBeenCalledTimes(1)
   })
 
-  test('fallback warning not emitted when onPermissionRequest resolves', async () => {
-    const ctx = getEmptyToolPermissionContext()
-    const logger = { warn: vi.fn() }
-    const fallback = createDefaultCanUseTool(ctx, logger)
-
+  test('permission_request emits only after the OpenClaude engine asks', async () => {
+    const fallback = vi.fn(askFallback)
     const permissionTarget = createPermissionTarget()
     const onPermissionRequest = vi.fn((message: any) => {
       const pending = permissionTarget.pendingPermissionPrompts.get(message.tool_use_id)
@@ -682,8 +751,8 @@ describe('createExternalCanUseTool warning suppression', () => {
 
     await canUseTool({ name: 'TestTool' } as any, {}, {} as any, {} as any, 'test-id', undefined)
 
-    // onPermissionRequest resolved — default fallback warning should NOT fire
-    expect(logger.warn).not.toHaveBeenCalled()
+    expect(fallback).toHaveBeenCalledTimes(1)
+    expect(onPermissionRequest).toHaveBeenCalledTimes(1)
   })
 })
 
@@ -697,7 +766,7 @@ describe('createExternalCanUseTool timeout scenarios', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       onTimeout,
@@ -714,8 +783,7 @@ describe('createExternalCanUseTool timeout scenarios', () => {
     )
 
     expect(result.behavior).toBe('deny')
-    // When timeout occurs, the implementation calls onTimeout and falls through to fallback
-    expect(result.message).toBe('fallback')
+    expect(result.message).toContain('permission was required')
     expect(onTimeout).toHaveBeenCalled()
     expect(onTimeout.mock.calls[0][0].type).toBe('permission_timeout')
     expect(onTimeout.mock.calls[0][0].tool_name).toBe('TestTool')
@@ -775,7 +843,7 @@ describe('permission session_id dynamic resolution', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -802,7 +870,7 @@ describe('permission session_id dynamic resolution', () => {
     // Pass getter that returns current value at call time
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -831,7 +899,7 @@ describe('permission session_id dynamic resolution', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest,
       undefined,
@@ -859,7 +927,7 @@ describe('permission session_id dynamic resolution', () => {
 
     const canUseTool = createExternalCanUseTool(
       undefined,
-      async () => ({ behavior: 'deny' as const, message: 'fallback' }),
+      askFallback,
       permissionTarget,
       onPermissionRequest, // Required for timeout logic to run
       onTimeout,

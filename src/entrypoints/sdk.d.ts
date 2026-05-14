@@ -396,6 +396,8 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** Host-controlled timeout for external permission prompts. Defaults to OpenClaude's SDK timeout. */
+  permissionTimeoutMs?: number
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
@@ -517,6 +519,11 @@ export function unstable_v2_prompt(
   message: string,
   options: SDKSessionOptions,
 ): Promise<SDKResultMessage>
+
+export function unstable_v2_generateSessionTitle(
+  description: string,
+  signal?: AbortSignal,
+): Promise<string | null>
 
 // ============================================================================
 // MCP tool functions

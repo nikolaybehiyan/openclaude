@@ -76,6 +76,7 @@ import { isBackgroundTask } from '../../tasks/types.js'
 import { stopTask } from '../../tasks/stopTask.js'
 import { sleep } from '../../utils/sleep.js'
 import { generateSessionTitle as generateSourceSessionTitle } from '../../utils/sessionTitle.js'
+import { truncateToWidth } from '../../utils/format.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
@@ -128,6 +129,8 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** Host-controlled timeout for external permission prompts. Defaults to OpenClaude's SDK timeout. */
+  permissionTimeoutMs?: number
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
@@ -609,7 +612,8 @@ class SDKSessionImpl implements SDKSession {
     const controller = this._abortController && !this._abortController.signal.aborted
       ? this._abortController
       : createAbortController()
-    return await generateSourceSessionTitle(description, controller.signal)
+    const title = await generateSourceSessionTitle(description, controller.signal)
+    return title ?? truncateToWidth(description, 75)
   }
 
   async sideQuestion(question: string): Promise<SDKSideQuestionResult> {
@@ -798,7 +802,7 @@ function createEngineFromOptions(
     permissionTarget,
     options.onPermissionRequest,
     (msg) => { permissionTarget.pushTimeout?.(msg) },
-    30000, // Default timeout
+    options.permissionTimeoutMs ?? 30000,
     sessionId,
   )
 
@@ -1079,4 +1083,13 @@ export async function unstable_v2_prompt(
   } finally {
     session.close()
   }
+}
+
+export async function unstable_v2_generateSessionTitle(
+  description: string,
+  signal?: AbortSignal,
+): Promise<string | null> {
+  const titleSignal = signal ?? createAbortController().signal
+  const title = await generateSourceSessionTitle(description, titleSignal)
+  return title ?? truncateToWidth(description, 75)
 }

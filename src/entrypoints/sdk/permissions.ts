@@ -15,6 +15,7 @@ import {
   type ToolPermissionContext,
   type Tool,
 } from '../../Tool.js'
+import { hasPermissionsToUseTool } from '../../utils/permissions/permissions.js'
 import { MCPTool } from '../../tools/MCPTool/MCPTool.js'
 import type { MCPServerConnection, ScopedMcpServerConfig } from '../../services/mcp/types.js'
 import { connectToServer, fetchToolsForClient } from '../../services/mcp/client.js'
@@ -258,10 +259,20 @@ export function createExternalCanUseTool(
   return async (tool, input, toolUseContext, assistantMessage, toolUseID, forceDecision): Promise<PermissionDecision> => {
     // Cast input to ensure type compatibility with PermissionDecision
     const typedInput = input as Record<string, unknown>
-    // If a forced decision was passed in, honor it
-    if (forceDecision) return forceDecision
+    const baseDecision = forceDecision ?? await fallback(
+      tool,
+      input,
+      toolUseContext,
+      assistantMessage,
+      toolUseID,
+    )
+    if (baseDecision.behavior === 'allow' || baseDecision.behavior === 'deny') {
+      return baseDecision
+    }
 
-    // If the user provided a synchronous canUseTool callback, use it
+    // The OpenClaude permission engine decides whether a tool requires user
+    // approval. A host callback only resolves that source `ask` decision; it
+    // must not replace the built-in safety/rule checks.
     if (userFn) {
       try {
         const result = await userFn(tool.name, typedInput, { toolUseID })
@@ -366,8 +377,18 @@ export function createExternalCanUseTool(
       )
     }
 
-    // No callback or no toolUseID — fall through to default permission logic
-    return fallback(tool, input, toolUseContext, assistantMessage, toolUseID, forceDecision)
+    if (!warnedDefaultPermissions) {
+      warnedDefaultPermissions = true
+      log.warn(
+        `[SDK] Tool "${tool.name}" requires permission but no external permission handler is available. ` +
+        'Denying by default. Provide canUseTool or onPermissionRequest in SDK options.',
+      )
+    }
+    return {
+      behavior: 'deny',
+      message: `SDK: Tool "${tool.name}" denied — permission was required but no external handler was available.`,
+      decisionReason: { type: 'mode', mode: 'default' },
+    }
   }
 }
 
@@ -563,22 +584,9 @@ export function createDefaultCanUseTool(
   _permissionContext: ToolPermissionContext,
   logger?: SDKLogger,
 ): CanUseToolFn {
-  const log = logger ?? defaultLogger
-  return async (tool, input, _toolUseContext, _assistantMessage, _toolUseID, forceDecision) => {
+  void logger
+  return async (tool, input, toolUseContext, assistantMessage, toolUseID, forceDecision) => {
     if (forceDecision) return forceDecision
-    if (!warnedDefaultPermissions) {
-      warnedDefaultPermissions = true
-      log.warn(
-        '[SDK] No canUseTool or onPermissionRequest callback provided. ' +
-        'All tool uses will be DENIED by default. ' +
-        'Provide canUseTool in query options, e.g.: ' +
-        '{ canUseTool: async (name, input) => ({ behavior: "allow" }) }',
-      )
-    }
-    return {
-      behavior: 'deny' as const,
-      message: `SDK: Tool "${tool.name}" denied — no canUseTool or onPermissionRequest callback provided. Pass canUseTool in options to control tool permissions.`,
-      decisionReason: { type: 'mode' as const, mode: 'default' },
-    }
+    return hasPermissionsToUseTool(tool, input, toolUseContext, assistantMessage, toolUseID)
   }
 }
