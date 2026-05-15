@@ -527,6 +527,17 @@ export function setRemoteIngressUrlForTesting(url: string): void {
   getProject().setRemoteIngressUrl(url)
 }
 
+/**
+ * Enable the native remote session-ingress persistence path for SDK hosts.
+ *
+ * This is the same Project-level writer used by Claude Code remote/CCR flows:
+ * QueryEngine still records the local JSONL first, then sessionStorage mirrors
+ * transcript entries through the configured remote writer.
+ */
+export function setRemoteIngressUrl(url: string): void {
+  getProject().setRemoteIngressUrl(url)
+}
+
 const REMOTE_FLUSH_INTERVAL_MS = 10
 
 class Project {

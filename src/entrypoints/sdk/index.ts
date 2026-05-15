@@ -104,6 +104,8 @@ export type {
   SDKResultMessage,
   SDKStopTaskResult,
   SDKSideQuestionResult,
+  SDKSessionEventWriter,
+  SDKSessionEventReader,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'
@@ -147,6 +149,7 @@ export function tool<Schema = any>(
   handler: (args: any, extra: unknown) => Promise<CallToolResult>,
   extras?: {
     annotations?: ToolAnnotations
+    permissionBehavior?: 'allow' | 'ask' | 'deny'
     searchHint?: string
     alwaysLoad?: boolean
   },
@@ -157,6 +160,7 @@ export function tool<Schema = any>(
     inputSchema,
     handler,
     annotations: extras?.annotations,
+    permissionBehavior: extras?.permissionBehavior,
     searchHint: extras?.searchHint,
     alwaysLoad: extras?.alwaysLoad,
   }

@@ -402,6 +402,12 @@ export type SDKSessionOptions = {
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
+  /** Native OpenClaude/CCR-style durable transcript event writer. */
+  sessionEventWriter?: SDKSessionEventWriter
+  /** Native OpenClaude/CCR-style foreground transcript event reader for resume. */
+  sessionEventReader?: SDKSessionEventReader
+  /** Native OpenClaude/CCR-style subagent transcript event reader for resume. */
+  sessionSubagentEventReader?: SDKSessionEventReader
 }
 
 export interface SDKSession {
@@ -436,6 +442,16 @@ export type SDKSideQuestionResult = {
   usage: Record<string, unknown>
 }
 
+export type SDKSessionEventWriter = (
+  eventType: string,
+  payload: Record<string, unknown>,
+  options?: { isCompaction?: boolean; agentId?: string },
+) => Promise<void>
+
+export type SDKSessionEventReader = () => Promise<
+  { payload: Record<string, unknown>; agent_id?: string }[] | null
+>
+
 // ============================================================================
 // MCP tool types
 // ============================================================================
@@ -446,6 +462,7 @@ export interface SdkMcpToolDefinition<Schema = any> {
   inputSchema: Schema
   handler: (args: any, extra: unknown) => Promise<any>
   annotations?: any
+  permissionBehavior?: 'allow' | 'ask' | 'deny'
   searchHint?: string
   alwaysLoad?: boolean
 }
@@ -536,6 +553,7 @@ export function tool<Schema = any>(
   handler: (args: any, extra: unknown) => Promise<any>,
   extras?: {
     annotations?: any
+    permissionBehavior?: 'allow' | 'ask' | 'deny'
     searchHint?: string
     alwaysLoad?: boolean
   },

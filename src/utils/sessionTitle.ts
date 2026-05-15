@@ -53,19 +53,18 @@ export function extractConversationText(messages: Message[]): string {
     : text
 }
 
-const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title (3-7 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
+const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title for the user's conversation. Base the title only on the provided conversation text.
 
 Return JSON with a single "title" field.
 
-Good examples:
-{"title": "Fix login button on mobile"}
-{"title": "Add OAuth authentication"}
-{"title": "Debug failing CI tests"}
-{"title": "Refactor API client error handling"}
-
-Bad (too vague): {"title": "Code changes"}
-Bad (too long): {"title": "Investigate and fix the issue where the login button does not respond on mobile devices"}
-Bad (wrong case): {"title": "Fix Login Button On Mobile"}`
+Title rules:
+- 3-7 words.
+- Use sentence case: capitalize only the first word and proper nouns.
+- Make it specific enough that the user recognizes the conversation in a list.
+- Preserve important product names, file names, or task nouns from the conversation when they are central.
+- Do not copy the user's whole message, test marker, or implementation instructions.
+- Do not invent unrelated tasks, generic software tasks, or product names that are not in the conversation.
+- Do not include quotation marks, punctuation wrappers, or explanatory text outside the JSON object.`
 
 const titleSchema = lazySchema(() => z.object({ title: z.string() }))
 
@@ -125,9 +124,6 @@ export async function generateSessionTitle(
     })
     logEvent('tengu_session_title_generated', { success: false })
 
-    // Fallback: When using 3P providers without a compatible schema,
-    // default to the application name.
-    return 'OpenClaude'
+    return null
   }
 }
-

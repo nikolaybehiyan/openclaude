@@ -22,6 +22,8 @@ import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js
 import type { ThinkingConfig } from '../../utils/thinking.js'
 import { init } from '../init.js'
 import {
+  canonicalizePath,
+  getProjectDir,
   resolveSessionFilePath,
   readTranscriptForLoad,
   SKIP_PRECOMPACT_THRESHOLD,
@@ -33,6 +35,11 @@ import {
   runWithSdkContext,
   setFlagSettingsInline,
 } from '../../bootstrap/state.js'
+import {
+  hydrateFromCCRv2InternalEvents,
+  setInternalEventReader,
+  setInternalEventWriter,
+} from '../../utils/sessionStorage.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
 import type {
@@ -135,6 +142,22 @@ export type SDKSessionOptions = {
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
+  /**
+   * Native OpenClaude/CCR-style session event writer. SDK hosts that run
+   * ephemeral workers can mirror transcript entries to durable storage without
+   * reconstructing history outside QueryEngine.
+   */
+  sessionEventWriter?: SDKSessionEventWriter
+  /**
+   * Native OpenClaude/CCR-style foreground event reader used before resume.
+   * It must return persisted transcript event payloads for this session.
+   */
+  sessionEventReader?: SDKSessionEventReader
+  /**
+   * Native OpenClaude/CCR-style subagent event reader used before resume.
+   * If omitted, only the foreground transcript is hydrated.
+   */
+  sessionSubagentEventReader?: SDKSessionEventReader
 }
 
 /**
@@ -208,6 +231,43 @@ export type SDKSideQuestionResult = {
   usage: Record<string, unknown>
 }
 
+export type SDKSessionEventWriter = (
+  eventType: string,
+  payload: Record<string, unknown>,
+  options?: { isCompaction?: boolean; agentId?: string },
+) => Promise<void>
+
+export type SDKSessionEventReader = () => Promise<
+  { payload: Record<string, unknown>; agent_id?: string }[] | null
+>
+
+type SDKExecutionContext = {
+  sessionId: SessionId
+  sessionProjectDir: string | null
+  cwd: string
+  originalCwd: string
+}
+
+async function* runSdkContextIterable<T>(
+  context: SDKExecutionContext,
+  factory: () => AsyncIterable<T>,
+): AsyncGenerator<T> {
+  const iterator = runWithSdkContext(context, () => factory()[Symbol.asyncIterator]())
+  try {
+    while (true) {
+      const result = await runWithSdkContext(context, () => iterator.next())
+      if (result.done) {
+        return result.value
+      }
+      yield result.value
+    }
+  } finally {
+    if (iterator.return) {
+      await runWithSdkContext(context, () => iterator.return?.())
+    }
+  }
+}
+
 // ============================================================================
 // SdkMcpToolDefinition — tool() return type
 // ============================================================================
@@ -223,6 +283,7 @@ export interface SdkMcpToolDefinition<Schema = any> {
   inputSchema: Schema
   handler: (args: any, extra: unknown) => Promise<CallToolResult>
   annotations?: ToolAnnotations
+  permissionBehavior?: 'allow' | 'ask' | 'deny'
   searchHint?: string
   alwaysLoad?: boolean
 }
@@ -308,7 +369,7 @@ class SDKSessionImpl implements SDKSession {
     }
 
     const self = this
-    const inner = runWithSdkContext(sdkContext, () => {
+    const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
         if (self.options.settings?.sandbox) {
@@ -431,7 +492,7 @@ class SDKSessionImpl implements SDKSession {
     }
 
     const self = this
-    const inner = runWithSdkContext(sdkContext, () => {
+    const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
         if (self.options.settings?.sandbox) {
@@ -544,7 +605,7 @@ class SDKSessionImpl implements SDKSession {
       throw new Error(`SDKSessionImpl: retry parent message ${parentUUID} has unsupported content`)
     }
     this.replaceEngineWithInitialMessages(messages.slice(0, parentIndex) as any[])
-    return content
+    return retryPromptContent(content)
   }
 
   private replaceEngineWithInitialMessages(messages: any[]): void {
@@ -732,6 +793,16 @@ class SDKSessionImpl implements SDKSession {
   }
 }
 
+function retryPromptContent(content: string | any[]): string | any[] {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (content.every(block => block?.type === 'text' && typeof block.text === 'string')) {
+    return content.map(block => block.text).join('')
+  }
+  return content
+}
+
 // ============================================================================
 // createEngineFromOptions
 // ============================================================================
@@ -751,6 +822,7 @@ function createEngineFromOptions(
   if (!cwd) {
     throw new Error('SDKSessionOptions requires cwd')
   }
+  configureSessionEventStore(options)
   applySessionFlagSettings(options.settings)
 
   // NOTE: cwd is NOT set on global state here. SDKSessionImpl.sendMessage()
@@ -884,6 +956,7 @@ function applySessionFlagSettings(settings?: Record<string, unknown>): void {
  */
 export function unstable_v2_createSession(options: SDKSessionOptions): SDKSession {
   const sessionId = randomUUID()
+  configureSessionEventStore(options)
   // Create SDKSessionImpl first (without engine) so we can pass its
   // pendingPermissionPrompts map to createEngineFromOptions for
   // external permission resolution support.
@@ -921,10 +994,25 @@ export async function unstable_v2_resumeSession(
   options: SDKSessionOptions,
 ): Promise<SDKSession> {
   assertValidSessionId(sessionId)
+  const sessionCwd = await canonicalizePath(options.cwd)
+  const sessionProjectDir = getProjectDir(sessionCwd)
+  const sessionOptions = { ...options, cwd: sessionCwd }
+  configureSessionEventStore(sessionOptions)
+  if (sessionOptions.sessionEventReader) {
+    await runWithSdkContext(
+      {
+        sessionId: sessionId as SessionId,
+        sessionProjectDir,
+        cwd: sessionCwd,
+        originalCwd: sessionCwd,
+      },
+      () => hydrateFromCCRv2InternalEvents(sessionId),
+    )
+  }
 
   // Load prior messages from JSONL with compact-aware chain building.
   // Matches CLI's loadTranscriptFile → buildConversationChain → removeExtraFields.
-  const resolved = await resolveSessionFilePath(sessionId, options.cwd)
+  const resolved = await resolveSessionFilePath(sessionId, sessionCwd)
   let initialMessages: any[]
 
   if (resolved) {
@@ -1022,9 +1110,9 @@ export async function unstable_v2_resumeSession(
     initialMessages = []
   }
 
-  const session = new SDKSessionImpl(null, sessionId, options, null)
+  const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
   const { engine, appStateStore, abortController } = createEngineFromOptions(
-    options,
+    sessionOptions,
     session,
     initialMessages as any[],
     sessionId,
@@ -1042,6 +1130,18 @@ export async function unstable_v2_resumeSession(
   }
 
   return session
+}
+
+function configureSessionEventStore(options: SDKSessionOptions): void {
+  if (options.sessionEventWriter) {
+    setInternalEventWriter(options.sessionEventWriter)
+  }
+  if (options.sessionEventReader) {
+    setInternalEventReader(
+      options.sessionEventReader,
+      options.sessionSubagentEventReader ?? (async () => []),
+    )
+  }
 }
 
 // @[MODEL LAUNCH]: Update the example model ID in this docstring.

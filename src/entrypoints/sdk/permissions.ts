@@ -447,6 +447,7 @@ export async function connectSdkMcpServers(
           inputSchema?: Record<string, unknown>
           handler?: (args: unknown, extra: unknown) => Promise<{ content: unknown }>
           annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean }
+          permissionBehavior?: 'allow' | 'ask' | 'deny'
           searchHint?: string
           alwaysLoad?: boolean
         }
@@ -476,6 +477,24 @@ export async function connectSdkMcpServers(
           },
           isOpenWorld() {
             return toolDef.annotations?.openWorldHint ?? false
+          },
+          async checkPermissions() {
+            switch (toolDef.permissionBehavior) {
+              case 'allow':
+                return { behavior: 'allow' as const }
+              case 'deny':
+                return {
+                  behavior: 'deny' as const,
+                  message: `Permission to use ${toolDef.name} has been denied.`,
+                }
+              case 'ask':
+                return {
+                  behavior: 'ask' as const,
+                  message: `OpenClaude needs your permission to use ${toolDef.name}`,
+                }
+              default:
+                return MCPTool.checkPermissions()
+            }
           },
           async call(args: Record<string, unknown>, context, _canUseTool, parentMessage, onProgress) {
             if (!toolDef.handler) {

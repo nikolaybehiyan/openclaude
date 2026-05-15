@@ -6,7 +6,11 @@ import {
   unstable_v2_resumeSession,
   unstable_v2_prompt,
 } from '../../src/entrypoints/sdk/index.js'
-import { getSessionProjectDir } from '../../src/bootstrap/state.js'
+import {
+  getOriginalCwd,
+  getSessionProjectDir,
+  setOriginalCwd,
+} from '../../src/bootstrap/state.js'
 import {
   drainQuery,
   withTempDir,
@@ -109,6 +113,64 @@ describe('V2: session creation', () => {
     expect((session as any)._engine?.config?.maxOutputTokensOverride).toBe(4096)
     expect((session as any)._engine?.config?.temperatureOverride).toBe(1)
   })
+
+  test('sendMessage() executes the engine stream inside the SDK cwd context', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const savedOriginalCwd = getOriginalCwd()
+      setOriginalCwd('/global-not-sdk-cwd')
+      const session = unstable_v2_createSession({ cwd: dir })
+      const observedOriginalCwds: string[] = []
+      ;(session as any)._engine.submitMessage = async function* () {
+        observedOriginalCwds.push(getOriginalCwd())
+        await Bun.sleep(1)
+        observedOriginalCwds.push(getOriginalCwd())
+      }
+      try {
+        await drainQuery(session.sendMessage('context probe'))
+      } finally {
+        session.close()
+        setOriginalCwd(savedOriginalCwd)
+      }
+      expect(observedOriginalCwds).toEqual([dir, dir])
+    })
+  })
+
+  test('retryMessage() replays text-only block user prompts as plain text', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const session = unstable_v2_createSession({ cwd: dir })
+      let observedPrompt: unknown
+      ;(session as any)._engine.getMessages = () => [{
+        type: 'user',
+        uuid: 'human-1',
+        message: {
+          role: 'user',
+          content: [
+            { type: 'text', text: 'hello' },
+            { type: 'text', text: ' world' },
+          ],
+        },
+      }]
+      ;(session as any).replaceEngineWithInitialMessages = function (messages: unknown[]) {
+        this._engine = {
+          getMessages: () => messages,
+          getMcpClients: () => [],
+          injectAgents: () => {},
+          interrupt: () => {},
+          submitMessage: async function* (prompt: unknown) {
+            observedPrompt = prompt
+          },
+        }
+      }
+      try {
+        await drainQuery(session.retryMessage('human-1'))
+      } finally {
+        session.close()
+      }
+      expect(observedPrompt).toBe('hello world')
+    })
+  })
 })
 
 describe('V2: session interrupt', () => {
@@ -167,6 +229,25 @@ describe('V2: session resume', () => {
     expect(session.sessionId).toBe(fakeSid)
     const messages = session.getMessages()
     expect(messages.length).toBe(0)
+  })
+
+  test('resumeSession() hydrates from native session event reader in SDK cwd context', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const sid = randomUUID()
+      const entries = createMinimalConversation(sid)
+      const session = await unstable_v2_resumeSession(sid, {
+        cwd: dir,
+        sessionEventReader: async () => entries.map(payload => ({ payload })),
+        sessionSubagentEventReader: async () => [],
+      })
+
+      expect(session.sessionId).toBe(sid)
+      expect(session.getMessages().length).toBeGreaterThanOrEqual(2)
+      const projectDir = getSessionProjectDir()
+      expect(projectDir).not.toBeNull()
+      expect(projectDir).toContain('projects')
+    })
   })
 
   test('resumeSession() preserves multi-turn conversation order', async () => {
