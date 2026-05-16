@@ -48,7 +48,6 @@ import type {
 } from './coreTypes.generated.js'
 import type {
   SDKMessage,
-  SDKPermissionTimeoutMessage,
   SDKAgentLoadFailureMessage,
   JsonlEntry,
   QueryPermissionMode,
@@ -136,8 +135,6 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
-  /** Host-controlled timeout for external permission prompts. Defaults to OpenClaude's SDK timeout. */
-  permissionTimeoutMs?: number
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
@@ -168,8 +165,8 @@ export type SDKSessionOptions = {
  *
  * **IMPORTANT: Resource Cleanup**
  * You MUST call `close()` when finished with a session to prevent memory leaks.
- * Abandoned sessions retain internal buffers (pending permission prompts, timeout
- * queues, agent failure queues) until explicitly closed. In long-running processes,
+ * Abandoned sessions retain internal buffers (pending permission prompts and
+ * agent failure queues) until explicitly closed. In long-running processes,
  * failing to close sessions can cause unbounded memory growth.
  *
  * @example
@@ -316,7 +313,6 @@ class SDKSessionImpl implements SDKSession {
   private pendingPermissionPrompts = new Map<string, {
     resolve: (decision: PermissionResolveDecision) => void
   }>()
-  private timeoutQueue: SDKPermissionTimeoutMessage[] = []
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -446,24 +442,20 @@ class SDKSessionImpl implements SDKSession {
               yield engineMsg
             }
             yield* drainSdkEvents()
-            yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
           }
           while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
             yield* drainSdkEvents()
-            yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
             await sleep(100, self._abortController?.signal, { unref: true })
           }
-          // Final drain for task/progress/timeout/failure messages that fired on the last engine yield
+          // Final drain for task/progress/failure messages that fired on the last engine yield.
           yield* drainSdkEvents()
-          yield* self.drainTimeoutQueue()
           yield* self.drainAgentFailureQueue()
           if (heldBackResult) {
             yield heldBackResult
           }
         } finally {
-          self.timeoutQueue.length = 0
           self.agentFailureQueue.length = 0
         }
       })()
@@ -561,23 +553,19 @@ class SDKSessionImpl implements SDKSession {
               yield engineMsg
             }
             yield* drainSdkEvents()
-            yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
           }
           while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
             yield* drainSdkEvents()
-            yield* self.drainTimeoutQueue()
             yield* self.drainAgentFailureQueue()
             await sleep(100, self._abortController?.signal, { unref: true })
           }
           yield* drainSdkEvents()
-          yield* self.drainTimeoutQueue()
           yield* self.drainAgentFailureQueue()
           if (heldBackResult) {
             yield heldBackResult
           }
         } finally {
-          self.timeoutQueue.length = 0
           self.agentFailureQueue.length = 0
         }
       })()
@@ -658,7 +646,6 @@ class SDKSessionImpl implements SDKSession {
         decisionReason: { type: 'mode', mode: 'default' },
       })
     }
-    this.timeoutQueue.length = 0
     this.pendingPermissionPrompts.clear()
   }
 
@@ -749,18 +736,6 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
-  /** Push a timeout message into the queue for later draining. */
-  pushTimeout(msg: SDKPermissionTimeoutMessage): void {
-    this.timeoutQueue.push(msg)
-  }
-
-  /** Drain all queued timeout messages. */
-  private *drainTimeoutQueue(): Generator<SDKPermissionTimeoutMessage> {
-    while (this.timeoutQueue.length > 0) {
-      yield this.timeoutQueue.shift()!
-    }
-  }
-
   /** Push an agent load failure message into the queue for later draining. */
   pushAgentFailure(msg: SDKAgentLoadFailureMessage): void {
     this.agentFailureQueue.push(msg)
@@ -813,7 +788,7 @@ function retryPromptContent(content: string | any[]): string | any[] {
  */
 function createEngineFromOptions(
   options: SDKSessionOptions,
-  permissionTarget: PermissionTarget & { pushTimeout?: (msg: SDKPermissionTimeoutMessage) => void },
+  permissionTarget: PermissionTarget,
   initialMessages?: any[],
   sessionId?: string,
 ): { engine: QueryEngine; appStateStore: Store<AppState>; abortController: AbortController } {
@@ -873,8 +848,6 @@ function createEngineFromOptions(
     defaultCanUseTool,
     permissionTarget,
     options.onPermissionRequest,
-    (msg) => { permissionTarget.pushTimeout?.(msg) },
-    options.permissionTimeoutMs ?? 30000,
     sessionId,
   )
 

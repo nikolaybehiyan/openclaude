@@ -54,7 +54,6 @@ import {
   mapMessageToSDK,
   type SDKMessage,
   type SDKUserMessage,
-  type SDKPermissionTimeoutMessage,
   type SDKAgentLoadFailureMessage,
   type JsonlEntry,
   type QueryPermissionMode,
@@ -139,9 +138,8 @@ export type QueryOptions = {
   /**
    * Callback invoked when a tool needs permission approval. The host receives
    * the request immediately and can resolve it by calling
-   * `query.respondToPermission(toolUseId, decision)` before the 30s timeout.
-   * If omitted, tools that require permission fall through to the default
-   * permission logic immediately (no timeout).
+   * `query.respondToPermission(toolUseId, decision)`. The SDK waits until the
+   * host responds or the query/session is cancelled.
    */
   onPermissionRequest?: (message: import('./shared.js').SDKPermissionRequestMessage) => void
   /** System prompt override. */
@@ -162,8 +160,6 @@ export type QueryOptions = {
   settingSources?: string[]
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
-  /** @internal Timeout in ms for permission request resolution. Default 30000. */
-  _permissionTimeoutMs?: number
   /** Callback for stderr output. */
   stderr?: (data: string) => void
 }
@@ -396,7 +392,6 @@ class QueryImpl implements Query {
   private userAgents?: QueryOptions['agents']
   private mcpServers?: Record<string, unknown>
   private permissionContext: ToolPermissionContext
-  private timeoutQueue: SDKPermissionTimeoutMessage[] = []
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
 
   constructor(
@@ -469,18 +464,6 @@ class QueryImpl implements Query {
         decisionReason: { type: 'mode', mode: 'default' },
       })
       this.pendingPermissionPrompts.delete(toolUseId)
-    }
-  }
-
-  /** Push a timeout message into the queue for later draining. */
-  pushTimeout(msg: SDKPermissionTimeoutMessage): void {
-    this.timeoutQueue.push(msg)
-  }
-
-  /** Drain all queued timeout messages. */
-  private *drainTimeoutQueue(): Generator<SDKPermissionTimeoutMessage> {
-    while (this.timeoutQueue.length > 0) {
-      yield this.timeoutQueue.shift()!
     }
   }
 
@@ -672,7 +655,6 @@ class QueryImpl implements Query {
             if (typeof self.prompt === 'string') {
               for await (const engineMsg of self.engine.submitMessage(self.prompt)) {
                 yield engineMsg
-                yield* self.drainTimeoutQueue()
                 yield* self.drainAgentFailureQueue()
               }
             } else {
@@ -681,17 +663,14 @@ class QueryImpl implements Query {
                 const content = extractPromptFromUserMessage(userMessage)
                 for await (const engineMsg of self.engine.submitMessage(content, { uuid: userMessage.uuid })) {
                   yield engineMsg
-                  yield* self.drainTimeoutQueue()
                   yield* self.drainAgentFailureQueue()
                 }
               }
             }
-            // Final drain for timeout/failure messages that fired on the last engine yield
-            yield* self.drainTimeoutQueue()
+            // Final drain for failure messages that fired on the last engine yield.
             yield* self.drainAgentFailureQueue()
           } finally {
-            // Clean up timeout and agent failure queues
-            self.timeoutQueue.length = 0
+            // Clean up agent failure queue.
             self.agentFailureQueue.length = 0
             // Restore env + release mutex (SEC-1)
             if (self.envSnapshot) {
@@ -773,7 +752,6 @@ class QueryImpl implements Query {
         decisionReason: { type: 'mode', mode: 'default' },
       })
     }
-    this.timeoutQueue.length = 0
     this.pendingPermissionPrompts.clear()
   }
 
@@ -1111,8 +1089,6 @@ export function query(params: {
     defaultCanUseTool,
     queryImpl,
     options.onPermissionRequest,
-    (msg) => { queryImpl.pushTimeout(msg) },
-    options._permissionTimeoutMs ?? 30000,
     () => queryImpl.sessionId,
   )
 

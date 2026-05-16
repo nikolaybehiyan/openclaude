@@ -258,9 +258,8 @@ export type QueryOptions = {
   /**
    * Callback invoked when a tool needs permission approval. The host receives
    * the request immediately and can resolve it by calling
-   * `query.respondToPermission(toolUseId, decision)` before the timeout.
-   * If omitted, tools that require permission fall through to the default
-   * permission logic immediately (no timeout).
+   * `query.respondToPermission(toolUseId, decision)`. The SDK waits until the
+   * host responds or the query/session is cancelled.
    */
   onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
   systemPrompt?:
@@ -279,8 +278,6 @@ export type QueryOptions = {
   settingSources?: string[]
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
-  /** @internal Timeout in ms for permission request resolution. Default 30000. */
-  _permissionTimeoutMs?: number
   stderr?: (data: string) => void
 }
 
@@ -314,15 +311,7 @@ export type SDKPermissionRequestMessage = {
   tool_name: string
   tool_use_id: string
   input: Record<string, unknown>
-  uuid: string
-  session_id: string
-}
-
-export type SDKPermissionTimeoutMessage = {
-  type: 'permission_timeout'
-  tool_name: string
-  tool_use_id: string
-  timed_out_after_ms: number
+  approval_options?: string[]
   uuid: string
   session_id: string
 }
@@ -396,8 +385,6 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
-  /** Host-controlled timeout for external permission prompts. Defaults to OpenClaude's SDK timeout. */
-  permissionTimeoutMs?: number
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */

@@ -23,15 +23,11 @@ import type {
   QueryPermissionMode,
   CanUseToolCallback,
   SDKPermissionRequestMessage,
-  SDKPermissionTimeoutMessage,
 } from './shared.js'
 
 // ============================================================================
 // Constants
 // ============================================================================
-
-/** Default timeout for permission prompts (30 seconds). Reasonable for human response time. */
-export const DEFAULT_PERMISSION_TIMEOUT_MS = 30000
 
 export const DEFAULT_EXTERNAL_PERMISSION_APPROVAL_OPTIONS = ['once'] as const
 
@@ -68,8 +64,8 @@ const defaultLogger: SDKLogger = {
 
 /**
  * Creates a resolve function that can only be called once.
- * Prevents promise twice-resolve race conditions when timeout
- * and host response happen simultaneously.
+ * Prevents promise twice-resolve race conditions when a host response and
+ * query/session cancellation arrive close together.
  */
 export function createOnceOnlyResolve<T>(
   resolve: (value: T) => void,
@@ -90,7 +86,7 @@ export function createOnceOnlyResolve<T>(
 /**
  * Factory for creating a permissionTarget with proper race condition handling.
  * The once-only resolve wrapper is applied at registration time, ensuring
- * both timeout handler and host response use the same wrapped resolve.
+ * host response and query/session cancellation use the same wrapped resolve.
  *
  * Usage:
  * ```typescript
@@ -99,8 +95,7 @@ export function createOnceOnlyResolve<T>(
  *   undefined,
  *   fallback,
  *   permissionTarget,
- *   onPermissionRequest,
- *   onTimeout
+ *   onPermissionRequest
  * )
  * ```
  */
@@ -132,8 +127,8 @@ export function createPermissionTarget(): PermissionTarget & { pendingPermission
 
   const registerPendingPermission = (toolUseId: string): Promise<PermissionResolveDecision> => {
     return new Promise(resolve => {
-      // Apply onceOnlyResolve at registration time - this ensures both
-      // timeout handler and host response use the same wrapped resolve,
+      // Apply onceOnlyResolve at registration time - this ensures both host
+      // response and cancellation use the same wrapped resolve,
       // preventing "promise already resolved" errors
       const wrappedResolve = createOnceOnlyResolve(resolve)
       pendingPermissionPrompts.set(toolUseId, { resolve: wrappedResolve })
@@ -228,7 +223,8 @@ export function buildPermissionContext(options: PermissionContextOptions): ToolP
  *
  * When a user-provided canUseTool callback exists, it takes priority.
  * Otherwise, a permission_request message is emitted to the SDK stream,
- * and the host can resolve it via respondToPermission() before the timeout.
+ * and the host can resolve it via respondToPermission() before tool execution
+ * continues.
  *
  * The flow:
  * 1. QueryEngine calls canUseTool(tool, input, ..., toolUseID, forceDecision)
@@ -245,9 +241,6 @@ export function createExternalCanUseTool(
   fallback: CanUseToolFn,
   permissionTarget: PermissionTarget,
   onPermissionRequest?: (message: SDKPermissionRequestMessage) => void,
-  onTimeout?: (message: SDKPermissionTimeoutMessage) => void,
-  // Default 30 second timeout for permission prompts - reasonable for human response time
-  timeoutMs: number = DEFAULT_PERMISSION_TIMEOUT_MS,
   /** Session ID or getter for dynamic resolution (e.g. () => queryImpl.sessionId for fork/continue) */
   sessionId?: string | (() => string | undefined),
   logger?: SDKLogger,
@@ -297,7 +290,8 @@ export function createExternalCanUseTool(
     }
 
     // No user callback — if host registered an onPermissionRequest callback,
-    // call it directly and await external resolution with timeout.
+    // call it directly and await external resolution. Approval wait/cancel is
+    // host/session lifecycle; the SDK does not impose a wall-clock timeout.
     if (toolUseID && onPermissionRequest) {
       const requestId = randomUUID()
       const messageUuid = randomUUID()
@@ -330,54 +324,16 @@ export function createExternalCanUseTool(
         }
       }
 
-      let timeoutId: ReturnType<typeof setTimeout> | undefined
-      const timeoutPromise = new Promise<{ timedOut: true }>(resolve => {
-        timeoutId = setTimeout(() => resolve({ timedOut: true }), timeoutMs)
-      })
-
-      const raceResult = await Promise.race([
-        pendingPromise.then(result => ({ result, timedOut: false })),
-        timeoutPromise,
-      ])
-
-      if (timeoutId !== undefined) {
-        clearTimeout(timeoutId)
+      const res = await pendingPromise
+      permissionTarget.deletePendingPermission(toolUseID)
+      if (res.behavior === 'allow') {
+        return { behavior: 'allow' as const, updatedInput: res.updatedInput ?? typedInput }
       }
-
-      if (!raceResult.timedOut && raceResult.result) {
-        permissionTarget.deletePendingPermission(toolUseID)
-        // Convert PermissionResolveDecision to PermissionDecision
-        const res = raceResult.result
-        if (res.behavior === 'allow') {
-          return { behavior: 'allow' as const, updatedInput: res.updatedInput ?? typedInput }
-        }
-        return {
-          behavior: 'deny' as const,
-          message: res.message,
-          decisionReason: { type: 'mode' as const, mode: res.decisionReason.mode as PermissionMode },
-        }
+      return {
+        behavior: 'deny' as const,
+        message: res.message,
+        decisionReason: { type: 'mode' as const, mode: res.decisionReason.mode as PermissionMode },
       }
-
-      // Timeout — emit event and clean up
-      if (onTimeout) {
-        onTimeout({
-          type: 'permission_timeout',
-          tool_name: tool.name,
-          tool_use_id: toolUseID,
-          timed_out_after_ms: timeoutMs,
-          uuid: messageUuid,
-          session_id: resolveSessionId(),
-        })
-      }
-      log.warn(
-        `[SDK] Permission request for tool "${tool.name}" timed out after ${timeoutMs}ms. ` +
-        'Denying by default. Provide a canUseTool callback or respond to permission_request ' +
-        'messages within the timeout window.',
-      )
-      permissionTarget.denyPendingPermission(
-        toolUseID,
-        `SDK: Permission resolution timed out for tool "${tool.name}". Pass canUseTool in options to control tool permissions.`,
-      )
     }
 
     if (!warnedDefaultPermissions) {

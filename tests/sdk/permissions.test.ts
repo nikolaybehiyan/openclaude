@@ -260,8 +260,6 @@ describe('createExternalCanUseTool synchronous host response', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50, // short timeout — should NOT fire since host responds immediately
     )
 
     const result = await canUseTool(
@@ -302,8 +300,6 @@ describe('createExternalCanUseTool synchronous host response', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
       'test-session-123', // Provide session_id
     )
 
@@ -340,8 +336,6 @@ describe('createExternalCanUseTool synchronous host response', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
       // sessionId undefined - should use placeholder
     )
 
@@ -360,30 +354,18 @@ describe('createExternalCanUseTool synchronous host response', () => {
 })
 
 
-describe('createExternalCanUseTool race condition', () => {
-  test('handles simultaneous timeout and response correctly', async () => {
-    // Use createPermissionTarget which applies onceOnlyResolve at registration
+describe('createExternalCanUseTool external permission wait', () => {
+  test('waits for host response without an SDK wall-clock timeout', async () => {
     const permissionTarget = createPermissionTarget()
-
     const onPermissionRequest = vi.fn()
-    const onTimeout = vi.fn()
-
-    // Timeout set to 50ms with 25ms wait to trigger race condition reliably
-    // This gives enough time for the test to be stable on slower systems
-    // while still being fast enough to test the race condition scenario
-    const timeoutMs = 50
     const canUseTool = createExternalCanUseTool(
       undefined,
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      onTimeout,
-      timeoutMs,
     )
 
     const toolUseID = 'test-tool-use-id'
-
-    // Start the canUseTool call
     const resultPromise = canUseTool(
       { name: 'TestTool' } as any,
       {},
@@ -393,54 +375,31 @@ describe('createExternalCanUseTool race condition', () => {
       undefined,
     )
 
-    // Simulate host responding right at timeout threshold
-    // This creates the race condition scenario where both timeout and host
-    // try to resolve the same promise - but onceOnlyResolve ensures only one wins
-    await new Promise(r => setTimeout(r, 25))
+    const pending = await waitForPendingPermission(permissionTarget, toolUseID)
+    expect(pending).toBeDefined()
 
-    const pending = permissionTarget.pendingPermissionPrompts.get(toolUseID)
-    if (pending) {
-      // This will race with the timeout handler's resolve call
-      pending.resolve({ behavior: 'allow' as const })
-    }
+    const premature = await Promise.race([
+      resultPromise.then(() => 'resolved'),
+      new Promise(resolve => setTimeout(() => resolve('pending'), 25)),
+    ])
+    expect(premature).toBe('pending')
 
-    // Wait for result - should NOT throw "promise already resolved" error
-    // Explicitly wrap in try-catch to verify no error is thrown during race condition
-    let result: PermissionResolveDecision
-    let errorThrown: Error | null = null
-    try {
-      result = await resultPromise
-    } catch (e) {
-      errorThrown = e as Error
-      throw new Error(`Expected no error during race condition, but got: ${errorThrown.message}`)
-    }
-
-    // Explicitly verify no error was thrown
-    expect(errorThrown).toBeNull()
-
-    // Result should be deterministic - either allow or deny, but no error
-    expect(['allow', 'deny']).toContain(result!.behavior)
+    pending!.resolve({ behavior: 'allow' as const })
+    const result = await resultPromise
+    expect(result.behavior).toBe('allow')
   })
 
   test('once-only resolve wrapper prevents double resolution', async () => {
-    // Use createPermissionTarget which applies onceOnlyResolve at registration
     const permissionTarget = createPermissionTarget()
-
     const onPermissionRequest = vi.fn()
-    const onTimeout = vi.fn()
-
     const canUseTool = createExternalCanUseTool(
       undefined,
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      onTimeout,
-      50, // 50ms timeout
     )
 
     const toolUseID = 'test-tool-use-id-race'
-
-    // Start the canUseTool call
     const resultPromise = canUseTool(
       { name: 'TestTool' } as any,
       {},
@@ -450,38 +409,28 @@ describe('createExternalCanUseTool race condition', () => {
       undefined,
     )
 
-    // Respond immediately after starting to simulate very fast host response
-    // This tests that the first response wins, not the timeout
     const pending = await waitForPendingPermission(permissionTarget, toolUseID)
-    if (pending) {
-      pending.resolve({ behavior: 'allow' as const, updatedInput: { test: true } })
-    }
+    expect(pending).toBeDefined()
+    pending!.resolve({ behavior: 'allow' as const, updatedInput: { test: true } })
+    pending!.resolve({ behavior: 'deny' as const, message: 'late deny', decisionReason: { type: 'mode', mode: 'default' } })
 
-    // Wait for result
     const result = await resultPromise
 
-    // Host response should win over timeout since it came first
     expect(result.behavior).toBe('allow')
-    expect(onTimeout).not.toHaveBeenCalled()
   })
 
-  test('host response after timeout is safely ignored (no double-resolve)', async () => {
+  test('host response after a first decision is safely ignored', async () => {
     const permissionTarget = createPermissionTarget()
     const onPermissionRequest = vi.fn()
-    const onTimeout = vi.fn()
-
     const canUseTool = createExternalCanUseTool(
       undefined,
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      onTimeout,
-      50, // 50ms timeout
     )
 
-    const toolUseID = 'test-timeout-then-late-response'
+    const toolUseID = 'test-first-then-late-response'
 
-    // Start the canUseTool call — this registers a pending permission
     const resultPromise = canUseTool(
       { name: 'TestTool' } as any,
       {},
@@ -491,25 +440,15 @@ describe('createExternalCanUseTool race condition', () => {
       undefined,
     )
 
-    // Grab a reference to the resolve BEFORE timeout fires — simulates host
-    // capturing the callback while the permission prompt is still pending
     const staleResolve = await waitForPendingPermission(permissionTarget, toolUseID)
     expect(staleResolve).toBeDefined()
 
-    // Wait LONGER than the 50ms timeout — timeout fires first, resolves with deny
+    staleResolve!.resolve({ behavior: 'deny' as const, message: 'host denial', decisionReason: { type: 'mode', mode: 'default' } })
     const result = await resultPromise
 
-    // Timeout should have denied
     expect(result.behavior).toBe('deny')
-    expect(onTimeout).toHaveBeenCalledTimes(1)
-
-    // Map entry cleaned up by timeout handler — no leaked listener
     expect(permissionTarget.pendingPermissionPrompts.has(toolUseID)).toBe(false)
 
-    // NOW the host responds late through the stale reference it captured earlier.
-    // This is the critical scenario: host calls resolve({allow}) AFTER timeout
-    // already resolved with {deny}. onceOnlyResolve must silently ignore this.
-    // Wrap in try/catch to explicitly verify no error from double-resolve attempt.
     let lateResponseError: Error | null = null
     try {
       staleResolve!.resolve({ behavior: 'allow' as const, updatedInput: { injected: true } })
@@ -517,10 +456,7 @@ describe('createExternalCanUseTool race condition', () => {
       lateResponseError = e as Error
     }
 
-    // No error thrown — onceOnlyResolve silently swallowed the second resolve
     expect(lateResponseError).toBeNull()
-
-    // Result stays 'deny' — timeout decision is immutable
     expect(result.behavior).toBe('deny')
     expect((result as any).updatedInput).toBeUndefined()
   })
@@ -590,11 +526,10 @@ describe('createOnceOnlyResolve', () => {
     expect(resolvedValue).toBeUndefined() // Still undefined
   })
 
-  test('timeout-deny-then-host-allow: raw resolve called exactly once', () => {
+  test('first decision then later host response: raw resolve called exactly once', () => {
     // This directly proves onceOnlyResolve prevents the raw resolve from being
-    // called a second time — the exact scenario the reviewer asked about:
-    // timeout fires first (deny), then host responds (allow) — raw resolve
-    // must only execute once.
+    // called a second time when lifecycle cancellation/denial and a late host
+    // response race the same permission prompt.
     let rawCallCount = 0
     let rawResolvedValue: PermissionResolveDecision | undefined
 
@@ -605,8 +540,8 @@ describe('createOnceOnlyResolve', () => {
 
     const wrapped = createOnceOnlyResolve(rawResolve)
 
-    // Step 1: Timeout fires first — resolves with deny
-    wrapped({ behavior: 'deny', message: 'Permission resolution timed out' })
+    // Step 1: lifecycle denial wins first.
+    wrapped({ behavior: 'deny', message: 'Permission resolution was cancelled' })
     expect(rawCallCount).toBe(1)
     expect(rawResolvedValue!.behavior).toBe('deny')
 
@@ -691,8 +626,6 @@ describe('createExternalCanUseTool error handling', () => {
       askFallback,
       permissionTarget,
       throwingCallback,
-      undefined,
-      50,
     )
 
     const result = await canUseTool(
@@ -745,8 +678,6 @@ describe('createExternalCanUseTool warning suppression', () => {
       fallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
     )
 
     await canUseTool({ name: 'TestTool' } as any, {}, {} as any, {} as any, 'test-id', undefined)
@@ -756,40 +687,7 @@ describe('createExternalCanUseTool warning suppression', () => {
   })
 })
 
-describe('createExternalCanUseTool timeout scenarios', () => {
-  test('emits timeout message when host does not respond', async () => {
-    // Use createPermissionTarget which applies onceOnlyResolve at registration
-    const permissionTarget = createPermissionTarget()
-
-    const onPermissionRequest = vi.fn()
-    const onTimeout = vi.fn()
-
-    const canUseTool = createExternalCanUseTool(
-      undefined,
-      askFallback,
-      permissionTarget,
-      onPermissionRequest,
-      onTimeout,
-      50, // 50ms timeout for fast test
-    )
-
-    const result = await canUseTool(
-      { name: 'TestTool' } as any,
-      {},
-      {} as any,
-      {} as any,
-      'test-id',
-      undefined,
-    )
-
-    expect(result.behavior).toBe('deny')
-    expect(result.message).toContain('permission was required')
-    expect(onTimeout).toHaveBeenCalled()
-    expect(onTimeout.mock.calls[0][0].type).toBe('permission_timeout')
-    expect(onTimeout.mock.calls[0][0].tool_name).toBe('TestTool')
-    expect(onTimeout.mock.calls[0][0].timed_out_after_ms).toBe(50)
-  })
-
+describe('createExternalCanUseTool fallback scenarios', () => {
   test('fallback is used when no onPermissionRequest callback', async () => {
     const permissionTarget = createPermissionTarget()
 
@@ -846,8 +744,6 @@ describe('permission session_id dynamic resolution', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
       'static-session-123', // Static value
     )
 
@@ -873,8 +769,6 @@ describe('permission session_id dynamic resolution', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
       () => currentSessionId, // Dynamic getter
     )
 
@@ -902,42 +796,11 @@ describe('permission session_id dynamic resolution', () => {
       askFallback,
       permissionTarget,
       onPermissionRequest,
-      undefined,
-      50,
       () => undefined, // Getter returns undefined
     )
 
     await canUseTool({ name: 'TestTool' } as any, {}, {} as any, {} as any, 'test-id', undefined)
 
     expect(capturedSessionId).toBe(NO_SESSION_PLACEHOLDER)
-  })
-
-  test('permission_timeout also uses dynamic sessionId', async () => {
-    const permissionTarget = createPermissionTarget()
-    let currentSessionId = 'timeout-session' // Set before call
-    let capturedTimeoutSessionId: string | undefined
-
-    const onPermissionRequest = vi.fn((message: any) => {
-      // Don't resolve - let it timeout
-    })
-
-    const onTimeout = vi.fn((message: any) => {
-      capturedTimeoutSessionId = message.session_id
-    })
-
-    const canUseTool = createExternalCanUseTool(
-      undefined,
-      askFallback,
-      permissionTarget,
-      onPermissionRequest, // Required for timeout logic to run
-      onTimeout,
-      20, // Short timeout
-      () => currentSessionId,
-    )
-
-    await canUseTool({ name: 'TestTool' } as any, {}, {} as any, {} as any, 'test-id', undefined)
-
-    // Timeout message should use dynamic sessionId
-    expect(capturedTimeoutSessionId).toBe('timeout-session')
   })
 })

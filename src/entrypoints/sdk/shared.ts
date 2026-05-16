@@ -150,9 +150,8 @@ export function resetEnvMutexForTesting(): void {
  *   for respondToPermission(). Passed to onPermissionRequest callback for hosts
  *   to identify which request they're responding to.
  * - `tool_use_id`: Identifier for the specific tool use instance, passed from
- *   canUseTool(). Used internally for pending permission tracking and queue
- *   filtering. Multiple permission requests for the same tool use are rare but
- *   possible (e.g., retry after timeout).
+ *   canUseTool(). Used internally for pending permission tracking and host
+ *   resolution.
  * - `session_id`: SDK session identifier. When 'no-session', indicates a
  *   standalone permission prompt outside an SDK session flow (e.g., direct
  *   createExternalCanUseTool usage without session context).
@@ -178,26 +177,6 @@ export type SDKPermissionRequestMessage = {
 }
 
 /**
- * Message emitted when a permission request times out without a response.
- * Hosts can detect timeouts by checking `type === 'permission_timeout'`
- * in their `for await` loop. The `tool_use_id` matches the original
- * permission_request, allowing correlation.
- *
- * Note: `request_id` is not included in timeout messages since the request
- * is no longer pending — hosts cannot respond to timed-out requests.
- */
-export type SDKPermissionTimeoutMessage = {
-  type: 'permission_timeout'
-  tool_name: string
-  tool_use_id: string
-  timed_out_after_ms: number
-  /** UUID of the original permission request message for correlation. */
-  uuid: string
-  /** Session ID where the timeout occurred, or NO_SESSION_PLACEHOLDER. */
-  session_id: string
-}
-
-/**
  * A message emitted when agent definitions fail to load.
  * This allows hosts to detect configuration issues that would otherwise
  * be silently logged to console.warn.
@@ -214,7 +193,7 @@ export type SDKAgentLoadFailureMessage = {
  * A message emitted by the query engine during a conversation.
  * Re-exports the full generated type from coreTypes.generated.ts.
  */
-export type SDKMessage = GeneratedSDKMessage | SDKPermissionTimeoutMessage | SDKAgentLoadFailureMessage
+export type SDKMessage = GeneratedSDKMessage | SDKAgentLoadFailureMessage
 
 /**
  * A user message fed into query() via AsyncIterable.

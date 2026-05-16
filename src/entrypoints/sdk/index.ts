@@ -62,7 +62,6 @@ export type {
   ForkSessionResult,
   SessionMessage,
   SDKPermissionRequestMessage,
-  SDKPermissionTimeoutMessage,
   SDKAgentLoadFailureMessage,
   QueryPermissionMode,
 } from './shared.js'
