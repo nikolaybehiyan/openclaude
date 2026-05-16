@@ -161,6 +161,10 @@ export function resetEnvMutexForTesting(): void {
  * Hosts typically use `request_id` for responding; `tool_use_id` is useful
  * for tracking state or correlating with tool_use events in the message stream.
  * `session_id` enables correlation with SDK session lifecycle events.
+ * `approval_options` describes the host UI choices supported by this generic
+ * external permission request. Generic SDK permissions are one-shot decisions
+ * for a single `tool_use_id`; remembered "always" choices belong to the host's
+ * account/tool policy layer, not the SDK permission primitive.
  */
 export type SDKPermissionRequestMessage = {
   type: 'permission_request'
@@ -168,6 +172,7 @@ export type SDKPermissionRequestMessage = {
   tool_name: string
   tool_use_id: string
   input: Record<string, unknown>
+  approval_options?: string[]
   uuid: string
   session_id: string
 }

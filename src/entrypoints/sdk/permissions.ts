@@ -33,6 +33,8 @@ import type {
 /** Default timeout for permission prompts (30 seconds). Reasonable for human response time. */
 export const DEFAULT_PERMISSION_TIMEOUT_MS = 30000
 
+export const DEFAULT_EXTERNAL_PERMISSION_APPROVAL_OPTIONS = ['once'] as const
+
 /**
  * Placeholder session_id for permission requests outside SDK session context.
  * Used when createExternalCanUseTool is called without a sessionId parameter,
@@ -314,6 +316,7 @@ export function createExternalCanUseTool(
           tool_name: tool.name,
           tool_use_id: toolUseID,
           input: input as Record<string, unknown>,
+          approval_options: [...DEFAULT_EXTERNAL_PERMISSION_APPROVAL_OPTIONS],
           uuid: messageUuid,
           session_id: resolveSessionId(),
         })

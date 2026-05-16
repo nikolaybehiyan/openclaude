@@ -2345,6 +2345,7 @@ export type SDKMessage = ({
   tool_name: string
   tool_use_id: string
   input: Record<string, unknown>
+  approval_options?: Array<string>
   uuid: string
   session_id: string
 })

@@ -1858,6 +1858,7 @@ export const SDKPermissionRequestMessageSchema = lazySchema(() =>
     tool_name: z.string().describe('Name of the tool requesting permission'),
     tool_use_id: z.string().describe('Tool use ID for matching with respondToPermission'),
     input: z.record(z.string(), z.unknown()).describe('Tool input parameters'),
+    approval_options: z.array(z.string()).optional().describe('Host UI approval options supported by this generic SDK permission request'),
     uuid: UUIDPlaceholder(),
     session_id: z.string(),
   }),
