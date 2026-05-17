@@ -46,6 +46,8 @@ const featureFlags: Record<string, boolean> = {
   MESSAGE_ACTIONS: true,              // Message action buttons in the UI
 
   // ── Enabled: new activations ────────────────────────────────────────
+  TREE_SITTER_BASH: true,             // Pure-TS bash parser is mirrored; required for accurate sandboxed Bash permission analysis
+  TREE_SITTER_BASH_SHADOW: false,     // Do not run legacy/shadow comparison in production SDK runtime
   DUMP_SYSTEM_PROMPT: true,           // --dump-system-prompt CLI flag for debugging
   CACHED_MICROCOMPACT: true,          // Cache-aware tool result truncation optimization
   AWAY_SUMMARY: true,                 // "While you were away" recap after 5min blur

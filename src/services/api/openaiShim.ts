@@ -901,6 +901,16 @@ const JSON_REPAIR_SUFFIXES = [
   '}', '"}', ']}', '"]}', '}}', '"}}', ']}}', '"]}}', '"]}]}', '}]}'
 ]
 
+function stripInitialNullToolArgumentsSentinel(
+  chunk: string | undefined,
+  buffered: string,
+): string {
+  if (!chunk || buffered !== '') return chunk ?? ''
+  const match = /^(\s*)null(?=\s*(?:$|[{\[]))/u.exec(chunk)
+  if (!match) return chunk
+  return match[1] + chunk.slice(match[0].length)
+}
+
 function repairPossiblyTruncatedObjectJson(raw: string): string | null {
   try {
     const parsed = JSON.parse(raw)
@@ -1131,9 +1141,13 @@ async function* openaiStreamToAnthropic(
               }
 
               const toolBlockIndex = contentBlockIndex
-              const initialArguments = tc.function.arguments ?? ''
+              const rawInitialArguments = tc.function.arguments ?? ''
+              const initialArguments = stripInitialNullToolArgumentsSentinel(
+                rawInitialArguments,
+                '',
+              )
               const normalizeAtStop = hasToolFieldMapping(tc.function.name)
-              processStreamChunk(streamState, tc.function.arguments ?? '')
+              processStreamChunk(streamState, initialArguments)
               activeToolCalls.set(tc.index, {
                 id: tc.id,
                 name: tc.function.name,
@@ -1163,13 +1177,13 @@ async function* openaiStreamToAnthropic(
               contentBlockIndex++
 
               // Emit any initial arguments
-              if (tc.function.arguments && !normalizeAtStop) {
+              if (initialArguments && !normalizeAtStop) {
                 yield {
                   type: 'content_block_delta',
                   index: toolBlockIndex,
                   delta: {
                     type: 'input_json_delta',
-                    partial_json: tc.function.arguments,
+                    partial_json: initialArguments,
                   },
                 }
               }
@@ -1177,9 +1191,14 @@ async function* openaiStreamToAnthropic(
               // Continuation of existing tool call
               const active = activeToolCalls.get(tc.index)
               if (active) {
-                if (tc.function.arguments) {
-                  active.jsonBuffer += tc.function.arguments
+                const argumentChunk = stripInitialNullToolArgumentsSentinel(
+                  tc.function.arguments,
+                  active.jsonBuffer,
+                )
+                if (!argumentChunk) {
+                  continue
                 }
+                active.jsonBuffer += argumentChunk
 
                 if (active.normalizeAtStop) {
                   continue
@@ -1190,7 +1209,7 @@ async function* openaiStreamToAnthropic(
                   index: active.index,
                   delta: {
                     type: 'input_json_delta',
-                    partial_json: tc.function.arguments,
+                    partial_json: argumentChunk,
                   },
                 }
               }

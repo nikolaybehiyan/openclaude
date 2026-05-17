@@ -347,6 +347,8 @@ export type PermissionResolveDecision =
 
 export type SDKSessionOptions = {
   cwd: string
+  /** Additional directories the agent can access during this session. */
+  additionalDirectories?: string[]
   model?: string
   permissionMode?: QueryPermissionMode
   abortController?: AbortController

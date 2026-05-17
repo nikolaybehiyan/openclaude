@@ -257,6 +257,16 @@ import {
   withRetry,
 } from './withRetry.js'
 
+function stripInitialNullToolInputSentinel(
+  chunk: string,
+  buffered: string,
+): string {
+  if (!chunk || buffered !== '') return chunk
+  const match = /^(\s*)null(?=\s*(?:$|[{\[]))/u.exec(chunk)
+  if (!match) return chunk
+  return match[1] + chunk.slice(match[0].length)
+}
+
 // Define a type that represents valid JSON values
 type JsonValue = string | number | boolean | null | JsonObject | JsonArray
 type JsonObject = { [key: string]: JsonValue }
@@ -2152,7 +2162,12 @@ async function* queryModel(
                     })
                     throw new Error('Content block input is not a string')
                   }
-                  contentBlock.input += delta.partial_json
+                  const partialJson = stripInitialNullToolInputSentinel(
+                    delta.partial_json,
+                    contentBlock.input,
+                  )
+                  delta.partial_json = partialJson
+                  contentBlock.input += partialJson
                   break
                 case 'text_delta':
                   if (contentBlock.type !== 'text') {

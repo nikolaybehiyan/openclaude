@@ -98,6 +98,8 @@ import { createAbortController } from '../../utils/abortController.js'
 export type SDKSessionOptions = {
   /** Working directory for the session. Required. */
   cwd: string
+  /** Additional directories the agent can access during this session. */
+  additionalDirectories?: string[]
   /** Model to use (e.g. 'claude-sonnet-4-6'). */
   model?: string
   /** Permission mode for tool access. */
@@ -808,6 +810,7 @@ function createEngineFromOptions(
   const permissionContext = buildPermissionContext({
     cwd,
     permissionMode,
+    additionalDirectories: options.additionalDirectories,
     disallowedTools: options.disallowedTools,
   })
 
