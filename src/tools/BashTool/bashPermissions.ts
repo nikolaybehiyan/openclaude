@@ -1805,12 +1805,13 @@ export async function bashToolHasPermission(
 
   // Check sandbox auto-allow (which respects explicit deny/ask rules)
   // Only call this if sandboxing and auto-allow are both enabled
+  let sandboxAutoAllowResult: PermissionResult | null = null
   if (
     SandboxManager.isSandboxingEnabled() &&
     SandboxManager.isAutoAllowBashIfSandboxedEnabled() &&
     shouldUseSandbox(input)
   ) {
-    const sandboxAutoAllowResult = checkSandboxAutoAllow(
+    sandboxAutoAllowResult = checkSandboxAutoAllow(
       input,
       appState.toolPermissionContext,
     )
@@ -2396,6 +2397,12 @@ export async function bashToolHasPermission(
     // checkCommandAndSuggestRules), NOT from explicit ask rules - those were already
     // filtered out at step 13 (askSubresult check). The classifier can bypass security.
     if (result.behavior === 'ask' || result.behavior === 'passthrough') {
+      if (
+        result.behavior === 'passthrough' &&
+        sandboxAutoAllowResult?.behavior === 'allow'
+      ) {
+        return sandboxAutoAllowResult
+      }
       return {
         ...result,
         ...(feature('BASH_CLASSIFIER')
@@ -2515,6 +2522,13 @@ export async function bashToolHasPermission(
           },
         ]
       : undefined
+
+  if (
+    askSubresult === undefined &&
+    sandboxAutoAllowResult?.behavior === 'allow'
+  ) {
+    return sandboxAutoAllowResult
+  }
 
   // Attach pending classifier check - may auto-approve before user responds.
   // Behavior is 'ask' if any subcommand was 'ask' (e.g., path constraint or ask

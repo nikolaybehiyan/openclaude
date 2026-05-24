@@ -281,17 +281,6 @@ describe('V2: session resume', () => {
 })
 
 describe('V2: permission handling', () => {
-  test('respondToPermission() with unknown toolUseId — no-op', () => {
-    const session = unstable_v2_createSession({
-      cwd: process.cwd(),
-    })
-    expect(() =>
-      session.respondToPermission('unknown-id', {
-        behavior: 'allow',
-      })
-    ).not.toThrow()
-  })
-
   test('createSession() with canUseTool callback — session created successfully', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),
@@ -299,16 +288,6 @@ describe('V2: permission handling', () => {
         behavior: 'deny' as const,
         message: `Tool ${name} denied by test`,
       }),
-    })
-    expect(session.sessionId).toBeDefined()
-  })
-
-  test('createSession() with onPermissionRequest callback — session created successfully', () => {
-    const session = unstable_v2_createSession({
-      cwd: process.cwd(),
-      onPermissionRequest: (_msg) => {
-        // No-op — just verify it doesn't throw during construction
-      },
     })
     expect(session.sessionId).toBeDefined()
   })

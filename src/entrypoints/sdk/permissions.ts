@@ -7,9 +7,8 @@
  * @internal — these utilities are not part of the public SDK API.
  */
 
-import { randomUUID } from 'crypto'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
-import type { PermissionDecision, PermissionMode } from '../../types/permissions.js'
+import type { PermissionDecision } from '../../types/permissions.js'
 import {
   getEmptyToolPermissionContext,
   type ToolPermissionContext,
@@ -22,23 +21,7 @@ import { connectToServer, fetchToolsForClient } from '../../services/mcp/client.
 import type {
   QueryPermissionMode,
   CanUseToolCallback,
-  SDKPermissionRequestMessage,
 } from './shared.js'
-
-// ============================================================================
-// Constants
-// ============================================================================
-
-export const DEFAULT_EXTERNAL_PERMISSION_APPROVAL_OPTIONS = ['once'] as const
-
-/**
- * Placeholder session_id for permission requests outside SDK session context.
- * Used when createExternalCanUseTool is called without a sessionId parameter,
- * indicating a standalone permission prompt (e.g., direct tool permission check
- * without an active SDK session). Hosts can identify such requests by checking
- * session_id === NO_SESSION_PLACEHOLDER.
- */
-export const NO_SESSION_PLACEHOLDER = 'no-session'
 
 // ============================================================================
 // Logger interface for SDK surface
@@ -56,107 +39,6 @@ export interface SDKLogger {
 /** Default console-based logger used when no custom logger is provided. */
 const defaultLogger: SDKLogger = {
   warn: (message: string) => console.warn(message),
-}
-
-// ============================================================================
-// Once-only resolve wrapper
-// ============================================================================
-
-/**
- * Creates a resolve function that can only be called once.
- * Prevents promise twice-resolve race conditions when a host response and
- * query/session cancellation arrive close together.
- */
-export function createOnceOnlyResolve<T>(
-  resolve: (value: T) => void,
-): (value: T) => void {
-  let resolved = false
-  return (value: T) => {
-    if (!resolved) {
-      resolved = true
-      resolve(value)
-    }
-  }
-}
-
-// ============================================================================
-// Permission target factory (for race condition safety)
-// ============================================================================
-
-/**
- * Factory for creating a permissionTarget with proper race condition handling.
- * The once-only resolve wrapper is applied at registration time, ensuring
- * host response and query/session cancellation use the same wrapped resolve.
- *
- * Usage:
- * ```typescript
- * const permissionTarget = createPermissionTarget()
- * const canUseTool = createExternalCanUseTool(
- *   undefined,
- *   fallback,
- *   permissionTarget,
- *   onPermissionRequest
- * )
- * ```
- */
-// ============================================================================
-// Permission resolve decision type
-// ============================================================================
-
-export type PermissionResolveDecision =
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-  | { behavior: 'deny'; message: string; decisionReason: { type: 'mode'; mode: string } }
-
-// ============================================================================
-// PermissionTarget interface
-// ============================================================================
-
-/**
- * Interface for objects that can register and resolve pending permission prompts.
- * Used by createExternalCanUseTool to interact with QueryImpl and SDKSessionImpl
- * without exposing internal pendingPermissionPrompts map.
- */
-export interface PermissionTarget {
-  registerPendingPermission(toolUseId: string): Promise<PermissionResolveDecision>
-  deletePendingPermission(toolUseId: string): void
-  denyPendingPermission(toolUseId: string, message: string): void
-}
-
-export function createPermissionTarget(): PermissionTarget & { pendingPermissionPrompts: Map<string, { resolve: (decision: PermissionResolveDecision) => void }> } {
-  const pendingPermissionPrompts = new Map<string, { resolve: (decision: PermissionResolveDecision) => void }>()
-
-  const registerPendingPermission = (toolUseId: string): Promise<PermissionResolveDecision> => {
-    return new Promise(resolve => {
-      // Apply onceOnlyResolve at registration time - this ensures both host
-      // response and cancellation use the same wrapped resolve,
-      // preventing "promise already resolved" errors
-      const wrappedResolve = createOnceOnlyResolve(resolve)
-      pendingPermissionPrompts.set(toolUseId, { resolve: wrappedResolve })
-    })
-  }
-
-  const deletePendingPermission = (toolUseId: string): void => {
-    pendingPermissionPrompts.delete(toolUseId)
-  }
-
-  const denyPendingPermission = (toolUseId: string, message: string): void => {
-    const pending = pendingPermissionPrompts.get(toolUseId)
-    if (pending) {
-      pending.resolve({
-        behavior: 'deny',
-        message,
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-      pendingPermissionPrompts.delete(toolUseId)
-    }
-  }
-
-  return {
-    registerPendingPermission,
-    deletePendingPermission,
-    denyPendingPermission,
-    pendingPermissionPrompts,
-  }
 }
 
 // ============================================================================
@@ -213,44 +95,64 @@ export function buildPermissionContext(options: PermissionContextOptions): ToolP
   }
 }
 
+export function applyBuiltinToolsFilter(
+  permissionContext: ToolPermissionContext,
+  tools: string[] | undefined,
+  defaultBuiltins: readonly string[],
+): ToolPermissionContext {
+  if (!Array.isArray(tools)) {
+    return permissionContext
+  }
+  const selected = new Set(
+    tools
+      .map(tool => tool.trim())
+      .filter(Boolean),
+  )
+  if (selected.has('default')) {
+    return permissionContext
+  }
+  const unavailableBuiltins = defaultBuiltins.filter(
+    tool => !selected.has(tool),
+  )
+  if (unavailableBuiltins.length === 0) {
+    return permissionContext
+  }
+  return {
+    ...permissionContext,
+    alwaysDenyRules: {
+      ...permissionContext.alwaysDenyRules,
+      cliArg: [
+        ...(permissionContext.alwaysDenyRules.cliArg ?? []),
+        ...unavailableBuiltins,
+      ],
+    },
+  }
+}
+
 // ============================================================================
 // createExternalCanUseTool
 // ============================================================================
 
 /**
- * Creates a canUseTool function that supports external permission resolution
- * via respondToPermission().
+ * Creates a canUseTool function for SDK hosts.
  *
- * When a user-provided canUseTool callback exists, it takes priority.
- * Otherwise, a permission_request message is emitted to the SDK stream,
- * and the host can resolve it via respondToPermission() before tool execution
- * continues.
+ * OpenClaude's permission engine always runs first. If it returns allow or
+ * deny, the SDK preserves that decision. If it returns ask, the SDK delegates
+ * to the host-provided canUseTool callback. Without that callback the request
+ * is denied by default.
  *
  * The flow:
  * 1. QueryEngine calls canUseTool(tool, input, ..., toolUseID, forceDecision)
  * 2. If forceDecision is set, honor it immediately
- * 3. If user canUseTool callback exists, delegate to it
- * 4. Otherwise, emit permission_request message and await external resolution
- *
- * For async external resolution, hosts should listen for permission_request
- * SDKMessages and call respondToPermission(). The pending prompt is registered
- * via registerPendingPermission() and awaited here.
+ * 3. Run the source permission fallback
+ * 4. If the fallback asks, delegate to user canUseTool or deny
  */
 export function createExternalCanUseTool(
   userFn: CanUseToolCallback | undefined,
   fallback: CanUseToolFn,
-  permissionTarget: PermissionTarget,
-  onPermissionRequest?: (message: SDKPermissionRequestMessage) => void,
-  /** Session ID or getter for dynamic resolution (e.g. () => queryImpl.sessionId for fork/continue) */
-  sessionId?: string | (() => string | undefined),
   logger?: SDKLogger,
 ): CanUseToolFn {
   const log = logger ?? defaultLogger
-  /** Resolve sessionId - call getter if provided, otherwise return static value */
-  const resolveSessionId = (): string => {
-    const resolved = typeof sessionId === 'function' ? sessionId() : sessionId
-    return resolved ?? NO_SESSION_PLACEHOLDER
-  }
   return async (tool, input, toolUseContext, assistantMessage, toolUseID, forceDecision): Promise<PermissionDecision> => {
     // Cast input to ensure type compatibility with PermissionDecision
     const typedInput = input as Record<string, unknown>
@@ -289,58 +191,11 @@ export function createExternalCanUseTool(
       }
     }
 
-    // No user callback — if host registered an onPermissionRequest callback,
-    // call it directly and await external resolution. Approval wait/cancel is
-    // host/session lifecycle; the SDK does not impose a wall-clock timeout.
-    if (toolUseID && onPermissionRequest) {
-      const requestId = randomUUID()
-      const messageUuid = randomUUID()
-
-      // Register pending permission BEFORE emitting the request so that
-      // a host which responds synchronously from onPermissionRequest can
-      // find the entry in pendingPermissionPrompts immediately.
-      const pendingPromise = permissionTarget.registerPendingPermission(toolUseID)
-
-      // Wrap onPermissionRequest in try-catch since it's SDK-host-provided code.
-      // If it throws, clean up the pending entry and deny/fallback cleanly.
-      try {
-        onPermissionRequest({
-          type: 'permission_request',
-          request_id: requestId,
-          tool_name: tool.name,
-          tool_use_id: toolUseID,
-          input: input as Record<string, unknown>,
-          approval_options: [...DEFAULT_EXTERNAL_PERMISSION_APPROVAL_OPTIONS],
-          uuid: messageUuid,
-          session_id: resolveSessionId(),
-        })
-      } catch (err) {
-        permissionTarget.deletePendingPermission(toolUseID)
-        const errorMessage = err instanceof Error ? err.message : 'Unknown host callback error'
-        return {
-          behavior: 'deny' as const,
-          message: `Tool ${tool.name} denied (onPermissionRequest callback error: ${errorMessage})`,
-          decisionReason: { type: 'mode' as const, mode: 'default' },
-        }
-      }
-
-      const res = await pendingPromise
-      permissionTarget.deletePendingPermission(toolUseID)
-      if (res.behavior === 'allow') {
-        return { behavior: 'allow' as const, updatedInput: res.updatedInput ?? typedInput }
-      }
-      return {
-        behavior: 'deny' as const,
-        message: res.message,
-        decisionReason: { type: 'mode' as const, mode: res.decisionReason.mode as PermissionMode },
-      }
-    }
-
     if (!warnedDefaultPermissions) {
       warnedDefaultPermissions = true
       log.warn(
         `[SDK] Tool "${tool.name}" requires permission but no external permission handler is available. ` +
-        'Denying by default. Provide canUseTool or onPermissionRequest in SDK options.',
+        'Denying by default. Provide canUseTool in SDK options.',
       )
     }
     return {
@@ -531,10 +386,9 @@ export async function connectSdkMcpServers(
  * Module-level warning flag for default permissions.
  *
  * This warning fires ONCE PER PROCESS when the default fallback denial
- * actually executes (i.e., a tool is denied because no canUseTool or
- * onPermissionRequest callback was provided). The warning is deferred to
- * execution time so that callers who provide canUseTool/onPermissionRequest
- * never see it.
+ * actually executes (i.e., a tool is denied because no canUseTool callback was
+ * provided). The warning is deferred to execution time so callers who provide
+ * canUseTool never see it.
  *
  * If you create multiple queries/sessions in the same process, only the first
  * actual default denial will emit this warning. This behavior is acceptable because:
@@ -546,7 +400,7 @@ let warnedDefaultPermissions = false
 
 /**
  * Default canUseTool that DENIES all tool uses when no explicit
- * canUseTool or onPermissionRequest callback is provided.
+ * canUseTool callback is provided.
  *
  * This is the secure-by-default behavior: SDK consumers must explicitly
  * provide a permission callback to allow tool execution. Permission modes
@@ -555,8 +409,8 @@ let warnedDefaultPermissions = false
  * is ever reached.
  *
  * The warning is emitted at execution time (on first actual denial) rather
- * than at construction time, so callers who provide canUseTool or
- * onPermissionRequest never see false warnings.
+ * than at construction time, so callers who provide canUseTool never see false
+ * warnings.
  */
 export function createDefaultCanUseTool(
   _permissionContext: ToolPermissionContext,

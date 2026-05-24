@@ -234,6 +234,11 @@ export type QueryOptions = {
   executable?: string
   allowDangerouslySkipPermissions?: boolean
   disallowedTools?: string[]
+  /**
+   * Built-in tools to make available to Claude. When set, unlisted built-ins
+   * are removed from context. SDK MCP/custom tools are unaffected.
+   */
+  tools?: string[]
   hooks?: Record<string, unknown[]>
   mcpServers?: Record<string, unknown>
   settings?: {
@@ -246,22 +251,14 @@ export type QueryOptions = {
    * Callback invoked before each tool use. Return `{ behavior: 'allow' }` to
    * permit the call or `{ behavior: 'deny', message?: string }` to reject it.
    *
-   * **Secure-by-default**: If neither `canUseTool` nor `onPermissionRequest`
-   * is provided, ALL tool uses are denied. You MUST provide at least one of
-   * these callbacks to allow tool execution.
+   * **Secure-by-default**: If `canUseTool` is not provided, tool requests that
+   * require approval are denied.
    */
   canUseTool?: (
     name: string,
     input: unknown,
     options?: { toolUseID?: string },
   ) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown }>
-  /**
-   * Callback invoked when a tool needs permission approval. The host receives
-   * the request immediately and can resolve it by calling
-   * `query.respondToPermission(toolUseId, decision)`. The SDK waits until the
-   * host responds or the query/session is cancelled.
-   */
-  onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
   systemPrompt?:
     | string
     | { type: 'preset'; preset: string; append?: string }
@@ -288,7 +285,6 @@ export interface Query {
   setPermissionMode(mode: QueryPermissionMode): Promise<void>
   close(): void
   interrupt(): void
-  respondToPermission(toolUseId: string, decision: PermissionResult): void
   /** Check if file rewind is possible. */
   rewindFiles(): RewindFilesResult
   /** Actually perform the file rewind. Returns files changed and diff stats. */
@@ -299,21 +295,6 @@ export interface Query {
   mcpServerStatus(): McpServerStatus[]
   accountInfo(): Promise<{ apiKeySource: ApiKeySource; [key: string]: unknown }>
   setMaxThinkingTokens(tokens: number): void
-}
-
-/**
- * Permission request message emitted when a tool needs permission approval.
- * Hosts can respond via respondToPermission() using the request_id.
- */
-export type SDKPermissionRequestMessage = {
-  type: 'permission_request'
-  request_id: string
-  tool_name: string
-  tool_use_id: string
-  input: Record<string, unknown>
-  approval_options?: string[]
-  uuid: string
-  session_id: string
 }
 
 /**
@@ -330,18 +311,6 @@ export type SDKAgentLoadFailureMessage = {
 }
 
 // ============================================================================
-// Permission resolve decision (SDK-specific)
-// ============================================================================
-
-/**
- * Decision returned by permission resolution.
- * Used by respondToPermission() and internal permission handling.
- */
-export type PermissionResolveDecision =
-  | { behavior: 'allow'; updatedInput?: Record<string, unknown> }
-  | { behavior: 'deny'; message: string; decisionReason: { type: 'mode'; mode: string } }
-
-// ============================================================================
 // V2 API types
 // ============================================================================
 
@@ -349,6 +318,8 @@ export type SDKSessionOptions = {
   cwd: string
   /** Additional directories the agent can access during this session. */
   additionalDirectories?: string[]
+  /** Filesystem-based setting sources to load for this session. */
+  settingSources?: string[]
   model?: string
   permissionMode?: QueryPermissionMode
   abortController?: AbortController
@@ -356,9 +327,8 @@ export type SDKSessionOptions = {
    * Callback invoked before each tool use. Return `{ behavior: 'allow' }` to
    * permit the call or `{ behavior: 'deny', message?: string }` to reject it.
    *
-   * **Secure-by-default**: If neither `canUseTool` nor `onPermissionRequest`
-   * is provided, ALL tool uses are denied. You MUST provide at least one of
-   * these callbacks to allow tool execution.
+   * **Secure-by-default**: If `canUseTool` is not provided, tool requests that
+   * require approval are denied.
    */
   canUseTool?: (
     name: string,
@@ -368,10 +338,10 @@ export type SDKSessionOptions = {
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
   /**
-   * Callback invoked when a tool needs permission approval. The host receives
-   * the request immediately and can resolve it via respondToPermission().
+   * Built-in tools to make available to Claude. When set, unlisted built-ins
+   * are removed from context. SDK MCP/custom tools are unaffected.
    */
-  onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
+  tools?: string[]
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
   /** Custom system prompt for persistent SDK sessions. */
@@ -416,8 +386,6 @@ export interface SDKSession {
   sideQuestion(question: string): Promise<SDKSideQuestionResult>
   /** Close the session and release resources (MCP connections, etc.). */
   close(): void
-  /** Respond to a pending permission prompt. */
-  respondToPermission(toolUseId: string, decision: PermissionResult): void
 }
 
 export type SDKStopTaskResult = {

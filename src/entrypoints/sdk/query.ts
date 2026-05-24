@@ -18,7 +18,7 @@ import {
   getEmptyToolPermissionContext,
   type ToolPermissionContext,
 } from '../../Tool.js'
-import { getTools } from '../../tools.js'
+import { getTools, getToolsForDefaultPreset } from '../../tools.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
 import { init } from '../init.js'
 import {
@@ -40,7 +40,6 @@ import type {
   RewindFilesResult,
   McpServerStatus,
   ApiKeySource,
-  PermissionResult,
 } from './coreTypes.generated.js'
 import {
   fileHistoryCanRestore,
@@ -62,12 +61,10 @@ import {
 } from './shared.js'
 import {
   buildPermissionContext,
+  applyBuiltinToolsFilter,
   createExternalCanUseTool,
   connectSdkMcpServers,
   createDefaultCanUseTool,
-  createOnceOnlyResolve,
-  type PermissionResolveDecision,
-  type PermissionTarget,
 } from './permissions.js'
 import {
   listSessions,
@@ -115,6 +112,11 @@ export type QueryOptions = {
   allowDangerouslySkipPermissions?: boolean
   /** Tools to disallow. */
   disallowedTools?: string[]
+  /**
+   * Built-in tools to make available to Claude. When set, unlisted built-ins
+   * are removed from context. SDK MCP/custom tools are unaffected.
+   */
+  tools?: string[]
   /** Hook configuration. */
   hooks?: Record<string, unknown[]>
   /** MCP server configuration. */
@@ -130,18 +132,10 @@ export type QueryOptions = {
    * Callback invoked before each tool use. Return `{ behavior: 'allow' }` to
    * permit the call or `{ behavior: 'deny', message?: string }` to reject it.
    *
-   * **Secure-by-default**: If neither `canUseTool` nor `onPermissionRequest`
-   * is provided, ALL tool uses are denied. You MUST provide at least one of
-   * these callbacks to allow tool execution.
+   * **Secure-by-default**: If `canUseTool` is not provided, tool requests that
+   * require approval are denied.
    */
   canUseTool?: CanUseToolCallback
-  /**
-   * Callback invoked when a tool needs permission approval. The host receives
-   * the request immediately and can resolve it by calling
-   * `query.respondToPermission(toolUseId, decision)`. The SDK waits until the
-   * host responds or the query/session is cancelled.
-   */
-  onPermissionRequest?: (message: import('./shared.js').SDKPermissionRequestMessage) => void
   /** System prompt override. */
   systemPrompt?:
     | string
@@ -181,8 +175,6 @@ export interface Query {
   close(): void
   /** Abort the current operation. */
   interrupt(): void
-  /** Respond to a pending permission prompt. */
-  respondToPermission(toolUseId: string, decision: PermissionResult): void
   /** Undo file changes made during the session. */
   rewindFiles(): RewindFilesResult
   /** Actually perform the file rewind. Returns files changed and diff stats. */
@@ -378,9 +370,6 @@ class QueryImpl implements Query {
   private prompt: string | AsyncIterable<SDKUserMessage>
   private abortController: AbortController
   private appStateStore: Store<AppState>
-  private pendingPermissionPrompts = new Map<string, {
-    resolve: (decision: PermissionResolveDecision) => void
-  }>()
   private envOverrides: Record<string, string | undefined> | undefined
   private envSnapshot: Record<string, string | undefined> | undefined
   private _sessionId: string
@@ -435,36 +424,6 @@ class QueryImpl implements Query {
   setEngine(engine: QueryEngine, options?: { injected?: boolean }): void {
     this._engine = engine
     this._engineWasInjected = options?.injected ?? true
-  }
-
-  /**
-   * Register a pending permission prompt for external resolution.
-   * Returns a Promise that resolves when respondToPermission() is called
-   * with the matching toolUseId.
-   */
-  registerPendingPermission(toolUseId: string): Promise<PermissionResolveDecision> {
-    return new Promise(resolve => {
-      const wrappedResolve = createOnceOnlyResolve(resolve)
-      this.pendingPermissionPrompts.set(toolUseId, { resolve: wrappedResolve })
-    })
-  }
-
-  /** Delete a pending permission prompt without resolving it. */
-  deletePendingPermission(toolUseId: string): void {
-    this.pendingPermissionPrompts.delete(toolUseId)
-  }
-
-  /** Deny a pending permission prompt with a message and clean up. */
-  denyPendingPermission(toolUseId: string, message: string): void {
-    const pending = this.pendingPermissionPrompts.get(toolUseId)
-    if (pending) {
-      pending.resolve({
-        behavior: 'deny',
-        message,
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-      this.pendingPermissionPrompts.delete(toolUseId)
-    }
   }
 
   /** Push an agent load failure message into the queue for later draining. */
@@ -744,34 +703,6 @@ class QueryImpl implements Query {
     if (this._engine) {
       this._engine.interrupt()
     }
-    // Deny all pending permission prompts before clearing
-    for (const [toolUseId, pending] of this.pendingPermissionPrompts) {
-      pending.resolve({
-        behavior: 'deny',
-        message: 'Query interrupted',
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-    }
-    this.pendingPermissionPrompts.clear()
-  }
-
-  respondToPermission(toolUseId: string, decision: PermissionResult): void {
-    const pending = this.pendingPermissionPrompts.get(toolUseId)
-    if (!pending) return
-
-    if (decision.behavior === 'allow') {
-      pending.resolve({
-        behavior: 'allow',
-        updatedInput: decision.updatedInput,
-      })
-    } else {
-      pending.resolve({
-        behavior: 'deny',
-        message: decision.message ?? 'Permission denied',
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-    }
-    this.pendingPermissionPrompts.delete(toolUseId)
   }
 
   rewindFiles(): RewindFilesResult {
@@ -1032,7 +963,11 @@ export function query(params: {
   // from overwriting each other's working directory.
 
   // Build permission context
-  const permissionContext = buildPermissionContext(options)
+  const permissionContext = applyBuiltinToolsFilter(
+    buildPermissionContext(options),
+    options.tools,
+    getToolsForDefaultPreset(),
+  )
 
   // Create AppState store (minimal, headless)
   const initialAppState = getDefaultAppState()
@@ -1072,24 +1007,18 @@ export function query(params: {
   // Abort controller
   const ac = abortController ?? new AbortController()
 
-  // Create the Query wrapper first so we can wire canUseTool to its
-  // pending permission map. Pass envOverrides for application AFTER init().
-  // Also pass sessionId, fork/forkSession, continue, cwd, resumeSessionAt, and agents.
+  // Create the Query wrapper before the engine so fresh, forked, and continued
+  // queries expose a stable session id immediately. Pass envOverrides for
+  // application AFTER init().
   const effectiveSessionId = options.sessionId || options.resume
   const shouldFork = options.fork || options.forkSession
   const queryImpl = new QueryImpl(null, prompt, ac, appStateStore, envOverrides, effectiveSessionId, shouldFork, options.continue, cwd, options.resumeSessionAt, options.agents, options.mcpServers, permissionContext)
 
-  // Build the canUseTool that supports external permission resolution.
-  // When no user canUseTool callback is provided, this creates a pending
-  // prompt entry that respondToPermission() can resolve asynchronously.
-  // Pass sessionId getter so permission_request messages use actual current session.
-  // For fresh/fork/continue queries, sessionId is resolved dynamically at event time.
+  // Build the canUseTool wrapper. Source permission checks run first; host
+  // canUseTool is only asked when the source engine returns ask.
   const externalCanUseTool = createExternalCanUseTool(
     options.canUseTool,
     defaultCanUseTool,
-    queryImpl,
-    options.onPermissionRequest,
-    () => queryImpl.sessionId,
   )
 
   // Create QueryEngine config

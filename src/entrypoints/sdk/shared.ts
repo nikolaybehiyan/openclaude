@@ -142,41 +142,6 @@ export function resetEnvMutexForTesting(): void {
 // ============================================================================
 
 /**
- * Permission request message emitted when a tool needs permission approval.
- * Hosts can respond via respondToPermission() using the request_id.
- *
- * **ID Relationship:**
- * - `request_id`: UUID generated per permission request, used as correlation ID
- *   for respondToPermission(). Passed to onPermissionRequest callback for hosts
- *   to identify which request they're responding to.
- * - `tool_use_id`: Identifier for the specific tool use instance, passed from
- *   canUseTool(). Used internally for pending permission tracking and host
- *   resolution.
- * - `session_id`: SDK session identifier. When 'no-session', indicates a
- *   standalone permission prompt outside an SDK session flow (e.g., direct
- *   createExternalCanUseTool usage without session context).
- * - `uuid`: Message UUID for stream correlation and transcript persistence.
- *
- * Hosts typically use `request_id` for responding; `tool_use_id` is useful
- * for tracking state or correlating with tool_use events in the message stream.
- * `session_id` enables correlation with SDK session lifecycle events.
- * `approval_options` describes the host UI choices supported by this generic
- * external permission request. Generic SDK permissions are one-shot decisions
- * for a single `tool_use_id`; remembered "always" choices belong to the host's
- * account/tool policy layer, not the SDK permission primitive.
- */
-export type SDKPermissionRequestMessage = {
-  type: 'permission_request'
-  request_id: string
-  tool_name: string
-  tool_use_id: string
-  input: Record<string, unknown>
-  approval_options?: string[]
-  uuid: string
-  session_id: string
-}
-
-/**
  * A message emitted when agent definitions fail to load.
  * This allows hosts to detect configuration issues that would otherwise
  * be silently logged to console.warn.

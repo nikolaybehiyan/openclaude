@@ -2339,15 +2339,6 @@ export type SDKMessage = ({
   suggestion: string
   uuid: string
   session_id: string
-}) | ({
-  type: "permission_request"
-  request_id: string
-  tool_name: string
-  tool_use_id: string
-  input: Record<string, unknown>
-  approval_options?: Array<string>
-  uuid: string
-  session_id: string
 })
 
 /** Fast mode state: off, in cooldown after rate limit, or actively enabled. */

@@ -57,3 +57,28 @@ test('sandbox auto-allow still enforces Bash path constraints', async () => {
   expect(result.message).toContain('was blocked')
   expect(result.message).toContain('passwd')
 })
+
+test('sandbox auto-allow permits commands after safety checks pass', async () => {
+  ;(globalThis as unknown as { MACRO: { VERSION: string } }).MACRO = {
+    VERSION: 'test',
+  }
+
+  SandboxManager.isSandboxingEnabled = () => true
+  SandboxManager.isAutoAllowBashIfSandboxedEnabled = () => true
+  SandboxManager.areUnsandboxedCommandsAllowed = () => false
+  SandboxManager.getExcludedCommands = () => []
+
+  const result = await bashToolHasPermission(
+    {
+      command:
+        'open /mnt/user-data/outputs/0e9e5240-8267-4db8-a7d5-b25ee420699a/hello-world.html',
+    },
+    makeToolUseContext(),
+  )
+
+  expect(result.behavior).toBe('allow')
+  expect(result.decisionReason).toEqual({
+    type: 'other',
+    reason: 'Auto-allowed with sandbox (autoAllowBashIfSandboxed enabled)',
+  })
+})

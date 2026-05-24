@@ -14,10 +14,7 @@ import {
   type AppState,
 } from '../../state/AppStateStore.js'
 import { createStore, type Store } from '../../state/store.js'
-import {
-  type ToolPermissionContext,
-} from '../../Tool.js'
-import { getTools } from '../../tools.js'
+import { getTools, getToolsForDefaultPreset } from '../../tools.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
 import type { ThinkingConfig } from '../../utils/thinking.js'
 import { init } from '../init.js'
@@ -34,6 +31,7 @@ import {
   switchSession,
   runWithSdkContext,
   setFlagSettingsInline,
+  setAllowedSettingSources,
 } from '../../bootstrap/state.js'
 import {
   hydrateFromCCRv2InternalEvents,
@@ -42,17 +40,13 @@ import {
 } from '../../utils/sessionStorage.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
-import type {
-  PermissionResult,
-  SDKResultMessage as GeneratedSDKResultMessage,
-} from './coreTypes.generated.js'
+import type { SDKResultMessage as GeneratedSDKResultMessage } from './coreTypes.generated.js'
 import type {
   SDKMessage,
   SDKAgentLoadFailureMessage,
   JsonlEntry,
   QueryPermissionMode,
   CanUseToolCallback,
-  SDKPermissionRequestMessage,
 } from './shared.js'
 import {
   assertValidSessionId,
@@ -60,12 +54,10 @@ import {
 } from './shared.js'
 import {
   buildPermissionContext,
+  applyBuiltinToolsFilter,
   createExternalCanUseTool,
   connectSdkMcpServers,
   createDefaultCanUseTool,
-  createOnceOnlyResolve,
-  type PermissionResolveDecision,
-  type PermissionTarget,
 } from './permissions.js'
 import {
   parseJsonlEntries,
@@ -75,6 +67,7 @@ import {
   stripExtraFields as stripChainFields,
 } from './transcript.js'
 import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
+import { parseSettingSourcesFlag } from '../../utils/settings/constants.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
 import { getRunningTasks } from '../../utils/task/framework.js'
@@ -100,6 +93,8 @@ export type SDKSessionOptions = {
   cwd: string
   /** Additional directories the agent can access during this session. */
   additionalDirectories?: string[]
+  /** Filesystem-based setting sources to load for this session. */
+  settingSources?: string[]
   /** Model to use (e.g. 'claude-sonnet-4-6'). */
   model?: string
   /** Permission mode for tool access. */
@@ -110,18 +105,17 @@ export type SDKSessionOptions = {
    * Callback invoked before each tool use. Return `{ behavior: 'allow' }` to
    * permit the call or `{ behavior: 'deny', message?: string }` to reject it.
    *
-   * **Secure-by-default**: If neither `canUseTool` nor `onPermissionRequest`
-   * is provided, ALL tool uses are denied. You MUST provide at least one of
-   * these callbacks to allow tool execution.
+   * **Secure-by-default**: If `canUseTool` is not provided, tool requests that
+   * require approval are denied.
    */
   canUseTool?: CanUseToolCallback
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
   /**
-   * Callback invoked when a tool needs permission approval. The host receives
-   * the request immediately and can resolve it via respondToPermission().
+   * Built-in tools to make available to Claude. When set, unlisted built-ins
+   * are removed from context. SDK MCP/custom tools are unaffected.
    */
-  onPermissionRequest?: (message: SDKPermissionRequestMessage) => void
+  tools?: string[]
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
   /** Custom system prompt for persistent SDK sessions. */
@@ -204,12 +198,6 @@ export interface SDKSession {
   sideQuestion(question: string): Promise<SDKSideQuestionResult>
   /** Close the session and release resources. */
   close(): void
-  /**
-   * Respond to a pending permission prompt asynchronously.
-   * Use this when no canUseTool callback was provided — the SDK emits a
-   * permission-request message and the host resolves it via this method.
-   */
-  respondToPermission(toolUseId: string, decision: PermissionResult): void
 }
 
 /**
@@ -312,9 +300,6 @@ class SDKSessionImpl implements SDKSession {
   private agentsLoaded = false
   private mcpServers?: Record<string, unknown>
   private mcpConnected = false
-  private pendingPermissionPrompts = new Map<string, {
-    resolve: (decision: PermissionResolveDecision) => void
-  }>()
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -609,7 +594,6 @@ class SDKSessionImpl implements SDKSession {
     }
     const { engine, appStateStore, abortController } = createEngineFromOptions(
       this.options,
-      this,
       messages,
       this._sessionId,
     )
@@ -640,15 +624,6 @@ class SDKSessionImpl implements SDKSession {
     if (this._engine) {
       this._engine.interrupt()
     }
-    // Deny all pending permission prompts before clearing
-    for (const [toolUseId, pending] of this.pendingPermissionPrompts) {
-      pending.resolve({
-        behavior: 'deny',
-        message: 'Session interrupted',
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-    }
-    this.pendingPermissionPrompts.clear()
   }
 
   async stopTask(taskId: string): Promise<SDKStopTaskResult> {
@@ -708,36 +683,6 @@ class SDKSessionImpl implements SDKSession {
     this._appStateStore = null
   }
 
-  /**
-   * Register a pending permission prompt for external resolution.
-   * Returns a Promise that resolves when respondToPermission() is called
-   * with the matching toolUseId.
-   */
-  registerPendingPermission(toolUseId: string): Promise<PermissionResolveDecision> {
-    return new Promise(resolve => {
-      const wrappedResolve = createOnceOnlyResolve(resolve)
-      this.pendingPermissionPrompts.set(toolUseId, { resolve: wrappedResolve })
-    })
-  }
-
-  /** Delete a pending permission prompt without resolving it. */
-  deletePendingPermission(toolUseId: string): void {
-    this.pendingPermissionPrompts.delete(toolUseId)
-  }
-
-  /** Deny a pending permission prompt with a message and clean up. */
-  denyPendingPermission(toolUseId: string, message: string): void {
-    const pending = this.pendingPermissionPrompts.get(toolUseId)
-    if (pending) {
-      pending.resolve({
-        behavior: 'deny',
-        message,
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-      this.pendingPermissionPrompts.delete(toolUseId)
-    }
-  }
-
   /** Push an agent load failure message into the queue for later draining. */
   pushAgentFailure(msg: SDKAgentLoadFailureMessage): void {
     this.agentFailureQueue.push(msg)
@@ -750,24 +695,6 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
-  respondToPermission(toolUseId: string, decision: PermissionResult): void {
-    const pending = this.pendingPermissionPrompts.get(toolUseId)
-    if (!pending) return
-
-    if (decision.behavior === 'allow') {
-      pending.resolve({
-        behavior: 'allow',
-        updatedInput: decision.updatedInput,
-      })
-    } else {
-      pending.resolve({
-        behavior: 'deny',
-        message: decision.message ?? 'Permission denied',
-        decisionReason: { type: 'mode', mode: 'default' },
-      })
-    }
-    this.pendingPermissionPrompts.delete(toolUseId)
-  }
 }
 
 function retryPromptContent(content: string | any[]): string | any[] {
@@ -790,7 +717,6 @@ function retryPromptContent(content: string | any[]): string | any[] {
  */
 function createEngineFromOptions(
   options: SDKSessionOptions,
-  permissionTarget: PermissionTarget,
   initialMessages?: any[],
   sessionId?: string,
 ): { engine: QueryEngine; appStateStore: Store<AppState>; abortController: AbortController } {
@@ -800,6 +726,7 @@ function createEngineFromOptions(
     throw new Error('SDKSessionOptions requires cwd')
   }
   configureSessionEventStore(options)
+  applySessionSettingSources(options.settingSources)
   applySessionFlagSettings(options.settings)
 
   // NOTE: cwd is NOT set on global state here. SDKSessionImpl.sendMessage()
@@ -807,12 +734,12 @@ function createEngineFromOptions(
   // sessions from overwriting each other's working directory.
 
   // Build permission context
-  const permissionContext = buildPermissionContext({
+  const permissionContext = applyBuiltinToolsFilter(buildPermissionContext({
     cwd,
     permissionMode,
     additionalDirectories: options.additionalDirectories,
     disallowedTools: options.disallowedTools,
-  })
+  }), options.tools, getToolsForDefaultPreset())
 
   // Create AppState store (minimal, headless)
   const initialAppState = getDefaultAppState()
@@ -842,16 +769,12 @@ function createEngineFromOptions(
   // Create file state cache
   const readFileCache = createFileStateCacheWithSizeLimit(100)
 
-  // Build the canUseTool callback with external permission resolution support.
-  // When no user canUseTool callback is provided, this creates a pending
-  // prompt entry that respondToPermission() can resolve asynchronously.
+  // Build the canUseTool wrapper. Source permission checks run first; host
+  // canUseTool is only asked when the source engine returns ask.
   const defaultCanUseTool = createDefaultCanUseTool(permissionContext)
   const canUseTool = createExternalCanUseTool(
     options.canUseTool ?? undefined,
     defaultCanUseTool,
-    permissionTarget,
-    options.onPermissionRequest,
-    sessionId,
   )
 
   let customSystemPrompt: string | undefined
@@ -907,6 +830,16 @@ function applySessionFlagSettings(settings?: Record<string, unknown>): void {
   settingsChangeDetector.notifyChange('flagSettings')
 }
 
+function applySessionSettingSources(settingSources?: string[]): void {
+  if (!settingSources) {
+    return
+  }
+  setAllowedSettingSources(parseSettingSourcesFlag(settingSources.join(',')))
+  settingsChangeDetector.notifyChange('userSettings')
+  settingsChangeDetector.notifyChange('projectSettings')
+  settingsChangeDetector.notifyChange('localSettings')
+}
+
 // ============================================================================
 // V2 API Functions
 // ============================================================================
@@ -933,11 +866,8 @@ function applySessionFlagSettings(settings?: Record<string, unknown>): void {
 export function unstable_v2_createSession(options: SDKSessionOptions): SDKSession {
   const sessionId = randomUUID()
   configureSessionEventStore(options)
-  // Create SDKSessionImpl first (without engine) so we can pass its
-  // pendingPermissionPrompts map to createEngineFromOptions for
-  // external permission resolution support.
   const session = new SDKSessionImpl(null, sessionId, options, null)
-  const { engine, appStateStore, abortController } = createEngineFromOptions(options, session, undefined, sessionId)
+  const { engine, appStateStore, abortController } = createEngineFromOptions(options, undefined, sessionId)
   // Wire the engine, store, and abort controller into the session
   session.setEngine(engine)
   session.setAppStateStore(appStateStore)
@@ -1089,7 +1019,6 @@ export async function unstable_v2_resumeSession(
   const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
   const { engine, appStateStore, abortController } = createEngineFromOptions(
     sessionOptions,
-    session,
     initialMessages as any[],
     sessionId,
   )

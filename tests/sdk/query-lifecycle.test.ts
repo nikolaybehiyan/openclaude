@@ -316,8 +316,8 @@ describe('Query resume lifecycle', () => {
 
 describe('Secure-by-default permissions (SEC-2)', () => {
   test('createDefaultCanUseTool denies all tools when no callback is provided', async () => {
-    // We test this indirectly: create a query with no canUseTool or
-    // onPermissionRequest, and verify that tool uses are denied.
+    // We test this indirectly: create a query with no canUseTool, and verify
+    // that tool uses are denied.
     // The query engine will attempt to use tools, and the deny-by-default
     // behavior should produce permission_denials in the result.
     const q = query({

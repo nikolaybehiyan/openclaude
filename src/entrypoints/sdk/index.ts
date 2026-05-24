@@ -61,16 +61,9 @@ export type {
   ForkSessionOptions,
   ForkSessionResult,
   SessionMessage,
-  SDKPermissionRequestMessage,
   SDKAgentLoadFailureMessage,
   QueryPermissionMode,
 } from './shared.js'
-
-// ============================================================================
-// Re-exports from permissions
-// ============================================================================
-
-export type { PermissionResolveDecision } from './permissions.js'
 
 // ============================================================================
 // Re-exports from sessions
