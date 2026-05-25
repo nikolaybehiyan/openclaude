@@ -12,6 +12,7 @@ const ENV_KEYS = [
   'OPENAI_BASE_URL',
   'OPENAI_API_BASE',
   'OPENAI_MODEL',
+  'ANTHROPIC_BASE_URL',
   'NVIDIA_NIM',
   'MINIMAX_API_KEY',
   'XAI_API_KEY',
@@ -46,14 +47,18 @@ afterEach(() => {
   resetSettingsCache()
 })
 
-async function importFreshThinkingModule() {
+async function importFreshThinkingModule(
+  provider: 'openai' | 'firstParty' = 'openai',
+) {
   mock.restore()
   mock.module('./model/providers.js', () => ({
-    getAPIProvider: () => 'openai',
+    getAPIProvider: () => provider,
     usesAnthropicAccountFlow: () => false,
     isGithubNativeAnthropicMode: () => false,
-    getAPIProviderForStatsig: () => 'openai',
-    isFirstPartyAnthropicBaseUrl: () => false,
+    getAPIProviderForStatsig: () => provider,
+    isFirstPartyAnthropicBaseUrl: () =>
+      !process.env.ANTHROPIC_BASE_URL ||
+      process.env.ANTHROPIC_BASE_URL === 'https://api.anthropic.com',
   }))
   const nonce = `${Date.now()}-${Math.random()}`
   return import(`./thinking.js?ts=${nonce}`)
@@ -102,5 +107,14 @@ describe('modelSupportsThinking — Z.AI GLM', () => {
     process.env.OPENAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
 
     expect(modelSupportsThinking('GLM-5.1')).toBe(true)
+  })
+
+  test('enables non-adaptive GLM thinking for Anthropic-compatible Z.AI base URL', async () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic'
+    const { modelSupportsAdaptiveThinking, modelSupportsThinking } =
+      await importFreshThinkingModule('firstParty')
+
+    expect(modelSupportsThinking('glm-5-turbo')).toBe(true)
+    expect(modelSupportsAdaptiveThinking('glm-5-turbo')).toBe(false)
   })
 })

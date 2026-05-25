@@ -6,11 +6,15 @@ import {
   getCatalogEntriesForRoute,
   getModel,
   resolveActiveRouteIdFromEnv,
+  resolveRouteIdFromBaseUrl,
 } from '../integrations/index.js'
 import { getCanonicalName } from './model/model.js'
 import { resolveAntModel } from './model/antModels.js'
 import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
-import { getAPIProvider } from './model/providers.js'
+import {
+  getAPIProvider,
+  isFirstPartyAnthropicBaseUrl,
+} from './model/providers.js'
 import { getSettingsWithErrors } from './settings/settings.js'
 
 export type ThinkingConfig =
@@ -84,7 +88,10 @@ const RAINBOW_SHIMMER_COLORS: Array<keyof Theme> = [
 ]
 
 function routeCatalogSupportsThinking(model: string): boolean | undefined {
-  const routeId = resolveActiveRouteIdFromEnv(process.env)
+  let routeId = resolveActiveRouteIdFromEnv(process.env)
+  if ((!routeId || routeId === 'anthropic') && !isFirstPartyAnthropicBaseUrl()) {
+    routeId = resolveRouteIdFromBaseUrl(process.env.ANTHROPIC_BASE_URL)
+  }
   if (!routeId || routeId === 'anthropic') {
     return undefined
   }
@@ -165,6 +172,9 @@ export function modelSupportsAdaptiveThinking(model: string): boolean {
     canonical.includes('sonnet') ||
     canonical.includes('haiku')
   ) {
+    return false
+  }
+  if (routeCatalogSupportsThinking(model) !== undefined) {
     return false
   }
   // IMPORTANT: Do not change adaptive thinking support without notifying the

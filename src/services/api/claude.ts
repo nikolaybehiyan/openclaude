@@ -1643,14 +1643,15 @@ async function* queryModel(
       thinkingConfig.type !== 'disabled' &&
       !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
     let thinking: BetaMessageStreamParams['thinking'] | undefined = undefined
+    const apiModel = normalizeModelStringForAPI(options.model)
 
     // IMPORTANT: Do not change the adaptive-vs-budget thinking selection below
     // without notifying the model launch DRI and research. This is a sensitive
     // setting that can greatly affect model quality and bashing.
-    if (hasThinking && modelSupportsThinking(options.model)) {
+    if (hasThinking && modelSupportsThinking(apiModel)) {
       if (
         !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING) &&
-        modelSupportsAdaptiveThinking(options.model)
+        modelSupportsAdaptiveThinking(apiModel)
       ) {
         // For models that support adaptive thinking, always use adaptive
         // thinking without a budget.
@@ -1660,7 +1661,7 @@ async function* queryModel(
       } else {
         // For models that do not support adaptive thinking, use the default
         // thinking budget unless explicitly specified.
-        let thinkingBudget = getMaxThinkingTokensForModel(options.model)
+        let thinkingBudget = getMaxThinkingTokensForModel(apiModel)
         if (
           thinkingConfig.type === 'enabled' &&
           thinkingConfig.budgetTokens !== undefined
@@ -1743,7 +1744,7 @@ async function* queryModel(
     lastRequestBetas = betasParams
 
     return {
-      model: normalizeModelStringForAPI(options.model),
+      model: apiModel,
       // IMPORTANT: `system` must appear before `messages` in the object literal.
       // JSON.stringify preserves insertion order. The native Bun attestation
       // (Attestation.zig) overwrites the FIRST `cch=00000` sentinel in the
