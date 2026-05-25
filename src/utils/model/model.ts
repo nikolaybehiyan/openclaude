@@ -19,7 +19,7 @@ import {
   modelSupports1M,
 } from '../context.js'
 import { isEnvTruthy } from '../envUtils.js'
-import { getModelStrings, resolveOverriddenModel } from './modelStrings.js'
+import { getModelStrings, resolveOverriddenModel, resolveProviderModelOverride } from './modelStrings.js'
 import { formatModelPricing, getOpus46CostTier } from '../modelCost.js'
 import { getSettings_DEPRECATED } from '../settings/settings.js'
 import type { PermissionMode } from '../permissions/PermissionMode.js'
@@ -892,5 +892,5 @@ export function getMarketingNameForModel(modelId: string): string | undefined {
 }
 
 export function normalizeModelStringForAPI(model: string): string {
-  return model.replace(/\[(1|2)m\]/gi, '')
+  return resolveProviderModelOverride(model.replace(/\[(1|2)m\]/gi, ''))
 }

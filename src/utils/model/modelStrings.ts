@@ -106,6 +106,19 @@ export function resolveOverriddenModel(modelId: string): string {
   return modelId
 }
 
+export function resolveProviderModelOverride(modelId: string): string {
+  let overrides: Record<string, string> | undefined
+  try {
+    overrides = getInitialSettings().modelOverrides
+  } catch {
+    return modelId
+  }
+  if (!overrides) {
+    return modelId
+  }
+  return overrides[modelId] || modelId
+}
+
 const updateBedrockModelStrings = sequential(async () => {
   if (getModelStringsState() !== null) {
     // Already initialized. Doing the check here, combined with
