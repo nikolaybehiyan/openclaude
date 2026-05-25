@@ -50,6 +50,10 @@ async function importFreshThinkingModule() {
   mock.restore()
   mock.module('./model/providers.js', () => ({
     getAPIProvider: () => 'openai',
+    usesAnthropicAccountFlow: () => false,
+    isGithubNativeAnthropicMode: () => false,
+    getAPIProviderForStatsig: () => 'openai',
+    isFirstPartyAnthropicBaseUrl: () => false,
   }))
   const nonce = `${Date.now()}-${Math.random()}`
   return import(`./thinking.js?ts=${nonce}`)
