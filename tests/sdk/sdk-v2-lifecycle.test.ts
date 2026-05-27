@@ -103,6 +103,35 @@ describe('V2: session creation', () => {
     expect((session as any)._engine?.config?.thinkingConfig).toEqual({ type: 'disabled' })
   })
 
+  test('updateOptions() applies live model, thinking, and permission options without replacing history', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      model: 'claude-sonnet-4-6',
+      thinkingConfig: { type: 'disabled' },
+      allowedTools: ['WebSearch'],
+    })
+    const engine = (session as any)._engine
+    ;(engine as any).getMessages = () => [{ type: 'user', uuid: 'human-1', message: { role: 'user', content: 'hi' } }]
+
+    session.updateOptions({
+      model: 'claude-opus-4-5',
+      thinkingConfig: { type: 'adaptive' },
+      allowedTools: [],
+      disallowedTools: ['WebSearch'],
+      tools: ['Bash'],
+    })
+
+    expect((session as any)._engine).toBe(engine)
+    expect(session.getMessages().map(message => message.uuid)).toEqual(['human-1'])
+    expect(engine.config.userSpecifiedModel).toBe('claude-opus-4-5')
+    expect(engine.config.thinkingConfig).toEqual({ type: 'adaptive' })
+    const state = (session as any)._appStateStore.getState()
+    expect(state.mainLoopModel).toBe('claude-opus-4-5')
+    expect(state.thinkingEnabled).toBe(true)
+    expect(state.toolPermissionContext.alwaysAllowRules.cliArg).toEqual([])
+    expect(state.toolPermissionContext.alwaysDenyRules.cliArg).toContain('WebSearch')
+  })
+
   test('createSession() accepts sampling overrides for persistent hosts', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),

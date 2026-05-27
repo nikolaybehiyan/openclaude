@@ -110,6 +110,8 @@ export type QueryOptions = {
   executable?: string
   /** Skip permission prompts entirely (dangerous). */
   allowDangerouslySkipPermissions?: boolean
+  /** Tools to allow without prompting. */
+  allowedTools?: string[]
   /** Tools to disallow. */
   disallowedTools?: string[]
   /**
@@ -671,6 +673,8 @@ class QueryImpl implements Query {
       permissionMode: mode,
       additionalDirectories: Array.from(dirsMap.keys()),
       allowDangerouslySkipPermissions: this.permissionContext.isBypassPermissionsModeAvailable,
+      allowedTools: [...(this.permissionContext.alwaysAllowRules.cliArg ?? [])],
+      disallowedTools: [...(this.permissionContext.alwaysDenyRules.cliArg ?? [])],
     })
     this.permissionContext = newPermissionContext
     this.appStateStore.setState(prev => ({

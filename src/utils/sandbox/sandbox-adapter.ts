@@ -145,22 +145,47 @@ export function resolveSandboxFilesystemPath(
   return expandPath(pattern, getSettingsRootPathForSource(source))
 }
 
+function sandboxPolicySettings() {
+  return getSettingsForSource('policySettings')
+}
+
+function sdkHostFlagSettings() {
+  return getSettingsForSource('flagSettings')
+}
+
+function managedSandboxNetworkSettings() {
+  const policySettings = sandboxPolicySettings()
+  if (policySettings?.sandbox?.network?.allowManagedDomainsOnly === true) {
+    return policySettings
+  }
+  const flagSettings = sdkHostFlagSettings()
+  if (flagSettings?.sandbox?.network?.allowManagedDomainsOnly === true) {
+    return flagSettings
+  }
+  return undefined
+}
+
 /**
- * Check if only managed sandbox domains should be used.
- * This is true when policySettings has sandbox.network.allowManagedDomainsOnly: true
+ * Check if only host-managed sandbox domains should be used.
  */
 export function shouldAllowManagedSandboxDomainsOnly(): boolean {
-  return (
-    getSettingsForSource('policySettings')?.sandbox?.network
-      ?.allowManagedDomainsOnly === true
-  )
+  return managedSandboxNetworkSettings() !== undefined
+}
+
+function managedSandboxFilesystemSettings() {
+  const policySettings = sandboxPolicySettings()
+  if (policySettings?.sandbox?.filesystem?.allowManagedReadPathsOnly === true) {
+    return policySettings
+  }
+  const flagSettings = sdkHostFlagSettings()
+  if (flagSettings?.sandbox?.filesystem?.allowManagedReadPathsOnly === true) {
+    return flagSettings
+  }
+  return undefined
 }
 
 function shouldAllowManagedReadPathsOnly(): boolean {
-  return (
-    getSettingsForSource('policySettings')?.sandbox?.filesystem
-      ?.allowManagedReadPathsOnly === true
-  )
+  return managedSandboxFilesystemSettings() !== undefined
 }
 
 /**
@@ -179,13 +204,13 @@ export function convertToSandboxRuntimeConfig(
   const deniedDomains: string[] = []
 
   // When allowManagedSandboxDomainsOnly is enabled, only use domains from policy settings
-  if (shouldAllowManagedSandboxDomainsOnly()) {
-    const policySettings = getSettingsForSource('policySettings')
-    for (const domain of policySettings?.sandbox?.network?.allowedDomains ||
+  const managedNetworkSettings = managedSandboxNetworkSettings()
+  if (managedNetworkSettings) {
+    for (const domain of managedNetworkSettings.sandbox?.network?.allowedDomains ||
       []) {
       allowedDomains.push(domain)
     }
-    for (const ruleString of policySettings?.permissions?.allow || []) {
+    for (const ruleString of managedNetworkSettings.permissions?.allow || []) {
       const rule = permissionRuleValueFromString(ruleString)
       if (
         rule.toolName === WEB_FETCH_TOOL_NAME &&

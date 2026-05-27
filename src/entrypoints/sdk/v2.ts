@@ -79,6 +79,7 @@ import { truncateToWidth } from '../../utils/format.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
+import type { Tool } from '../../Tool.js'
 
 // ============================================================================
 // V2 API Types
@@ -116,6 +117,8 @@ export type SDKSessionOptions = {
    * are removed from context. SDK MCP/custom tools are unaffected.
    */
   tools?: string[]
+  /** Tools to allow without prompting. */
+  allowedTools?: string[]
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
   /** Custom system prompt for persistent SDK sessions. */
@@ -153,6 +156,17 @@ export type SDKSessionOptions = {
   sessionSubagentEventReader?: SDKSessionEventReader
 }
 
+export type SDKSessionUpdateOptions = Pick<
+  SDKSessionOptions,
+  | 'model'
+  | 'permissionMode'
+  | 'additionalDirectories'
+  | 'tools'
+  | 'allowedTools'
+  | 'disallowedTools'
+  | 'thinkingConfig'
+>
+
 /**
  * A persistent session wrapping a QueryEngine for multi-turn conversations.
  *
@@ -184,6 +198,8 @@ export interface SDKSession {
   sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
+  /** Update live per-turn session options without replacing session history. */
+  updateOptions(options: SDKSessionUpdateOptions): void
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   /** Return all messages accumulated so far in this session. */
@@ -300,6 +316,7 @@ class SDKSessionImpl implements SDKSession {
   private agentsLoaded = false
   private mcpServers?: Record<string, unknown>
   private mcpConnected = false
+  private mcpTools: Tool[] = []
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -341,6 +358,53 @@ class SDKSessionImpl implements SDKSession {
 
   get sessionId(): string {
     return this._sessionId
+  }
+
+  updateOptions(options: SDKSessionUpdateOptions): void {
+    if (!options || typeof options !== 'object') {
+      return
+    }
+
+    const nextOptions = { ...this.options }
+    let permissionContextChanged = false
+
+    if (hasOwn(options, 'model')) {
+      const model = normalizeOptionalSessionString(options.model, 'SDKSession.updateOptions.model')
+      nextOptions.model = model
+      if (model) {
+        this.appStateStore.setState(prev => ({
+          ...prev,
+          mainLoopModel: model,
+          mainLoopModelForSession: model,
+        }))
+        this.engine.setModel(model)
+      }
+    }
+
+    if (hasOwn(options, 'thinkingConfig')) {
+      const thinkingConfig = normalizeThinkingConfig(options.thinkingConfig)
+      nextOptions.thinkingConfig = thinkingConfig
+      if (thinkingConfig) {
+        this.appStateStore.setState(prev => ({
+          ...prev,
+          thinkingEnabled: thinkingConfig.type !== 'disabled',
+          thinkingBudgetTokens: thinkingConfig.type === 'enabled' ? thinkingConfig.budgetTokens : undefined,
+        }))
+        this.engine.setThinkingConfig(thinkingConfig)
+      }
+    }
+
+    for (const key of ['permissionMode', 'additionalDirectories', 'tools', 'allowedTools', 'disallowedTools'] as const) {
+      if (hasOwn(options, key)) {
+        nextOptions[key] = options[key] as never
+        permissionContextChanged = true
+      }
+    }
+
+    this.options = nextOptions
+    if (permissionContextChanged) {
+      this.applyPermissionContextFromOptions()
+    }
   }
 
   async *sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage> {
@@ -402,13 +466,8 @@ class SDKSessionImpl implements SDKSession {
             }
             if (mcpTools.length > 0) {
               const permissionContext = self.appStateStore.getState().toolPermissionContext
-              const allTools = [...getTools(permissionContext)]  // Mutable copy
-              for (const mcpTool of mcpTools) {
-                if (!allTools.some(t => t.name === mcpTool.name)) {
-                  allTools.push(mcpTool)
-                }
-              }
-              self.engine.updateTools(allTools)
+              self.mcpTools = mcpTools
+              self.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), self.mcpTools))
             }
           } catch (err) {
             // MCP connection failed — continue without MCP tools
@@ -517,13 +576,8 @@ class SDKSessionImpl implements SDKSession {
             }
             if (mcpTools.length > 0) {
               const permissionContext = self.appStateStore.getState().toolPermissionContext
-              const allTools = [...getTools(permissionContext)]
-              for (const mcpTool of mcpTools) {
-                if (!allTools.some(t => t.name === mcpTool.name)) {
-                  allTools.push(mcpTool)
-                }
-              }
-              self.engine.updateTools(allTools)
+              self.mcpTools = mcpTools
+              self.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), self.mcpTools))
             }
           } catch (err) {
             console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
@@ -602,6 +656,7 @@ class SDKSessionImpl implements SDKSession {
     this._abortController = abortController
     this.agentsLoaded = false
     this.mcpConnected = false
+    this.mcpTools = []
   }
 
   private hasRunningBackgroundTasks(): boolean {
@@ -662,6 +717,21 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
+  private applyPermissionContextFromOptions(): void {
+    const permissionContext = applyBuiltinToolsFilter(buildPermissionContext({
+      cwd: this.options.cwd,
+      permissionMode: this.options.permissionMode,
+      additionalDirectories: this.options.additionalDirectories,
+      allowedTools: this.options.allowedTools,
+      disallowedTools: this.options.disallowedTools,
+    }), this.options.tools, getToolsForDefaultPreset())
+    this.appStateStore.setState(prev => ({
+      ...prev,
+      toolPermissionContext: permissionContext,
+    }))
+    this.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), this.mcpTools))
+  }
+
   close(): void {
     this.interrupt()
     // Abort the AbortController to cancel any in-flight HTTP requests or
@@ -681,6 +751,7 @@ class SDKSessionImpl implements SDKSession {
     // Clear engine and store references to prevent memory leaks
     this._engine = null
     this._appStateStore = null
+    this.mcpTools = []
   }
 
   /** Push an agent load failure message into the queue for later draining. */
@@ -695,6 +766,56 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
+}
+
+function hasOwn<T extends object, K extends PropertyKey>(value: T, key: K): value is T & Record<K, unknown> {
+  return Object.prototype.hasOwnProperty.call(value, key)
+}
+
+function normalizeOptionalSessionString(value: unknown, name: string): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value !== 'string') {
+    throw new Error(`${name} must be a string`)
+  }
+  const text = value.trim()
+  if (!text) {
+    throw new Error(`${name} must not be empty`)
+  }
+  return text
+}
+
+function normalizeThinkingConfig(value: unknown): ThinkingConfig | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('SDKSession.updateOptions.thinkingConfig must be an object')
+  }
+  const config = value as Record<string, unknown>
+  const type = config.type
+  if (type === 'adaptive' || type === 'disabled') {
+    return { type }
+  }
+  if (type === 'enabled') {
+    const budgetTokens = config.budgetTokens
+    if (typeof budgetTokens !== 'number' || !Number.isFinite(budgetTokens) || budgetTokens <= 0) {
+      throw new Error('SDKSession.updateOptions.thinkingConfig.budgetTokens must be a positive number')
+    }
+    return { type, budgetTokens }
+  }
+  throw new Error('SDKSession.updateOptions.thinkingConfig.type must be adaptive, enabled, or disabled')
+}
+
+function mergeRuntimeTools(builtinTools: Tool[], mcpTools: Tool[]): Tool[] {
+  const merged = [...builtinTools]
+  for (const tool of mcpTools) {
+    if (!merged.some(existing => existing.name === tool.name)) {
+      merged.push(tool)
+    }
+  }
+  return merged
 }
 
 function retryPromptContent(content: string | any[]): string | any[] {
@@ -738,6 +859,7 @@ function createEngineFromOptions(
     cwd,
     permissionMode,
     additionalDirectories: options.additionalDirectories,
+    allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
   }), options.tools, getToolsForDefaultPreset())
 

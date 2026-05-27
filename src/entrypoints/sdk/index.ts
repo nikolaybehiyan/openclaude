@@ -98,6 +98,7 @@ export type {
   SDKSideQuestionResult,
   SDKSessionEventWriter,
   SDKSessionEventReader,
+  SDKSessionUpdateOptions,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'

@@ -50,6 +50,7 @@ export interface PermissionContextOptions {
   permissionMode?: QueryPermissionMode
   additionalDirectories?: string[]
   allowDangerouslySkipPermissions?: boolean
+  allowedTools?: string[]
   disallowedTools?: string[]
 }
 
@@ -88,6 +89,10 @@ export function buildPermissionContext(options: PermissionContextOptions): ToolP
     mode: internalMode as ToolPermissionContext['mode'],
     isBypassPermissionsModeAvailable:
       mode === 'bypass-permissions' || mode === 'bypassPermissions' || options.allowDangerouslySkipPermissions === true,
+    alwaysAllowRules: {
+      ...base.alwaysAllowRules,
+      cliArg: options.allowedTools ?? [],
+    },
     alwaysDenyRules: {
       ...base.alwaysDenyRules,
       cliArg: options.disallowedTools ?? [],

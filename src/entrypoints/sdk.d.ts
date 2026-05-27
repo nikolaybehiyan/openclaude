@@ -233,6 +233,8 @@ export type QueryOptions = {
   abortController?: AbortController
   executable?: string
   allowDangerouslySkipPermissions?: boolean
+  /** Tools to allow without prompting. */
+  allowedTools?: string[]
   disallowedTools?: string[]
   /**
    * Built-in tools to make available to Claude. When set, unlisted built-ins
@@ -342,6 +344,8 @@ export type SDKSessionOptions = {
    * are removed from context. SDK MCP/custom tools are unaffected.
    */
   tools?: string[]
+  /** Tools to allow without prompting. */
+  allowedTools?: string[]
   /** Tools to disallow (blanket deny by tool name). */
   disallowedTools?: string[]
   /** Custom system prompt for persistent SDK sessions. */
@@ -369,11 +373,24 @@ export type SDKSessionOptions = {
   sessionSubagentEventReader?: SDKSessionEventReader
 }
 
+export type SDKSessionUpdateOptions = Pick<
+  SDKSessionOptions,
+  | 'model'
+  | 'permissionMode'
+  | 'additionalDirectories'
+  | 'tools'
+  | 'allowedTools'
+  | 'disallowedTools'
+  | 'thinkingConfig'
+>
+
 export interface SDKSession {
   sessionId: string
   sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
+  /** Update live per-turn session options without replacing session history. */
+  updateOptions(options: SDKSessionUpdateOptions): void
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   getMessages(): SDKMessage[]
