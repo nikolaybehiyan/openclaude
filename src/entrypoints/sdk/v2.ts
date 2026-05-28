@@ -8,6 +8,7 @@
 import { randomUUID } from 'crypto'
 import { dirname } from 'path'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { QueryEngine } from '../../QueryEngine.js'
 import {
   getDefaultAppState,
@@ -32,6 +33,7 @@ import {
   runWithSdkContext,
   setFlagSettingsInline,
   setAllowedSettingSources,
+  getSessionId,
 } from '../../bootstrap/state.js'
 import {
   hydrateFromCCRv2InternalEvents,
@@ -75,12 +77,22 @@ import { isBackgroundTask } from '../../tasks/types.js'
 import { stopTask } from '../../tasks/stopTask.js'
 import { hydrateToolProgressOutput } from './toolProgress.js'
 import { sleep } from '../../utils/sleep.js'
+import { dequeue } from '../../utils/messageQueueManager.js'
 import { generateSessionTitle as generateSourceSessionTitle } from '../../utils/sessionTitle.js'
 import { truncateToWidth } from '../../utils/format.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
 import type { Tool } from '../../Tool.js'
+import type { QueuedCommand } from '../../types/textInputTypes.js'
+import {
+  OUTPUT_FILE_TAG,
+  STATUS_TAG,
+  SUMMARY_TAG,
+  TASK_ID_TAG,
+  TASK_NOTIFICATION_TAG,
+  TOOL_USE_ID_TAG,
+} from '../../constants/xml.js'
 
 // ============================================================================
 // V2 API Types
@@ -481,28 +493,7 @@ class SDKSessionImpl implements SDKSession {
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
 
         try {
-          let heldBackResult: SDKMessage | null = null
-          for await (const engineMsg of self.engine.submitMessage(content, options)) {
-            const sdkMessage = await hydrateToolProgressOutput(engineMsg)
-            if (sdkMessage.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
-              heldBackResult = sdkMessage
-            } else {
-              yield sdkMessage
-            }
-            yield* drainSdkEvents()
-            yield* self.drainAgentFailureQueue()
-          }
-          while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
-            yield* drainSdkEvents()
-            yield* self.drainAgentFailureQueue()
-            await sleep(100, self._abortController?.signal, { unref: true })
-          }
-          // Final drain for task/progress/failure messages that fired on the last engine yield.
-          yield* drainSdkEvents()
-          yield* self.drainAgentFailureQueue()
-          if (heldBackResult) {
-            yield heldBackResult
-          }
+          yield* self.runEngineTurn(content, options)
         } finally {
           self.agentFailureQueue.length = 0
         }
@@ -587,28 +578,8 @@ class SDKSessionImpl implements SDKSession {
           self.mcpConnected = true
         }
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
-        let heldBackResult: SDKMessage | null = null
         try {
-          for await (const engineMsg of self.engine.submitMessage(retryPrompt, { uuid: parentUserMessageUuid })) {
-            const sdkMessage = await hydrateToolProgressOutput(engineMsg)
-            if (sdkMessage.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
-              heldBackResult = sdkMessage
-            } else {
-              yield sdkMessage
-            }
-            yield* drainSdkEvents()
-            yield* self.drainAgentFailureQueue()
-          }
-          while (self.hasRunningBackgroundTasks() && !self._abortController?.signal.aborted) {
-            yield* drainSdkEvents()
-            yield* self.drainAgentFailureQueue()
-            await sleep(100, self._abortController?.signal, { unref: true })
-          }
-          yield* drainSdkEvents()
-          yield* self.drainAgentFailureQueue()
-          if (heldBackResult) {
-            yield heldBackResult
-          }
+          yield* self.runEngineTurn(retryPrompt, { uuid: parentUserMessageUuid })
         } finally {
           self.agentFailureQueue.length = 0
         }
@@ -676,6 +647,54 @@ class SDKSessionImpl implements SDKSession {
         (task.type === 'local_agent' || task.type === 'local_workflow') &&
         isBackgroundTask(task),
     )
+  }
+
+  private async *runEngineTurn(
+    content: string | ContentBlockParam[],
+    options?: { uuid?: string; isMeta?: boolean },
+  ): AsyncGenerator<SDKMessage, void, unknown> {
+    let heldBackResult: SDKMessage | null = null
+    for await (const engineMsg of this.engine.submitMessage(content, options)) {
+      const sdkMessage = await hydrateToolProgressOutput(engineMsg)
+      if (sdkMessage.type === 'result' && this.shouldHoldResultForBackgroundTasks()) {
+        heldBackResult = sdkMessage
+      } else {
+        yield sdkMessage
+      }
+      yield* drainSdkEvents()
+      yield* this.drainAgentFailureQueue()
+    }
+    yield* this.drainBackgroundTaskNotifications()
+    yield* drainSdkEvents()
+    yield* this.drainAgentFailureQueue()
+    if (heldBackResult) {
+      yield heldBackResult
+    }
+  }
+
+  private async *drainBackgroundTaskNotifications(): AsyncGenerator<SDKMessage, void, unknown> {
+    while (!this._abortController?.signal.aborted) {
+      yield* drainSdkEvents()
+      yield* this.drainAgentFailureQueue()
+
+      const command = dequeue(isMainThreadTaskNotification)
+      if (command) {
+        const notification = sdkTaskNotificationFromQueuedCommand(command)
+        if (notification) {
+          yield notification
+        }
+        yield* this.runEngineTurn(command.value, {
+          uuid: command.uuid,
+          isMeta: command.isMeta,
+        })
+        continue
+      }
+
+      if (!this.hasRunningBackgroundTasks()) {
+        return
+      }
+      await sleep(100, this._abortController?.signal, { unref: true })
+    }
   }
 
   interrupt(): void {
@@ -769,6 +788,50 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
+}
+
+function isMainThreadTaskNotification(command: QueuedCommand): boolean {
+  return command.mode === 'task-notification' && command.agentId === undefined
+}
+
+function sdkTaskNotificationFromQueuedCommand(command: QueuedCommand): SDKMessage | null {
+  const text = typeof command.value === 'string' ? command.value : ''
+  if (!text.includes(`<${TASK_NOTIFICATION_TAG}`)) {
+    return null
+  }
+  const status = normalizeTaskNotificationStatus(extractXmlTag(text, STATUS_TAG))
+  if (!status) {
+    return null
+  }
+  return {
+    type: 'system',
+    subtype: 'task_notification',
+    task_id: extractXmlTag(text, TASK_ID_TAG) ?? '',
+    tool_use_id: extractXmlTag(text, TOOL_USE_ID_TAG) ?? undefined,
+    status,
+    output_file: extractXmlTag(text, OUTPUT_FILE_TAG) ?? '',
+    summary: extractXmlTag(text, SUMMARY_TAG) ?? '',
+    uuid: randomUUID(),
+    session_id: getSessionId(),
+  } as SDKMessage
+}
+
+function normalizeTaskNotificationStatus(status: string | null): 'completed' | 'failed' | 'stopped' | null {
+  switch (status) {
+    case 'completed':
+    case 'failed':
+    case 'stopped':
+      return status
+    case 'killed':
+      return 'stopped'
+    default:
+      return null
+  }
+}
+
+function extractXmlTag(text: string, tag: string): string | null {
+  const match = text.match(new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`))
+  return match?.[1] ?? null
 }
 
 function hasOwn<T extends object, K extends PropertyKey>(value: T, key: K): value is T & Record<K, unknown> {
