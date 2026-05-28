@@ -77,6 +77,7 @@ import {
   buildConversationChain,
   stripExtraFields,
 } from './transcript.js'
+import { hydrateToolProgressOutput } from './toolProgress.js'
 
 // ============================================================================
 // QueryOptions type
@@ -615,7 +616,7 @@ class QueryImpl implements Query {
             // Submit to engine
             if (typeof self.prompt === 'string') {
               for await (const engineMsg of self.engine.submitMessage(self.prompt)) {
-                yield engineMsg
+                yield await hydrateToolProgressOutput(engineMsg)
                 yield* self.drainAgentFailureQueue()
               }
             } else {
@@ -623,7 +624,7 @@ class QueryImpl implements Query {
                 if (self.abortController.signal.aborted) break
                 const content = extractPromptFromUserMessage(userMessage)
                 for await (const engineMsg of self.engine.submitMessage(content, { uuid: userMessage.uuid })) {
-                  yield engineMsg
+                  yield await hydrateToolProgressOutput(engineMsg)
                   yield* self.drainAgentFailureQueue()
                 }
               }

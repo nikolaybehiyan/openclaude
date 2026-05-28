@@ -73,6 +73,7 @@ import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
 import { getRunningTasks } from '../../utils/task/framework.js'
 import { isBackgroundTask } from '../../tasks/types.js'
 import { stopTask } from '../../tasks/stopTask.js'
+import { hydrateToolProgressOutput } from './toolProgress.js'
 import { sleep } from '../../utils/sleep.js'
 import { generateSessionTitle as generateSourceSessionTitle } from '../../utils/sessionTitle.js'
 import { truncateToWidth } from '../../utils/format.js'
@@ -482,10 +483,11 @@ class SDKSessionImpl implements SDKSession {
         try {
           let heldBackResult: SDKMessage | null = null
           for await (const engineMsg of self.engine.submitMessage(content, options)) {
-            if (engineMsg.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
-              heldBackResult = engineMsg
+            const sdkMessage = await hydrateToolProgressOutput(engineMsg)
+            if (sdkMessage.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
+              heldBackResult = sdkMessage
             } else {
-              yield engineMsg
+              yield sdkMessage
             }
             yield* drainSdkEvents()
             yield* self.drainAgentFailureQueue()
@@ -588,10 +590,11 @@ class SDKSessionImpl implements SDKSession {
         let heldBackResult: SDKMessage | null = null
         try {
           for await (const engineMsg of self.engine.submitMessage(retryPrompt, { uuid: parentUserMessageUuid })) {
-            if (engineMsg.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
-              heldBackResult = engineMsg
+            const sdkMessage = await hydrateToolProgressOutput(engineMsg)
+            if (sdkMessage.type === 'result' && self.shouldHoldResultForBackgroundTasks()) {
+              heldBackResult = sdkMessage
             } else {
-              yield engineMsg
+              yield sdkMessage
             }
             yield* drainSdkEvents()
             yield* self.drainAgentFailureQueue()

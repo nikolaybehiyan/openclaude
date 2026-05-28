@@ -1916,6 +1916,10 @@ export type SDKToolProgressMessage = {
   parent_tool_use_id: string | null
   elapsed_time_seconds: number
   task_id?: string
+  content?: string
+  output?: string
+  total_bytes?: number
+  output_truncated?: boolean
   uuid: string
   session_id: string
 }
@@ -2236,6 +2240,10 @@ export type SDKMessage = ({
   parent_tool_use_id: string | null
   elapsed_time_seconds: number
   task_id?: string
+  content?: string
+  output?: string
+  total_bytes?: number
+  output_truncated?: boolean
   uuid: string
   session_id: string
 }) | ({
