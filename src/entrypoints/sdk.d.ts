@@ -2,6 +2,8 @@
 // Manually maintained — keep in sync with src/entrypoints/sdk/index.ts
 // Drift is caught by validate-externals.ts (runs in CI)
 
+import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
+
 // ============================================================================
 // Error
 // ============================================================================
@@ -386,7 +388,7 @@ export type SDKSessionUpdateOptions = Pick<
 
 export interface SDKSession {
   sessionId: string
-  sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */

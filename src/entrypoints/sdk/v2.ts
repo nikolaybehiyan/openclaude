@@ -208,7 +208,7 @@ export interface SDKSession {
   /** Unique identifier for this session. */
   sessionId: string
   /** Send a message and yield responses as an AsyncIterable of SDKMessage. */
-  sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
@@ -420,7 +420,7 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
-  async *sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage> {
+  async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
     const sdkContext = {
       sessionId: this._sessionId as SessionId,
       sessionProjectDir: this._sessionProjectDir,
