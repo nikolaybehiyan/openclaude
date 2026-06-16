@@ -42,6 +42,7 @@ import {
 } from '../../utils/sessionStorage.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
+import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import type { SDKResultMessage as GeneratedSDKResultMessage } from './coreTypes.generated.js'
 import type {
   SDKMessage,
@@ -83,7 +84,7 @@ import { truncateToWidth } from '../../utils/format.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
-import type { Tool } from '../../Tool.js'
+import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
   OUTPUT_FILE_TAG,
@@ -208,7 +209,7 @@ export interface SDKSession {
   /** Unique identifier for this session. */
   sessionId: string
   /** Send a message and yield responses as an AsyncIterable of SDKMessage. */
-  sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
@@ -420,7 +421,7 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
-  async *sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage> {
+  async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
     const sdkContext = {
       sessionId: this._sessionId as SessionId,
       sessionProjectDir: this._sessionProjectDir,
@@ -749,7 +750,7 @@ class SDKSessionImpl implements SDKSession {
     }), this.options.tools, getToolsForDefaultPreset())
     this.appStateStore.setState(prev => ({
       ...prev,
-      toolPermissionContext: permissionContext,
+      toolPermissionContext: permissionContextForUserInputAttachments(permissionContext),
     }))
     this.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), this.mcpTools))
   }
@@ -933,7 +934,7 @@ function createEngineFromOptions(
   const initialAppState = getDefaultAppState()
   const stateWithPermissions = {
     ...initialAppState,
-    toolPermissionContext: permissionContext,
+    toolPermissionContext: permissionContextForUserInputAttachments(permissionContext),
   }
   if (model) {
     stateWithPermissions.mainLoopModel = model
@@ -1008,6 +1009,25 @@ function createEngineFromOptions(
   const engine = new QueryEngine(engineConfig)
 
   return { engine, appStateStore, abortController: ac }
+}
+
+function permissionContextForUserInputAttachments(
+  permissionContext: ToolPermissionContext,
+): ToolPermissionContext {
+  const cliDenyRules = permissionContext.alwaysDenyRules.cliArg ?? []
+  const nextCliDenyRules = cliDenyRules.filter(
+    rule => rule.trim() !== FILE_READ_TOOL_NAME,
+  )
+  if (nextCliDenyRules.length === cliDenyRules.length) {
+    return permissionContext
+  }
+  return {
+    ...permissionContext,
+    alwaysDenyRules: {
+      ...permissionContext.alwaysDenyRules,
+      cliArg: nextCliDenyRules,
+    },
+  }
 }
 
 function applySessionFlagSettings(settings?: Record<string, unknown>): void {
