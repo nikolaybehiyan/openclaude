@@ -479,9 +479,8 @@ class SDKSessionImpl implements SDKSession {
               self.engine.setMcpClients(mcpClients)
             }
             if (mcpTools.length > 0) {
-              const permissionContext = self.appStateStore.getState().toolPermissionContext
               self.mcpTools = mcpTools
-              self.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), self.mcpTools))
+              self.engine.updateTools(mergeRuntimeTools(getTools(sdkVisiblePermissionContext(self.options)), self.mcpTools))
             }
           } catch (err) {
             // MCP connection failed — continue without MCP tools
@@ -741,16 +740,10 @@ class SDKSessionImpl implements SDKSession {
   }
 
   private applyPermissionContextFromOptions(): void {
-    const permissionContext = applyBuiltinToolsFilter(buildPermissionContext({
-      cwd: this.options.cwd,
-      permissionMode: this.options.permissionMode,
-      additionalDirectories: this.options.additionalDirectories,
-      allowedTools: this.options.allowedTools,
-      disallowedTools: this.options.disallowedTools,
-    }), this.options.tools, getToolsForDefaultPreset())
+    const permissionContext = sdkVisiblePermissionContext(this.options)
     this.appStateStore.setState(prev => ({
       ...prev,
-      toolPermissionContext: permissionContextForUserInputAttachments(permissionContext),
+      toolPermissionContext: attachmentReadPermissionContext(permissionContext),
     }))
     this.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), this.mcpTools))
   }
@@ -922,19 +915,13 @@ function createEngineFromOptions(
   // sessions from overwriting each other's working directory.
 
   // Build permission context
-  const permissionContext = applyBuiltinToolsFilter(buildPermissionContext({
-    cwd,
-    permissionMode,
-    additionalDirectories: options.additionalDirectories,
-    allowedTools: options.allowedTools,
-    disallowedTools: options.disallowedTools,
-  }), options.tools, getToolsForDefaultPreset())
+  const permissionContext = sdkVisiblePermissionContext(options)
 
   // Create AppState store (minimal, headless)
   const initialAppState = getDefaultAppState()
   const stateWithPermissions = {
     ...initialAppState,
-    toolPermissionContext: permissionContextForUserInputAttachments(permissionContext),
+    toolPermissionContext: attachmentReadPermissionContext(permissionContext),
   }
   if (model) {
     stateWithPermissions.mainLoopModel = model
@@ -1011,7 +998,7 @@ function createEngineFromOptions(
   return { engine, appStateStore, abortController: ac }
 }
 
-function permissionContextForUserInputAttachments(
+function attachmentReadPermissionContext(
   permissionContext: ToolPermissionContext,
 ): ToolPermissionContext {
   const cliDenyRules = permissionContext.alwaysDenyRules.cliArg ?? []
@@ -1028,6 +1015,16 @@ function permissionContextForUserInputAttachments(
       cliArg: nextCliDenyRules,
     },
   }
+}
+
+function sdkVisiblePermissionContext(options: SDKSessionOptions): ToolPermissionContext {
+  return applyBuiltinToolsFilter(buildPermissionContext({
+    cwd: options.cwd,
+    permissionMode: options.permissionMode,
+    additionalDirectories: options.additionalDirectories,
+    allowedTools: options.allowedTools,
+    disallowedTools: options.disallowedTools,
+  }), options.tools, getToolsForDefaultPreset())
 }
 
 function applySessionFlagSettings(settings?: Record<string, unknown>): void {

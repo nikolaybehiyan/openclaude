@@ -5,6 +5,8 @@ import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
   unstable_v2_prompt,
+  createSdkMcpServer,
+  tool,
 } from '../../src/entrypoints/sdk/index.js'
 import {
   getOriginalCwd,
@@ -130,6 +132,47 @@ describe('V2: session creation', () => {
     expect(state.thinkingEnabled).toBe(true)
     expect(state.toolPermissionContext.alwaysAllowRules.cliArg).toEqual([])
     expect(state.toolPermissionContext.alwaysDenyRules.cliArg).toContain('WebSearch')
+  })
+
+  test('SDK MCP refresh keeps attachment-only Read hidden from model tools', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const localTool = tool(
+        'local_echo',
+        'Echo local input',
+        { type: 'object', properties: { text: { type: 'string' } } },
+        async (args: { text: string }) => ({
+          content: [{ type: 'text', text: args.text }],
+        }),
+      )
+      const session = unstable_v2_createSession({
+        cwd: dir,
+        tools: ['Bash'],
+        mcpServers: {
+          local: createSdkMcpServer({
+            type: 'sdk',
+            name: 'local',
+            tools: [localTool],
+          }),
+        },
+      })
+      ;(session as any).agentsLoaded = true
+      ;(session as any)._engine.submitMessage = async function* () {}
+      try {
+        await drainQuery(session.sendMessage('hello'))
+        const toolNames = ((session as any)._engine?.config?.tools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(toolNames).toContain('Bash')
+        expect(toolNames).toContain('local_echo')
+        expect(toolNames).not.toContain('Read')
+        const attachmentDenyRules =
+          (session as any)._appStateStore?.getState().toolPermissionContext.alwaysDenyRules.cliArg ?? []
+        expect(attachmentDenyRules).not.toContain('Read')
+      } finally {
+        session.close()
+      }
+    })
   })
 
   test('createSession() accepts sampling overrides for persistent hosts', () => {
