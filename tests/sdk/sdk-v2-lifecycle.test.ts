@@ -175,6 +175,49 @@ describe('V2: session creation', () => {
     })
   })
 
+  test('SDK retry MCP refresh keeps attachment-only Read hidden from model tools', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const localTool = tool(
+        'local_echo',
+        'Echo local input',
+        { type: 'object', properties: { text: { type: 'string' } } },
+        async (args: { text: string }) => ({
+          content: [{ type: 'text', text: args.text }],
+        }),
+      )
+      const session = unstable_v2_createSession({
+        cwd: dir,
+        tools: ['Bash'],
+        mcpServers: {
+          local: createSdkMcpServer({
+            type: 'sdk',
+            name: 'local',
+            tools: [localTool],
+          }),
+        },
+      })
+      ;(session as any).agentsLoaded = true
+      ;(session as any).runEngineTurn = async function* () {}
+      ;(session as any)._engine.getMessages = () => [{
+        type: 'user',
+        uuid: 'human-1',
+        message: { role: 'user', content: 'hello' },
+      }]
+      try {
+        await drainQuery(session.retryMessage('human-1'))
+        const toolNames = ((session as any)._engine?.config?.tools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(toolNames).toContain('Bash')
+        expect(toolNames).toContain('local_echo')
+        expect(toolNames).not.toContain('Read')
+      } finally {
+        session.close()
+      }
+    })
+  })
+
   test('createSession() accepts sampling overrides for persistent hosts', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),

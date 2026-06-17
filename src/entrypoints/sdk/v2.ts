@@ -568,9 +568,8 @@ class SDKSessionImpl implements SDKSession {
               self.engine.setMcpClients(mcpClients)
             }
             if (mcpTools.length > 0) {
-              const permissionContext = self.appStateStore.getState().toolPermissionContext
               self.mcpTools = mcpTools
-              self.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), self.mcpTools))
+              self.engine.updateTools(mergeRuntimeTools(getTools(sdkVisiblePermissionContext(self.options)), self.mcpTools))
             }
           } catch (err) {
             console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
