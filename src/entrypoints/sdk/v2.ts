@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'crypto'
-import { dirname } from 'path'
+import { basename, dirname, extname } from 'path'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { QueryEngine } from '../../QueryEngine.js'
@@ -43,6 +43,7 @@ import {
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
+import { FileReadTool } from '../../tools/FileReadTool/FileReadTool.js'
 import type { SDKResultMessage as GeneratedSDKResultMessage } from './coreTypes.generated.js'
 import type {
   SDKMessage,
@@ -905,6 +906,8 @@ function createEngineFromOptions(
   if (!cwd) {
     throw new Error('SDKSessionOptions requires cwd')
   }
+  installFileReadAttachmentSupplementalContent()
+  installBridgeDiagnostics()
   configureSessionEventStore(options)
   applySessionSettingSources(options.settingSources)
   applySessionFlagSettings(options.settings)
@@ -1239,6 +1242,367 @@ export async function unstable_v2_resumeSession(
   }
 
   return session
+}
+
+type BridgeDiagnosticsGlobal = typeof globalThis & {
+  __openClaudeBridgeDiagnosticsInstalled?: boolean
+  __openClaudeSDKAttachmentSupplementalWrapped?: boolean
+  __openClaudeBridgeDiagnosticsFetchWrapped?: boolean
+  __openClaudeSDKAttachmentSupplementalBlocks?: ContentBlockParam[]
+}
+
+type ApiMediaSummary = {
+  text_blocks: number
+  image_blocks: number
+  document_blocks: number
+  pdf_document_blocks: number
+  tool_use_blocks: number
+  tool_result_blocks: number
+  image_media_types: string[]
+  document_media_types: string[]
+}
+
+function installBridgeDiagnostics(): void {
+  if (!bridgeDiagnosticsEnabled()) {
+    return
+  }
+  const root = globalThis as BridgeDiagnosticsGlobal
+  if (root.__openClaudeBridgeDiagnosticsInstalled) {
+    return
+  }
+  root.__openClaudeBridgeDiagnosticsInstalled = true
+  installFetchBridgeDiagnostics(root)
+}
+
+function installFileReadAttachmentSupplementalContent(): void {
+  const root = globalThis as BridgeDiagnosticsGlobal
+  if (root.__openClaudeSDKAttachmentSupplementalWrapped) {
+    return
+  }
+  root.__openClaudeSDKAttachmentSupplementalWrapped = true
+  const originalCall = FileReadTool.call.bind(FileReadTool)
+  FileReadTool.call = (async (input: unknown, context: unknown) => {
+    const startedAt = Date.now()
+    try {
+      const result = await originalCall(input as never, context as never)
+      queueFileReadSupplementalBlocks(result)
+      emitBridgeDiagnostic('file_read_tool_call', {
+        ok: true,
+        duration_ms: Date.now() - startedAt,
+        input: fileReadInputSummary(input),
+        result: fileReadResultSummary(result),
+      })
+      return result
+    } catch (error) {
+      emitBridgeDiagnostic('file_read_tool_call', {
+        ok: false,
+        duration_ms: Date.now() - startedAt,
+        input: fileReadInputSummary(input),
+        error: errorSummary(error),
+      })
+      throw error
+    }
+  }) as typeof FileReadTool.call
+}
+
+function installFetchBridgeDiagnostics(root: BridgeDiagnosticsGlobal): void {
+  if (root.__openClaudeBridgeDiagnosticsFetchWrapped || typeof globalThis.fetch !== 'function') {
+    return
+  }
+  root.__openClaudeBridgeDiagnosticsFetchWrapped = true
+  const originalFetch = globalThis.fetch.bind(globalThis)
+  globalThis.fetch = (async (input: Parameters<typeof fetch>[0], init?: Parameters<typeof fetch>[1]) => {
+    const rewritten = await maybeAttachQueuedSupplementalBlocks(input, init)
+    try {
+      await emitApiRequestMediaDiagnostic(rewritten.input, rewritten.init)
+    } catch {
+      // Diagnostics must never affect the SDK request path.
+    }
+    return originalFetch(rewritten.input, rewritten.init)
+  }) as typeof fetch
+}
+
+function queueFileReadSupplementalBlocks(result: unknown): void {
+  const blocks = supplementalBlocksFromNewMessages((result as { newMessages?: unknown[] })?.newMessages)
+  if (blocks.length === 0) {
+    return
+  }
+  const root = globalThis as BridgeDiagnosticsGlobal
+  root.__openClaudeSDKAttachmentSupplementalBlocks = [
+    ...(root.__openClaudeSDKAttachmentSupplementalBlocks ?? []),
+    ...blocks,
+  ]
+}
+
+async function maybeAttachQueuedSupplementalBlocks(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Promise<{ input: Parameters<typeof fetch>[0]; init?: Parameters<typeof fetch>[1] }> {
+  const root = globalThis as BridgeDiagnosticsGlobal
+  const queued = root.__openClaudeSDKAttachmentSupplementalBlocks ?? []
+  if (queued.length === 0 || !requestURL(input).includes('/messages')) {
+    return { input, init }
+  }
+  const bodyText = await requestBodyText(input, init)
+  if (!bodyText) {
+    return { input, init }
+  }
+  const body = JSON.parse(bodyText) as Record<string, unknown>
+  const messages = Array.isArray(body.messages) ? body.messages as Array<Record<string, unknown>> : []
+  if (messages.length === 0 || summarizeApiMessages(messages).document_blocks > 0) {
+    return { input, init }
+  }
+  const target = [...messages].reverse().find(message => message.role === 'user') ?? messages[messages.length - 1]
+  if (!target) {
+    return { input, init }
+  }
+  const existingContent = target.content
+  target.content = [
+    ...(typeof existingContent === 'string'
+      ? [{ type: 'text' as const, text: existingContent }]
+      : Array.isArray(existingContent)
+        ? existingContent
+        : []),
+    ...queued,
+  ]
+  root.__openClaudeSDKAttachmentSupplementalBlocks = []
+  const nextInit = init ? { ...init, body: JSON.stringify(body) } : init
+  emitBridgeDiagnostic('api_request_media_supplemental_attached', {
+    queued_blocks: queued.length,
+    queued_block_types: queued.map(block => typeof block === 'object' && block !== null ? (block as { type?: unknown }).type : ''),
+  })
+  return { input, init: nextInit }
+}
+
+function supplementalBlocksFromNewMessages(messages: unknown): ContentBlockParam[] {
+  if (!Array.isArray(messages)) {
+    return []
+  }
+  const blocks: ContentBlockParam[] = []
+  for (const message of messages) {
+    const content = (message as { message?: { content?: unknown }; content?: unknown })?.message?.content ??
+      (message as { content?: unknown })?.content
+    if (!Array.isArray(content)) {
+      continue
+    }
+    for (const block of content) {
+      if (isSupplementalFileBlock(block)) {
+        blocks.push(block)
+      }
+    }
+  }
+  return blocks
+}
+
+function isSupplementalFileBlock(block: unknown): block is ContentBlockParam {
+  if (!block || typeof block !== 'object') {
+    return false
+  }
+  const type = (block as { type?: unknown }).type
+  return type === 'document'
+}
+
+async function emitApiRequestMediaDiagnostic(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Promise<void> {
+  const url = requestURL(input)
+  if (!url.includes('/messages')) {
+    return
+  }
+  const bodyText = await requestBodyText(input, init)
+  if (!bodyText) {
+    return
+  }
+  const body = JSON.parse(bodyText) as Record<string, unknown>
+  const messages = Array.isArray(body.messages) ? body.messages : []
+  emitBridgeDiagnostic('api_request_media', {
+    url_kind: apiURLKind(url),
+    model: typeof body.model === 'string' ? body.model : '',
+    message_count: messages.length,
+    media: summarizeApiMessages(messages),
+  })
+}
+
+function bridgeDiagnosticsEnabled(): boolean {
+  return process.env.OPENCLAUDE_BRIDGE_ACTOR_MODE === '1' &&
+    (process.env.DEBUG_SDK === '1' || process.env.CLAUDE_CODE_DEBUG_LOG_LEVEL === 'debug')
+}
+
+function emitBridgeDiagnostic(stage: string, details: Record<string, unknown>): void {
+  if (!bridgeDiagnosticsEnabled()) {
+    return
+  }
+  process.stdout.write(`${JSON.stringify({
+    runtime_adapter_event: 'sdk_diagnostic',
+    stage,
+    openclaude_session_id: getSessionId(),
+    details,
+  })}\n`)
+}
+
+function fileReadInputSummary(input: unknown): Record<string, unknown> {
+  const filePath = typeof input === 'object' && input !== null && typeof (input as { file_path?: unknown }).file_path === 'string'
+    ? (input as { file_path: string }).file_path
+    : ''
+  return {
+    tool_name: FILE_READ_TOOL_NAME,
+    file_name: filePath ? basename(filePath) : '',
+    extension: filePath ? extname(filePath).toLowerCase() : '',
+    is_upload_path: filePath.includes('/mnt/user-data/uploads/'),
+  }
+}
+
+function fileReadResultSummary(result: unknown): Record<string, unknown> {
+  const value = result as {
+    data?: { type?: unknown; media_type?: unknown; file?: { file_name?: unknown; file_size?: unknown } }
+    resultForAssistant?: { data?: { type?: unknown; media_type?: unknown } }
+    newMessages?: unknown[]
+  }
+  const data = value?.data ?? value?.resultForAssistant?.data
+  const dataRecord = data && typeof data === 'object' ? data as Record<string, unknown> : {}
+  const fileRecord = dataRecord.file && typeof dataRecord.file === 'object'
+    ? dataRecord.file as Record<string, unknown>
+    : {}
+  return {
+    data_type: typeof data?.type === 'string' ? data.type : '',
+    media_type: typeof data?.media_type === 'string' ? data.media_type : '',
+    has_new_messages: Array.isArray(value?.newMessages) && value.newMessages.length > 0,
+    new_message_count: Array.isArray(value?.newMessages) ? value.newMessages.length : 0,
+    new_message_block_types: newMessageBlockTypes(value?.newMessages),
+    file_name: typeof fileRecord.file_name === 'string' ? fileRecord.file_name : '',
+    file_size: typeof fileRecord.file_size === 'number' ? fileRecord.file_size : undefined,
+  }
+}
+
+function newMessageBlockTypes(messages: unknown): string[] {
+  if (!Array.isArray(messages)) {
+    return []
+  }
+  const types: string[] = []
+  for (const message of messages) {
+    const content = (message as { message?: { content?: unknown }; content?: unknown })?.message?.content ??
+      (message as { content?: unknown })?.content
+    collectContentBlockTypes(content, types)
+  }
+  return types
+}
+
+function summarizeApiMessages(messages: unknown[]): ApiMediaSummary {
+  const summary: ApiMediaSummary = {
+    text_blocks: 0,
+    image_blocks: 0,
+    document_blocks: 0,
+    pdf_document_blocks: 0,
+    tool_use_blocks: 0,
+    tool_result_blocks: 0,
+    image_media_types: [] as string[],
+    document_media_types: [] as string[],
+  }
+  for (const message of messages) {
+    collectApiContentSummary((message as { content?: unknown })?.content, summary)
+  }
+  summary.image_media_types = [...new Set(summary.image_media_types)]
+  summary.document_media_types = [...new Set(summary.document_media_types)]
+  return summary
+}
+
+function collectApiContentSummary(content: unknown, summary: ApiMediaSummary): void {
+  if (typeof content === 'string') {
+    summary.text_blocks += 1
+    return
+  }
+  if (!Array.isArray(content)) {
+    return
+  }
+  for (const block of content) {
+    if (!block || typeof block !== 'object') {
+      continue
+    }
+    const record = block as Record<string, unknown>
+    const type = typeof record.type === 'string' ? record.type : ''
+    if (type === 'text') {
+      summary.text_blocks += 1
+    } else if (type === 'image') {
+      summary.image_blocks += 1
+      const mediaType = nestedMediaType(record.source)
+      if (mediaType) summary.image_media_types.push(mediaType)
+    } else if (type === 'document') {
+      summary.document_blocks += 1
+      const mediaType = nestedMediaType(record.source)
+      if (mediaType) {
+        summary.document_media_types.push(mediaType)
+        if (mediaType === 'application/pdf') summary.pdf_document_blocks += 1
+      }
+    } else if (type === 'tool_use') {
+      summary.tool_use_blocks += 1
+    } else if (type === 'tool_result') {
+      summary.tool_result_blocks += 1
+      collectApiContentSummary(record.content, summary)
+    }
+  }
+}
+
+function collectContentBlockTypes(content: unknown, types: string[]): void {
+  if (typeof content === 'string') {
+    types.push('string')
+    return
+  }
+  if (!Array.isArray(content)) {
+    return
+  }
+  for (const block of content) {
+    if (block && typeof block === 'object' && typeof (block as { type?: unknown }).type === 'string') {
+      types.push((block as { type: string }).type)
+    }
+  }
+}
+
+function nestedMediaType(value: unknown): string {
+  return value && typeof value === 'object' && typeof (value as { media_type?: unknown }).media_type === 'string'
+    ? (value as { media_type: string }).media_type
+    : ''
+}
+
+function requestURL(input: Parameters<typeof fetch>[0]): string {
+  if (typeof input === 'string') {
+    return input
+  }
+  if (input instanceof URL) {
+    return input.href
+  }
+  return typeof (input as { url?: unknown })?.url === 'string' ? (input as { url: string }).url : ''
+}
+
+async function requestBodyText(
+  input: Parameters<typeof fetch>[0],
+  init?: Parameters<typeof fetch>[1],
+): Promise<string> {
+  if (typeof init?.body === 'string') {
+    return init.body
+  }
+  if (init?.body instanceof Uint8Array) {
+    return Buffer.from(init.body).toString('utf8')
+  }
+  if (typeof Request !== 'undefined' && input instanceof Request) {
+    return input.clone().text()
+  }
+  return ''
+}
+
+function apiURLKind(url: string): string {
+  try {
+    return new URL(url).pathname
+  } catch {
+    return url.includes('/messages') ? '/messages' : ''
+  }
+}
+
+function errorSummary(error: unknown): Record<string, unknown> {
+  return {
+    name: error instanceof Error ? error.name : typeof error,
+    message: error instanceof Error ? error.message : String(error),
+  }
 }
 
 function configureSessionEventStore(options: SDKSessionOptions): void {
