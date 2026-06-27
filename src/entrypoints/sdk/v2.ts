@@ -304,6 +304,7 @@ export interface SdkMcpToolDefinition<Schema = any> {
   permissionBehavior?: 'allow' | 'ask' | 'deny'
   searchHint?: string
   alwaysLoad?: boolean
+  _meta?: Record<string, unknown>
 }
 
 // ============================================================================

@@ -264,11 +264,16 @@ export async function connectSdkMcpServers(
           name: string
           description?: string
           inputSchema?: Record<string, unknown>
-          handler?: (args: unknown, extra: unknown) => Promise<{ content: unknown }>
+          handler?: (args: unknown, extra: unknown) => Promise<{
+            content: unknown
+            _meta?: Record<string, unknown>
+            structuredContent?: Record<string, unknown>
+          }>
           annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean; openWorldHint?: boolean }
           permissionBehavior?: 'allow' | 'ask' | 'deny'
           searchHint?: string
           alwaysLoad?: boolean
+          _meta?: Record<string, unknown>
         }
         const sdkConfig = config as { type: 'sdk'; name: string; tools?: SdkToolDef[] }
         const sdkToolDefs = sdkConfig.tools ?? []
@@ -278,6 +283,7 @@ export async function connectSdkMcpServers(
           isMcp: true,
           searchHint: toolDef.searchHint,
           alwaysLoad: toolDef.alwaysLoad,
+          ...(toolDef._meta ? { _meta: toolDef._meta } : {}),
           async description() {
             return toolDef.description ?? ''
           },
@@ -297,7 +303,7 @@ export async function connectSdkMcpServers(
           isOpenWorld() {
             return toolDef.annotations?.openWorldHint ?? false
           },
-          async checkPermissions() {
+          async checkPermissions(input, context) {
             switch (toolDef.permissionBehavior) {
               case 'allow':
                 return { behavior: 'allow' as const }
@@ -305,6 +311,7 @@ export async function connectSdkMcpServers(
                 return {
                   behavior: 'deny' as const,
                   message: `Permission to use ${toolDef.name} has been denied.`,
+                  decisionReason: { type: 'mode' as const, mode: 'default' },
                 }
               case 'ask':
                 return {
@@ -312,7 +319,7 @@ export async function connectSdkMcpServers(
                   message: `OpenClaude needs your permission to use ${toolDef.name}`,
                 }
               default:
-                return MCPTool.checkPermissions()
+                return MCPTool.checkPermissions(input, context)
             }
           },
           async call(args: Record<string, unknown>, context, _canUseTool, parentMessage, onProgress) {
@@ -320,7 +327,21 @@ export async function connectSdkMcpServers(
               return { data: { type: 'text', text: `SDK tool ${toolDef.name} has no handler` } }
             }
             const result = await toolDef.handler(args, { context, parentMessage, onProgress })
-            return { data: result.content }
+            const mcpMeta =
+              result && typeof result === 'object'
+                ? {
+                    ...('_meta' in result && result._meta
+                      ? { _meta: result._meta as Record<string, unknown> }
+                      : {}),
+                    ...('structuredContent' in result && result.structuredContent
+                      ? { structuredContent: result.structuredContent as Record<string, unknown> }
+                      : {}),
+                  }
+                : {}
+            return {
+              data: result.content,
+              ...(Object.keys(mcpMeta).length > 0 ? { mcpMeta } : {}),
+            }
           },
         }))
         return {

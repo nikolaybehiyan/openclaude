@@ -123,4 +123,88 @@ describe('SDK MCP type:sdk tools wiring', () => {
     expect(handlerResult.content[0].type).toBe('text')
     expect(handlerResult.content[0].text).toBe('hello')
   })
+
+  test('SDK MCP app tools preserve UI metadata and MCP result metadata', async () => {
+    const visualizeTool = tool(
+      'visualize:show_widget',
+      'Show an interactive visualization widget',
+      {
+        type: 'object',
+        properties: {
+          loading_messages: {
+            type: 'array',
+            items: { type: 'string' },
+          },
+          title: { type: 'string' },
+          widget_code: { type: 'string' },
+        },
+        required: ['loading_messages', 'title', 'widget_code'],
+      },
+      async (args: { title: string; widget_code: string }) => ({
+        content: [{ type: 'text', text: 'Content rendered and shown to the user.' }],
+        structuredContent: {
+          title: args.title,
+          widget_code: args.widget_code,
+        },
+        _meta: {
+          rendered: true,
+        },
+      }),
+      {
+        annotations: { readOnlyHint: true },
+        permissionBehavior: 'allow',
+        searchHint: 'interactive visualization widget',
+        alwaysLoad: true,
+        _meta: {
+          ui: {
+            resourceUri: 'ui://imagine/show-widget.html',
+          },
+        },
+      },
+    )
+
+    const { clients, tools } = await connectSdkMcpServers({
+      visualize: createSdkMcpServer({
+        type: 'sdk',
+        name: 'visualize',
+        tools: [visualizeTool],
+      }),
+    })
+
+    expect(clients.length).toBe(0)
+    expect(tools.length).toBe(1)
+    expect(tools[0].name).toBe('visualize:show_widget')
+    expect(await tools[0].description()).toBe('Show an interactive visualization widget')
+    expect(tools[0].alwaysLoad).toBe(true)
+    expect(tools[0].searchHint).toBe('interactive visualization widget')
+
+    const convertedTool = tools[0] as typeof tools[0] & { _meta?: Record<string, unknown> }
+    expect(convertedTool._meta).toEqual({
+      ui: {
+        resourceUri: 'ui://imagine/show-widget.html',
+      },
+    })
+
+    const result = await tools[0].call(
+      {
+        loading_messages: ['Rendering widget'],
+        title: 'Capacity Planner',
+        widget_code: '<div>planner</div>',
+      } as never,
+      {} as never,
+      undefined as never,
+      undefined as never,
+    )
+
+    expect(result.data).toEqual([{ type: 'text', text: 'Content rendered and shown to the user.' }])
+    expect(result.mcpMeta).toEqual({
+      structuredContent: {
+        title: 'Capacity Planner',
+        widget_code: '<div>planner</div>',
+      },
+      _meta: {
+        rendered: true,
+      },
+    })
+  })
 })

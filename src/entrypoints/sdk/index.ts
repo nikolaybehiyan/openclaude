@@ -145,6 +145,7 @@ export function tool<Schema = any>(
     permissionBehavior?: 'allow' | 'ask' | 'deny'
     searchHint?: string
     alwaysLoad?: boolean
+    _meta?: Record<string, unknown>
   },
 ): import('./v2.js').SdkMcpToolDefinition<Schema> {
   return {
@@ -156,6 +157,7 @@ export function tool<Schema = any>(
     permissionBehavior: extras?.permissionBehavior,
     searchHint: extras?.searchHint,
     alwaysLoad: extras?.alwaysLoad,
+    _meta: extras?._meta,
   }
 }
 

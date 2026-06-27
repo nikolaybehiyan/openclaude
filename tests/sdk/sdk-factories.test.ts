@@ -28,11 +28,13 @@ describe('tool() factory', () => {
       annotations: { readOnlyHint: true },
       searchHint: 'file-search',
       alwaysLoad: true,
+      _meta: { ui: { resourceUri: 'ui://search/results.html' } },
     })
 
     expect(def.annotations).toEqual({ readOnlyHint: true })
     expect(def.searchHint).toBe('file-search')
     expect(def.alwaysLoad).toBe(true)
+    expect(def._meta).toEqual({ ui: { resourceUri: 'ui://search/results.html' } })
   })
 
   test('handler can return CallToolResult', async () => {
