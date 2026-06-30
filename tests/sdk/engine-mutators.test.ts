@@ -87,6 +87,63 @@ describe('COR-1 regression: typed nullable appStateStore', () => {
 })
 
 // ---------------------------------------------------------------------------
+// TEST 1b - SDK history sync signature safety
+// ---------------------------------------------------------------------------
+
+describe('SDK history sync signature safety', () => {
+  test('unstable_syncMessages strips signature-bearing assistant blocks before replacing engine history', () => {
+    const userUuid = '00000000-0000-4000-8000-000000000101'
+    const assistantUuid = '00000000-0000-4000-8000-000000000102'
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+    })
+
+    try {
+      session.unstable_syncMessages([
+        {
+          type: 'user',
+          uuid: userUuid,
+          parentUuid: null,
+          timestamp: '2026-04-02T00:00:00.000Z',
+          cwd: process.cwd(),
+          userType: 'external',
+          sessionId: session.sessionId,
+          version: 'test',
+          isSidechain: false,
+          isMeta: false,
+          message: {
+            role: 'user',
+            content: 'hello',
+          },
+        },
+        {
+          type: 'assistant',
+          uuid: assistantUuid,
+          parentUuid: userUuid,
+          timestamp: '2026-04-02T00:00:01.000Z',
+          cwd: process.cwd(),
+          sessionId: session.sessionId,
+          version: 'test',
+          message: {
+            role: 'assistant',
+            content: [
+              { type: 'thinking', thinking: 'secret reasoning from prior turn' },
+              { type: 'text', text: 'visible answer' },
+            ],
+          },
+        },
+      ])
+
+      const synced = JSON.stringify(session.getMessages())
+      expect(synced).toContain('visible answer')
+      expect(synced).not.toContain('secret reasoning from prior turn')
+    } finally {
+      session.interrupt()
+    }
+  })
+})
+
+// ---------------------------------------------------------------------------
 // TEST 2 — updateTools Transaction Safety
 // ---------------------------------------------------------------------------
 

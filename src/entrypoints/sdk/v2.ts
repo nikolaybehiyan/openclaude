@@ -74,6 +74,7 @@ import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
 import { parseSettingSourcesFlag } from '../../utils/settings/constants.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
 import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
+import { stripSignatureBlocks } from '../../utils/messages.js'
 import { getRunningTasks } from '../../utils/task/framework.js'
 import { isBackgroundTask } from '../../tasks/types.js'
 import { stopTask } from '../../tasks/stopTask.js'
@@ -613,6 +614,7 @@ class SDKSessionImpl implements SDKSession {
   }
 
   private replaceEngineWithInitialMessages(messages: any[]): void {
+    const signatureSafeMessages = stripSignatureBlocks(messages)
     const oldMcpClients = this._engine?.getMcpClients?.() ?? []
     for (const client of oldMcpClients) {
       if (client.type === 'connected' && client.cleanup) {
@@ -623,7 +625,7 @@ class SDKSessionImpl implements SDKSession {
     }
     const { engine, appStateStore, abortController } = createEngineFromOptions(
       this.options,
-      messages,
+      signatureSafeMessages,
       this._sessionId,
     )
     this._engine = engine
@@ -1225,9 +1227,10 @@ export async function unstable_v2_resumeSession(
   }
 
   const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
+  const signatureSafeInitialMessages = stripSignatureBlocks(initialMessages)
   const { engine, appStateStore, abortController } = createEngineFromOptions(
     sessionOptions,
-    initialMessages as any[],
+    signatureSafeInitialMessages as any[],
     sessionId,
   )
   session.setEngine(engine)
