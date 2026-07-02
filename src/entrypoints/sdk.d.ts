@@ -58,6 +58,35 @@ export type ThinkingConfig =
   | { type: 'enabled'; budgetTokens: number }
   | { type: 'disabled' }
 
+export type HookEvent =
+  | 'PreToolUse'
+  | 'PostToolUse'
+  | 'PostToolUseFailure'
+  | 'Notification'
+  | 'UserPromptSubmit'
+  | 'SessionStart'
+  | 'SessionEnd'
+  | 'Stop'
+  | 'StopFailure'
+  | 'SubagentStart'
+  | 'SubagentStop'
+  | 'PreCompact'
+  | 'PostCompact'
+  | 'PermissionRequest'
+  | 'PermissionDenied'
+  | 'Setup'
+  | 'TeammateIdle'
+  | 'TaskCreated'
+  | 'TaskCompleted'
+  | 'Elicitation'
+  | 'ElicitationResult'
+  | 'ConfigChange'
+  | 'WorktreeCreate'
+  | 'WorktreeRemove'
+  | 'InstructionsLoaded'
+  | 'CwdChanged'
+  | 'FileChanged'
+
 export function sdkErrorFromType(
   errorType: SDKAssistantMessageError,
   message?: string,
@@ -371,7 +400,19 @@ export type SDKSessionOptions = {
   sessionEventReader?: SDKSessionEventReader
   /** Native OpenClaude/CCR-style subagent transcript event reader for resume. */
   sessionSubagentEventReader?: SDKSessionEventReader
+  /** In-memory session hooks backed by OpenClaude's native session hook runtime. */
+  hooks?: SDKSessionFunctionHooks
 }
+
+export type SDKSessionFunctionHook = {
+  matcher?: string
+  id?: string
+  timeout?: number
+  errorMessage?: string
+  callback: (messages: unknown[], signal?: AbortSignal) => boolean | Promise<boolean>
+}
+
+export type SDKSessionFunctionHooks = Partial<Record<HookEvent, SDKSessionFunctionHook[]>>
 
 export type SDKSessionUpdateOptions = Pick<
   SDKSessionOptions,

@@ -54,6 +54,7 @@ export type {
   SDKMessage,
   SDKUserMessage,
   SDKSessionInfo,
+  HookEvent,
   ListSessionsOptions,
   GetSessionInfoOptions,
   GetSessionMessagesOptions,
@@ -98,6 +99,8 @@ export type {
   SDKSideQuestionResult,
   SDKSessionEventWriter,
   SDKSessionEventReader,
+  SDKSessionFunctionHook,
+  SDKSessionFunctionHooks,
   SDKSessionUpdateOptions,
   ThinkingConfig,
 } from './v2.js'

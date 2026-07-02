@@ -44,7 +44,10 @@ import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { FileReadTool } from '../../tools/FileReadTool/FileReadTool.js'
-import type { SDKResultMessage as GeneratedSDKResultMessage } from './coreTypes.generated.js'
+import type {
+  HookEvent,
+  SDKResultMessage as GeneratedSDKResultMessage,
+} from './coreTypes.generated.js'
 import type {
   SDKMessage,
   SDKAgentLoadFailureMessage,
@@ -86,6 +89,7 @@ import { truncateToWidth } from '../../utils/format.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
+import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
@@ -170,7 +174,19 @@ export type SDKSessionOptions = {
    * If omitted, only the foreground transcript is hydrated.
    */
   sessionSubagentEventReader?: SDKSessionEventReader
+  /** In-memory session hooks backed by OpenClaude's native session hook runtime. */
+  hooks?: SDKSessionFunctionHooks
 }
+
+export type SDKSessionFunctionHook = {
+  matcher?: string
+  id?: string
+  timeout?: number
+  errorMessage?: string
+  callback: (messages: unknown[], signal?: AbortSignal) => boolean | Promise<boolean>
+}
+
+export type SDKSessionFunctionHooks = Partial<Record<HookEvent, SDKSessionFunctionHook[]>>
 
 export type SDKSessionUpdateOptions = Pick<
   SDKSessionOptions,
@@ -933,6 +949,7 @@ function createEngineFromOptions(
     stateWithPermissions.mainLoopModelForSession = model
   }
   const appStateStore = createStore<AppState>(stateWithPermissions)
+  registerSDKSessionFunctionHooks(options, appStateStore, sessionId)
 
   // Build thinkingConfig from initial state
   // thinkingEnabled defaults to true via getDefaultAppState() -> shouldEnableThinkingByDefault()
@@ -1001,6 +1018,38 @@ function createEngineFromOptions(
   const engine = new QueryEngine(engineConfig)
 
   return { engine, appStateStore, abortController: ac }
+}
+
+function registerSDKSessionFunctionHooks(
+  options: SDKSessionOptions,
+  appStateStore: Store<AppState>,
+  sessionId?: string,
+): void {
+  if (!sessionId || !options.hooks) {
+    return
+  }
+  for (const [eventName, hooks] of Object.entries(options.hooks) as Array<[HookEvent, SDKSessionFunctionHook[] | undefined]>) {
+    if (!Array.isArray(hooks)) {
+      continue
+    }
+    for (const hook of hooks) {
+      if (!hook || typeof hook.callback !== 'function') {
+        continue
+      }
+      addFunctionHook(
+        (updater: (prev: AppState) => AppState) => appStateStore.setState(updater),
+        sessionId,
+        eventName,
+        hook.matcher ?? '',
+        (messages, signal) => hook.callback(messages as unknown[], signal),
+        hook.errorMessage ?? 'SDK session hook failed',
+        {
+          id: hook.id,
+          timeout: hook.timeout,
+        },
+      )
+    }
+  }
 }
 
 function attachmentReadPermissionContext(
