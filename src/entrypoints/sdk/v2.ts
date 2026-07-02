@@ -630,7 +630,7 @@ class SDKSessionImpl implements SDKSession {
   }
 
   private replaceEngineWithInitialMessages(messages: any[]): void {
-    const signatureSafeMessages = stripSignatureBlocks(messages)
+    const signatureSafeMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(messages))
     const oldMcpClients = this._engine?.getMcpClients?.() ?? []
     for (const client of oldMcpClients) {
       if (client.type === 'connected' && client.cleanup) {
@@ -1020,6 +1020,119 @@ function createEngineFromOptions(
   return { engine, appStateStore, abortController: ac }
 }
 
+function normalizeSDKSyncedMessages(messages: any[]): any[] {
+  let changed = false
+  const next = messages.map(message => {
+    if (!message || typeof message !== 'object' || Array.isArray(message) || message.type !== 'assistant') {
+      return message
+    }
+    const content = message.message?.content
+    if (!Array.isArray(content)) {
+      return message
+    }
+    const normalizedContent = normalizeSDKSyncedAssistantContent(content)
+    if (normalizedContent === content) {
+      return message
+    }
+    changed = true
+    return {
+      ...message,
+      message: {
+        ...message.message,
+        content: normalizedContent,
+      },
+    }
+  })
+  return changed ? next : messages
+}
+
+function normalizeSDKSyncedAssistantContent(content: any[]): any[] {
+  let changed = false
+  const normalized: any[] = []
+  for (const block of content) {
+    if (!block || typeof block !== 'object' || Array.isArray(block)) {
+      normalized.push(block)
+      continue
+    }
+    if (block.type !== 'tool_use') {
+      normalized.push(block)
+      continue
+    }
+    const toolUse = normalizeSDKSyncedToolUseBlock(block)
+    if (!toolUse) {
+      changed = true
+      break
+    }
+    if (toolUse !== block) {
+      changed = true
+    }
+    normalized.push(toolUse)
+  }
+  return changed ? normalized : content
+}
+
+function normalizeSDKSyncedToolUseBlock(block: Record<string, unknown>): Record<string, unknown> | null {
+  const id = typeof block.id === 'string' && block.id.trim() ? block.id : ''
+  const name = typeof block.name === 'string' && block.name.trim() ? block.name : ''
+  if (!id || !name) {
+    return null
+  }
+  const input = sdkSyncedToolUseInputObject(block)
+  if (!input) {
+    return null
+  }
+  if (block.input === input && !('partial_json' in block) && !('buffered_input' in block) && !('partial_input' in block)) {
+    return block
+  }
+  const normalized: Record<string, unknown> = {
+    ...block,
+    type: 'tool_use',
+    id,
+    name,
+    input,
+  }
+  delete normalized.partial_json
+  delete normalized.buffered_input
+  delete normalized.partial_input
+  return normalized
+}
+
+function sdkSyncedToolUseInputObject(block: Record<string, unknown>): Record<string, unknown> | null {
+  const direct = plainRecordOrNull(block.input)
+  if (direct) {
+    return direct
+  }
+  const toolInput = plainRecordOrNull(block.tool_input) ?? parsePlainRecordOrNull(block.tool_input)
+  if (toolInput) {
+    return toolInput
+  }
+  for (const key of ['buffered_input', 'partial_json', 'partial_input']) {
+    const parsed = parsePlainRecordOrNull(block[key])
+    if (parsed) {
+      return parsed
+    }
+  }
+  return null
+}
+
+function parsePlainRecordOrNull(value: unknown): Record<string, unknown> | null {
+  if (typeof value !== 'string' || !value.trim()) {
+    return null
+  }
+  try {
+    return plainRecordOrNull(JSON.parse(value))
+  } catch {
+    return null
+  }
+}
+
+function plainRecordOrNull(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null
+  }
+  return value as Record<string, unknown>
+}
+
 function registerSDKSessionFunctionHooks(
   options: SDKSessionOptions,
   appStateStore: Store<AppState>,
@@ -1276,7 +1389,7 @@ export async function unstable_v2_resumeSession(
   }
 
   const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
-  const signatureSafeInitialMessages = stripSignatureBlocks(initialMessages)
+  const signatureSafeInitialMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(initialMessages))
   const { engine, appStateStore, abortController } = createEngineFromOptions(
     sessionOptions,
     signatureSafeInitialMessages as any[],
