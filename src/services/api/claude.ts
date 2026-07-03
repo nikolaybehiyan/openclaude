@@ -184,6 +184,7 @@ import {
   modelSupportsThinking,
   type ThinkingConfig,
 } from 'src/utils/thinking.js'
+import { shouldEnableProviderToolStream } from 'src/utils/providerToolStream.js'
 import {
   extractDiscoveredToolNames,
   isDeferredToolsDeltaEnabled,
@@ -1740,6 +1741,12 @@ async function* queryModel(
     const temperature = !hasThinking
       ? (options.temperatureOverride ?? 1)
       : undefined
+    const enableProviderToolStream = shouldEnableProviderToolStream({
+      baseUrl: process.env.ANTHROPIC_BASE_URL,
+      hasTools: allTools.length > 0,
+      model: apiModel,
+      stream: true,
+    })
 
     lastRequestBetas = betasParams
 
@@ -1778,6 +1785,7 @@ async function* queryModel(
         output_config: outputConfig,
       }),
       ...(speed !== undefined && { speed }),
+      ...(enableProviderToolStream && { tool_stream: true }),
     }
   }
 

@@ -75,6 +75,7 @@ import {
   hasToolFieldMapping,
 } from './toolArgumentNormalization.js'
 import { logApiCallStart, logApiCallEnd } from '../../utils/requestLogging.js'
+import { shouldEnableProviderToolStream } from '../../utils/providerToolStream.js'
 import {
   createStreamState,
   processStreamChunk,
@@ -1620,6 +1621,17 @@ class OpenAIShimMessages {
 
     if (params.stream && !isLocalProviderUrl(request.baseUrl)) {
       body.stream_options = { include_usage: true }
+    }
+
+    if (
+      shouldEnableProviderToolStream({
+        baseUrl: request.baseUrl,
+        hasTools: Boolean(params.tools && params.tools.length > 0),
+        model: request.resolvedModel,
+        stream: Boolean(params.stream),
+      })
+    ) {
+      body.tool_stream = true
     }
 
     const isGithub = isGithubModelsMode()

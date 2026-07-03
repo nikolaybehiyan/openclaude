@@ -5161,6 +5161,41 @@ test('Z.AI: thinking mode enabled when requested', async () => {
   expect(requestBody?.max_tokens).toBe(1024)
 })
 
+test('Z.AI: enables tool_stream for streaming GLM tool calls', async () => {
+  process.env.OPENAI_BASE_URL = 'https://api.z.ai/api/coding/paas/v4'
+  process.env.OPENAI_API_KEY = 'sk-zai-test'
+
+  let requestBody: Record<string, unknown> | undefined
+  globalThis.fetch = (async (_input, init) => {
+    requestBody = JSON.parse(String(init?.body))
+    return makeSseResponse(
+      makeStreamChunks([
+        {
+          id: 'chatcmpl-1',
+          model: 'GLM-5.1',
+          choices: [{ delta: { role: 'assistant' }, finish_reason: null }],
+        },
+      ]),
+    )
+  }) as FetchType
+
+  const client = createOpenAIShimClient({}) as OpenAIShimClient
+  await client.beta.messages.create({
+    model: 'GLM-5.1',
+    messages: [{ role: 'user', content: 'use a tool' }],
+    max_tokens: 1024,
+    stream: true,
+    tools: [
+      {
+        name: 'artifact_update',
+        input_schema: { type: 'object', properties: {} },
+      },
+    ],
+  })
+
+  expect(requestBody?.tool_stream).toBe(true)
+})
+
 test('strips Anthropic attribution header block from chat-completions system prompt (#607)', async () => {
   let capturedBody: Record<string, unknown> | undefined
 
