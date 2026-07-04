@@ -273,6 +273,7 @@ export async function connectSdkMcpServers(
           permissionBehavior?: 'allow' | 'ask' | 'deny'
           searchHint?: string
           alwaysLoad?: boolean
+          maxResultSizeChars?: number
           _meta?: Record<string, unknown>
         }
         const sdkConfig = config as { type: 'sdk'; name: string; tools?: SdkToolDef[] }
@@ -283,6 +284,9 @@ export async function connectSdkMcpServers(
           isMcp: true,
           searchHint: toolDef.searchHint,
           alwaysLoad: toolDef.alwaysLoad,
+          maxResultSizeChars: Number.isFinite(toolDef.maxResultSizeChars) || toolDef.maxResultSizeChars === Infinity
+            ? toolDef.maxResultSizeChars
+            : MCPTool.maxResultSizeChars,
           ...(toolDef._meta ? { _meta: toolDef._meta } : {}),
           async description() {
             return toolDef.description ?? ''

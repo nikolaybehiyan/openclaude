@@ -207,4 +207,28 @@ describe('SDK MCP type:sdk tools wiring', () => {
       },
     })
   })
+
+  test('SDK MCP tool definitions can opt out of persisted-output indirection internally', async () => {
+    const readMeTool = tool(
+      'visualize:read_me',
+      'Read visualization guidance',
+      { type: 'object', properties: {} },
+      async () => ({
+        content: [{ type: 'text', text: 'full guidance' }],
+      }),
+    ) as ReturnType<typeof tool> & { maxResultSizeChars?: number }
+    readMeTool.maxResultSizeChars = Infinity
+
+    const { tools } = await connectSdkMcpServers({
+      visualize: createSdkMcpServer({
+        type: 'sdk',
+        name: 'visualize',
+        tools: [readMeTool],
+      }),
+    })
+
+    expect(tools.length).toBe(1)
+    expect(tools[0].name).toBe('visualize:read_me')
+    expect(tools[0].maxResultSizeChars).toBe(Infinity)
+  })
 })
