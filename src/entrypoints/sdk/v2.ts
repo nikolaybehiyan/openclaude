@@ -193,6 +193,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'model'
   | 'permissionMode'
   | 'additionalDirectories'
+  | 'mcpServers'
   | 'tools'
   | 'allowedTools'
   | 'disallowedTools'
@@ -434,8 +435,25 @@ class SDKSessionImpl implements SDKSession {
       }
     }
 
+    let mcpServersChanged = false
+    if (hasOwn(options, 'mcpServers')) {
+      const nextMcpServers = options.mcpServers
+      nextOptions.mcpServers = nextMcpServers
+      // SDK MCP server configs may carry fresh handler closures even when their
+      // serializable schemas are unchanged, so reference changes are meaningful.
+      if (nextMcpServers !== this.mcpServers) {
+        this.disconnectMcpClients('SDKSession.updateOptions.mcpServers')
+        this.mcpServers = nextMcpServers
+        this.mcpConnected = false
+        this.mcpTools = []
+        mcpServersChanged = true
+      } else {
+        this.mcpServers = nextMcpServers
+      }
+    }
+
     this.options = nextOptions
-    if (permissionContextChanged) {
+    if (permissionContextChanged || mcpServersChanged) {
       this.applyPermissionContextFromOptions()
     }
   }
@@ -490,23 +508,7 @@ class SDKSessionImpl implements SDKSession {
           self.agentsLoaded = true
         }
 
-        // Connect MCP servers once (lazy, on first message)
-        if (!self.mcpConnected && self.mcpServers && Object.keys(self.mcpServers).length > 0) {
-          try {
-            const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(self.mcpServers)
-            if (mcpClients.length > 0) {
-              self.engine.setMcpClients(mcpClients)
-            }
-            if (mcpTools.length > 0) {
-              self.mcpTools = mcpTools
-              self.engine.updateTools(mergeRuntimeTools(getTools(sdkVisiblePermissionContext(self.options)), self.mcpTools))
-            }
-          } catch (err) {
-            // MCP connection failed — continue without MCP tools
-            console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
-          }
-          self.mcpConnected = true
-        }
+        await self.ensureMcpServersConnected()
 
         // Switch session for transcript writes using session's own resolved dir
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
@@ -580,21 +582,7 @@ class SDKSessionImpl implements SDKSession {
           }
           self.agentsLoaded = true
         }
-        if (!self.mcpConnected && self.mcpServers && Object.keys(self.mcpServers).length > 0) {
-          try {
-            const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(self.mcpServers)
-            if (mcpClients.length > 0) {
-              self.engine.setMcpClients(mcpClients)
-            }
-            if (mcpTools.length > 0) {
-              self.mcpTools = mcpTools
-              self.engine.updateTools(mergeRuntimeTools(getTools(sdkVisiblePermissionContext(self.options)), self.mcpTools))
-            }
-          } catch (err) {
-            console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
-          }
-          self.mcpConnected = true
-        }
+        await self.ensureMcpServersConnected()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
         try {
           yield* self.runEngineTurn(retryPrompt, { uuid: parentUserMessageUuid })
@@ -765,6 +753,38 @@ class SDKSessionImpl implements SDKSession {
       toolPermissionContext: attachmentReadPermissionContext(permissionContext),
     }))
     this.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), this.mcpTools))
+  }
+
+  private async ensureMcpServersConnected(): Promise<void> {
+    if (this.mcpConnected) {
+      return
+    }
+    if (!this.mcpServers || Object.keys(this.mcpServers).length === 0) {
+      this.mcpConnected = true
+      return
+    }
+    try {
+      const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(this.mcpServers)
+      this.engine.setMcpClients(mcpClients)
+      this.mcpTools = mcpTools
+      this.applyPermissionContextFromOptions()
+    } catch (err) {
+      // MCP connection failed — continue without MCP tools
+      console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
+    }
+    this.mcpConnected = true
+  }
+
+  private disconnectMcpClients(reason: string): void {
+    const mcpClients = this._engine?.getMcpClients?.() ?? []
+    for (const client of mcpClients) {
+      if (client.type === 'connected' && client.cleanup) {
+        void client.cleanup().catch(err => {
+          console.warn(`SDK: MCP client cleanup error during ${reason}:`, err instanceof Error ? err.message : String(err))
+        })
+      }
+    }
+    this._engine?.setMcpClients?.([])
   }
 
   close(): void {

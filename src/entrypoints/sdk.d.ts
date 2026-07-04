@@ -419,6 +419,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'model'
   | 'permissionMode'
   | 'additionalDirectories'
+  | 'mcpServers'
   | 'tools'
   | 'allowedTools'
   | 'disallowedTools'

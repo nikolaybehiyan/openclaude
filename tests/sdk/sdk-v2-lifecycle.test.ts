@@ -218,6 +218,81 @@ describe('V2: session creation', () => {
     })
   })
 
+  test('updateOptions() refreshes live SDK MCP server tools before the next turn', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const initialTool = tool(
+        'initial_widget_tool',
+        'Initial widget tool',
+        { type: 'object', properties: {} },
+        async () => ({
+          content: [{ type: 'text', text: 'initial' }],
+        }),
+      )
+      const visualizeTool = tool(
+        'visualize:show_widget',
+        'Show an interactive visualization widget',
+        { type: 'object', properties: { title: { type: 'string' } } },
+        async () => ({
+          content: [{ type: 'text', text: 'visualized' }],
+        }),
+        {
+          permissionBehavior: 'allow',
+          alwaysLoad: true,
+          _meta: {
+            ui: { resourceUri: 'ui://imagine/show-widget.html' },
+          },
+        },
+      )
+      const session = unstable_v2_createSession({
+        cwd: dir,
+        tools: ['Bash'],
+        mcpServers: {
+          initial: createSdkMcpServer({
+            type: 'sdk',
+            name: 'initial',
+            tools: [initialTool],
+          }),
+        },
+      })
+      ;(session as any).agentsLoaded = true
+      ;(session as any)._engine.submitMessage = async function* () {}
+      try {
+        await drainQuery(session.sendMessage('first turn'))
+        const initialToolNames = ((session as any)._engine?.config?.tools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(initialToolNames).toContain('initial_widget_tool')
+
+        session.updateOptions({
+          mcpServers: {
+            visualize: createSdkMcpServer({
+              type: 'sdk',
+              name: 'visualize',
+              tools: [visualizeTool],
+            }),
+          },
+        })
+
+        const afterUpdateToolNames = ((session as any)._engine?.config?.tools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(afterUpdateToolNames).not.toContain('initial_widget_tool')
+        expect(afterUpdateToolNames).not.toContain('visualize:show_widget')
+
+        await drainQuery(session.sendMessage('second turn'))
+        const refreshedToolNames = ((session as any)._engine?.config?.tools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(refreshedToolNames).toContain('Bash')
+        expect(refreshedToolNames).toContain('visualize:show_widget')
+        expect(refreshedToolNames).not.toContain('initial_widget_tool')
+      } finally {
+        session.close()
+      }
+    })
+  })
+
   test('createSession() accepts sampling overrides for persistent hosts', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),
