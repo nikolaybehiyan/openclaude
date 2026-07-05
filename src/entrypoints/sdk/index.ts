@@ -112,6 +112,15 @@ export {
   unstable_v2_prompt,
   unstable_v2_generateSessionTitle,
 } from './v2.js'
+export type {
+  AutoMemoryCanUseToolOptions,
+  AutoMemoryConsolidationPromptOptions,
+} from './memory.js'
+export {
+  unstable_buildAutoMemoryConsolidationPrompt,
+  unstable_createAutoMemoryCanUseTool,
+  unstable_readAutoMemoryProjection,
+} from './memory.js'
 
 // ============================================================================
 // tool() — factory function for creating MCP tool definitions

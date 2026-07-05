@@ -609,6 +609,25 @@ export type SdkMcpSdkConfig = {
 
 export type SdkMcpServerConfig = SdkMcpStdioConfig | SdkMcpSSEConfig | SdkMcpHttpConfig | SdkMcpSdkConfig
 
+export type AutoMemoryConsolidationPromptOptions = {
+  memoryRoot: string
+  transcriptDir: string
+  extra?: string
+}
+
+export type AutoMemoryCanUseToolOptions = {
+  cwd?: string
+}
+
+export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
+
+export function unstable_createAutoMemoryCanUseTool(
+  memoryDir: string,
+  options?: AutoMemoryCanUseToolOptions,
+): CanUseToolCallback
+
+export function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string>
+
 /**
  * Scoped MCP server config with session scope.
  * Returned by createSdkMcpServer() for use with mcpServers option.
