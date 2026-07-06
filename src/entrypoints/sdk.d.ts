@@ -619,6 +619,41 @@ export type AutoMemoryCanUseToolOptions = {
   cwd?: string
 }
 
+export type AutoMemoryProjectionEntry = {
+  line_number: number
+  text: string
+  file: string
+  source_line: number
+  name?: string
+  description?: string
+  type?: string
+}
+
+export type AutoMemoryProjection = {
+  memory: string
+  controls: string[]
+  entries: AutoMemoryProjectionEntry[]
+  files: string[]
+}
+
+export type AutoMemoryUserEditPromptOptions = {
+  memoryRoot: string
+  command: "add" | "replace" | "remove"
+  control?: string
+  line_number?: number
+  replacement?: string
+  projection?: AutoMemoryProjection
+}
+
+export type AutoMemoryControlsEditPromptOptions = {
+  memoryRoot: string
+  controls: string[]
+}
+
+export function unstable_buildAutoMemoryControlsEditPrompt(options: AutoMemoryControlsEditPromptOptions): Promise<string>
+
+export function unstable_buildAutoMemoryUserEditPrompt(options: AutoMemoryUserEditPromptOptions): Promise<string>
+
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 
 export function unstable_createAutoMemoryCanUseTool(
@@ -626,7 +661,11 @@ export function unstable_createAutoMemoryCanUseTool(
   options?: AutoMemoryCanUseToolOptions,
 ): CanUseToolCallback
 
+export function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void>
+
 export function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string>
+
+export function unstable_readAutoMemoryProjectionDetails(memoryRoot: string): Promise<AutoMemoryProjection>
 
 /**
  * Scoped MCP server config with session scope.

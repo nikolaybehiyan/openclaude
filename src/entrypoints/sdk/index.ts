@@ -113,13 +113,21 @@ export {
   unstable_v2_generateSessionTitle,
 } from './v2.js'
 export type {
+  AutoMemoryProjection,
+  AutoMemoryProjectionEntry,
   AutoMemoryCanUseToolOptions,
   AutoMemoryConsolidationPromptOptions,
+  AutoMemoryControlsEditPromptOptions,
+  AutoMemoryUserEditPromptOptions,
 } from './memory.js'
 export {
+  unstable_buildAutoMemoryControlsEditPrompt,
+  unstable_buildAutoMemoryUserEditPrompt,
   unstable_buildAutoMemoryConsolidationPrompt,
   unstable_createAutoMemoryCanUseTool,
+  unstable_drainAutoMemoryExtraction,
   unstable_readAutoMemoryProjection,
+  unstable_readAutoMemoryProjectionDetails,
 } from './memory.js'
 
 // ============================================================================
