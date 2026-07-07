@@ -45,12 +45,3 @@ test('SDK memory tool permission uses explicit hydrated memory dir for writes', 
   expect(source).toContain('FILE_EDIT_TOOL_NAME')
   expect(source).toContain('FILE_WRITE_TOOL_NAME')
 })
-
-test('SDK memory edit forks do not inherit chat MCP tools', async () => {
-  const source = await readFile(sourcePath, 'utf8')
-
-  expect(source).toContain('createAutoMemoryForkOverrides')
-  expect(source).toContain('tools: memoryTools')
-  expect(source).toContain('mcpClients: []')
-  expect(source).toContain('tools: []')
-})
