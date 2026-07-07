@@ -115,23 +115,20 @@ export {
 export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
+  AutoMemoryEditCommand,
+  AutoMemoryEditRunOptions,
+  AutoMemoryEditRunResult,
   AutoMemoryCanUseToolOptions,
   AutoMemoryConsolidationPromptOptions,
-  AutoMemoryControlsEditPromptOptions,
-  AutoMemoryUserEditPromptOptions,
-  AutoMemoryUserEditRunOptions,
-  AutoMemoryUserEditRunResult,
 } from './memory.js'
 export {
-  unstable_buildAutoMemoryControlsEditPrompt,
-  unstable_buildAutoMemoryUserEditPrompt,
+  unstable_applyAutoMemoryEdit,
   unstable_buildAutoMemoryConsolidationPrompt,
   unstable_createAutoMemoryCanUseTool,
   unstable_didAutoDreamFireSince,
   unstable_drainAutoMemoryExtraction,
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,
-  unstable_runAutoMemoryUserEdit,
 } from './memory.js'
 
 // ============================================================================

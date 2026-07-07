@@ -1,7 +1,7 @@
 import { getTools } from '../../tools.js'
 import { readdir, readFile } from 'fs/promises'
 import { basename, isAbsolute, join, normalize, resolve, sep } from 'path'
-import { ENTRYPOINT_NAME } from '../../memdir/memdir.js'
+import { buildMemoryPrompt, ENTRYPOINT_NAME } from '../../memdir/memdir.js'
 import {
   formatMemoryManifest,
   scanMemoryFiles,
@@ -11,6 +11,8 @@ import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLo
 import { createAutoMemCanUseTool, drainPendingExtraction } from '../../services/extractMemories/extractMemories.js'
 import { buildExtractAutoOnlyPrompt } from '../../services/extractMemories/prompts.js'
 import { getDefaultAppState } from '../../state/AppStateStore.js'
+import { getFlagSettingsInline, setFlagSettingsInline } from '../../bootstrap/state.js'
+import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
 import type { Tools, ToolUseContext } from '../../Tool.js'
@@ -24,13 +26,9 @@ import {
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 import {
   createUserMessage,
-  extractTextContent,
-  getLastAssistantMessage,
   getMessagesAfterCompactBoundary,
 } from '../../utils/messages.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
-import { getSystemPrompt } from '../../constants/prompts.js'
-import { getSystemContext, getUserContext } from '../../context.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { buildPermissionContext } from './permissions.js'
 import type { CanUseToolCallback } from './shared.js'
@@ -62,28 +60,24 @@ export type AutoMemoryProjection = {
   files: string[]
 }
 
-export type AutoMemoryUserEditPromptOptions = {
+export type AutoMemoryEditCommand = 'add' | 'replace' | 'remove'
+
+export type AutoMemoryEditRunOptions = {
   memoryRoot: string
-  command: 'add' | 'replace' | 'remove'
+  command?: AutoMemoryEditCommand
   control?: string
   line_number?: number
   replacement?: string
   projection?: AutoMemoryProjection
-}
-
-export type AutoMemoryControlsEditPromptOptions = {
-  memoryRoot: string
-  controls: string[]
-}
-
-export type AutoMemoryUserEditRunOptions = AutoMemoryUserEditPromptOptions & {
+  controls?: string[]
   toolUseContext?: ToolUseContext
+  settings?: Record<string, unknown>
   maxTurns?: number
 }
 
-export type AutoMemoryUserEditRunResult = {
+export type AutoMemoryEditRunResult = {
   messages: Message[]
-  result: string | null
+  writtenPaths: string[]
   usage: Record<string, unknown>
 }
 
@@ -202,61 +196,103 @@ function createAutoMemoryToolUseContext(tools: Tools, parentContext?: ToolUseCon
   }
 }
 
-export async function unstable_buildAutoMemoryUserEditPrompt(
-  options: AutoMemoryUserEditPromptOptions,
-): Promise<string> {
+export async function unstable_applyAutoMemoryEdit(
+  options: AutoMemoryEditRunOptions,
+): Promise<AutoMemoryEditRunResult> {
+  const memoryRoot = withTrailingSeparator(options.memoryRoot)
+  return await runWithCwdOverride(memoryRoot, async () => {
+    const restoreSettings = applyAutoMemoryEditSettings(options.settings)
+    try {
+      const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(
+        memoryRoot,
+        options.toolUseContext,
+      )
+      const requestMessage = createUserMessage({
+        content: buildAutoMemoryEditRequest(options),
+      })
+      const prompt = await buildAutoMemoryEditExtractionPrompt(memoryRoot)
+      const result = await runForkedAgent({
+        promptMessages: [createUserMessage({ content: prompt })],
+        cacheSafeParams: {
+          ...cacheSafeParams,
+          forkContextMessages: [
+            ...cacheSafeParams.forkContextMessages,
+            requestMessage,
+          ],
+        },
+        canUseTool: createAutoMemCanUseTool(memoryRoot),
+        querySource: 'extract_memories',
+        forkLabel: 'extract_memories',
+        skipTranscript: true,
+        maxTurns: options.maxTurns ?? 5,
+      })
+      return {
+        messages: result.messages,
+        writtenPaths: extractWrittenPaths(result.messages, memoryRoot),
+        usage: result.totalUsage as unknown as Record<string, unknown>,
+      }
+    } finally {
+      restoreSettings()
+    }
+  })
+}
+
+function applyAutoMemoryEditSettings(settings?: Record<string, unknown>): () => void {
+  if (!settings || Object.keys(settings).length === 0) {
+    return () => {}
+  }
+  const previous = getFlagSettingsInline()
+  setFlagSettingsInline(settings)
+  settingsChangeDetector.notifyChange('flagSettings')
+  return () => {
+    setFlagSettingsInline(previous)
+    settingsChangeDetector.notifyChange('flagSettings')
+  }
+}
+
+function buildAutoMemoryEditRequest(options: AutoMemoryEditRunOptions): string {
   const projection = options.projection
   const entries = projection?.entries ?? []
   const target = options.line_number
     ? entries.find(entry => entry.line_number === options.line_number)
     : undefined
-  const lines = [
-    await buildNativeAutoMemoryEditPreamble(options.memoryRoot),
-    '',
-    '## Requested memory edit',
-    `Command: ${options.command}`,
-  ]
-  if (options.control) {
-    lines.push(`Control: ${options.control}`)
+  if (Array.isArray(options.controls)) {
+    return [
+      'Please update my visible memory edits to exactly this list:',
+      options.controls.length
+        ? options.controls.map((control, index) => `${index + 1}. ${control}`).join('\n')
+        : 'No visible memory entries should remain.',
+    ].join('\n')
   }
-  if (options.replacement) {
-    lines.push(`Replacement: ${options.replacement}`)
+  if (!options.command) {
+    throw new Error('auto_memory_edit_command_required')
   }
-  if (target) {
-    lines.push(
-      `Target: line ${target.line_number} in ${target.file}:${target.source_line}`,
-      `Old text: ${target.text}`,
-    )
+  if (options.command === 'add') {
+    return `Please remember: ${options.control?.trim() ?? ''}`
   }
-  return lines.join('\n')
+  if (options.command === 'replace') {
+    return [
+      'Please replace this remembered item:',
+      target?.text ?? '',
+      '',
+      'With:',
+      options.replacement?.trim() ?? '',
+    ].join('\n')
+  }
+  if (options.command === 'remove') {
+    return [
+      'Please forget this remembered item:',
+      target?.text ?? '',
+    ].join('\n')
+  }
+  throw new Error('auto_memory_edit_command_unsupported')
 }
 
-export async function unstable_runAutoMemoryUserEdit(
-  options: AutoMemoryUserEditRunOptions,
-): Promise<AutoMemoryUserEditRunResult> {
-  return await runWithCwdOverride(options.memoryRoot, async () => {
-    const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.memoryRoot, options.toolUseContext)
-    const prompt = await unstable_buildAutoMemoryUserEditPrompt(
-      options,
-      Math.max(1, cacheSafeParams.forkContextMessages.length),
-    )
-    const result = await runForkedAgent({
-      promptMessages: [createUserMessage({ content: prompt })],
-      cacheSafeParams,
-      canUseTool: createAutoMemCanUseTool(options.memoryRoot),
-      querySource: 'memory_user_edits',
-      forkLabel: 'memory_user_edits',
-      skipTranscript: true,
-      maxTurns: options.maxTurns ?? 5,
-    })
-    const assistant = getLastAssistantMessage(result.messages)
-    const content = assistant?.message.content
-    return {
-      messages: result.messages,
-      result: Array.isArray(content) ? extractTextContent(content) : null,
-      usage: result.totalUsage as unknown as Record<string, unknown>,
-    }
-  })
+async function buildAutoMemoryEditExtractionPrompt(memoryRoot: string): Promise<string> {
+  const manifest = formatMemoryManifest(
+    await scanMemoryFiles(memoryRoot, new AbortController().signal),
+  )
+  return buildExtractAutoOnlyPrompt(1, manifest)
 }
 
 async function buildAutoMemoryEditCacheSafeParams(memoryRoot: string, parentContext?: ToolUseContext): Promise<CacheSafeParams> {
@@ -265,20 +301,14 @@ async function buildAutoMemoryEditCacheSafeParams(memoryRoot: string, parentCont
     permissionMode: 'acceptEdits',
   }))
   const toolUseContext = createAutoMemoryToolUseContext(memoryTools, parentContext)
-  const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
-    getSystemPrompt(
-      memoryTools,
-      toolUseContext.options.mainLoopModel,
-      [],
-      [],
-    ),
-    getUserContext(),
-    getSystemContext(),
-  ])
+  const memoryPrompt = buildMemoryPrompt({
+    displayName: 'auto memory',
+    memoryDir: memoryRoot,
+  })
   return {
-    systemPrompt: asSystemPrompt(rawSystemPrompt),
-    userContext,
-    systemContext,
+    systemPrompt: asSystemPrompt([memoryPrompt]),
+    userContext: {},
+    systemContext: {},
     toolUseContext,
     forkContextMessages: parentContext
       ? getMessagesAfterCompactBoundary(stripInProgressAssistantMessage(parentContext.messages ?? []))
@@ -292,25 +322,6 @@ function stripInProgressAssistantMessage(messages: Message[]): Message[] {
     return messages.slice(0, -1)
   }
   return messages
-}
-
-export async function unstable_buildAutoMemoryControlsEditPrompt(
-  options: AutoMemoryControlsEditPromptOptions,
-): Promise<string> {
-  return [
-    await buildNativeAutoMemoryEditPreamble(options.memoryRoot),
-    '',
-    '## Desired memory edits',
-    options.controls.length
-      ? options.controls.map((control, index) => `${index + 1}. ${control}`).join('\n')
-      : 'No memory edits should remain.',
-  ].join('\n')
-}
-
-async function buildNativeAutoMemoryEditPreamble(memoryRoot: string): Promise<string> {
-  const ac = new AbortController()
-  const manifest = formatMemoryManifest(await scanMemoryFiles(memoryRoot, ac.signal))
-  return buildExtractAutoOnlyPrompt(1, manifest)
 }
 
 export async function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string> {
@@ -420,4 +431,49 @@ function memoryIndexLinks(markdown: string): string[] {
 
 function frontmatterString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
+}
+
+function withTrailingSeparator(memoryRoot: string): string {
+  const normalized = normalize(memoryRoot)
+  return normalized.endsWith(sep) ? normalized : normalized + sep
+}
+
+function extractWrittenPaths(messages: Message[], memoryRoot: string): string[] {
+  const paths: string[] = []
+  for (const message of messages) {
+    if (message.type !== 'assistant') {
+      continue
+    }
+    const content = (message as AssistantMessage).message.content
+    if (!Array.isArray(content)) {
+      continue
+    }
+    for (const block of content) {
+      const filePath = writtenFilePath(block)
+      if (filePath && isPathInsideMemoryDir(filePath, memoryRoot, memoryRoot)) {
+        paths.push(filePath)
+      }
+    }
+  }
+  return [...new Set(paths)]
+}
+
+function writtenFilePath(block: unknown): string | undefined {
+  if (
+    !block ||
+    typeof block !== 'object' ||
+    (block as { type?: unknown }).type !== 'tool_use'
+  ) {
+    return undefined
+  }
+  const name = (block as { name?: unknown }).name
+  if (name !== FILE_EDIT_TOOL_NAME && name !== FILE_WRITE_TOOL_NAME) {
+    return undefined
+  }
+  const input = (block as { input?: unknown }).input
+  if (!input || typeof input !== 'object' || !('file_path' in input)) {
+    return undefined
+  }
+  const value = (input as { file_path?: unknown }).file_path
+  return typeof value === 'string' ? value : undefined
 }

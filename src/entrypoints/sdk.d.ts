@@ -636,36 +636,28 @@ export type AutoMemoryProjection = {
   files: string[]
 }
 
-export type AutoMemoryUserEditPromptOptions = {
+export type AutoMemoryEditCommand = "add" | "replace" | "remove"
+
+export type AutoMemoryEditRunOptions = {
   memoryRoot: string
-  command: "add" | "replace" | "remove"
+  command?: AutoMemoryEditCommand
   control?: string
   line_number?: number
   replacement?: string
   projection?: AutoMemoryProjection
-}
-
-export type AutoMemoryControlsEditPromptOptions = {
-  memoryRoot: string
-  controls: string[]
-}
-
-export type AutoMemoryUserEditRunOptions = AutoMemoryUserEditPromptOptions & {
+  controls?: string[]
   toolUseContext?: unknown
+  settings?: Record<string, unknown>
   maxTurns?: number
 }
 
-export type AutoMemoryUserEditRunResult = {
+export type AutoMemoryEditRunResult = {
   messages: unknown[]
-  result: string | null
+  writtenPaths: string[]
   usage: Record<string, unknown>
 }
 
-export function unstable_buildAutoMemoryControlsEditPrompt(options: AutoMemoryControlsEditPromptOptions): Promise<string>
-
-export function unstable_buildAutoMemoryUserEditPrompt(options: AutoMemoryUserEditPromptOptions): Promise<string>
-
-export function unstable_runAutoMemoryUserEdit(options: AutoMemoryUserEditRunOptions): Promise<AutoMemoryUserEditRunResult>
+export function unstable_applyAutoMemoryEdit(options: AutoMemoryEditRunOptions): Promise<AutoMemoryEditRunResult>
 
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 

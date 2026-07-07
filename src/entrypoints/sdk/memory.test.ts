@@ -3,16 +3,24 @@ import { readFile } from 'fs/promises'
 
 const sourcePath = new URL('./memory.ts', import.meta.url)
 
-test('SDK memory edit prompts add only request data blocks over native auto-memory instructions', async () => {
+test('SDK memory edits reuse native extraction prompt with only request messages added', async () => {
   const source = await readFile(sourcePath, 'utf8')
 
+  expect(source).toContain('buildMemoryPrompt')
+  expect(source).toContain('buildExtractAutoOnlyPrompt')
   expect(source).toContain('scanMemoryFiles')
   expect(source).toContain('formatMemoryManifest')
-  expect(source).toContain('buildExtractAutoOnlyPrompt')
-  expect(source).toContain('## Requested memory edit')
-  expect(source).toContain('## Desired memory edits')
+  expect(source).toContain('runForkedAgent')
+  expect(source).toContain('buildAutoMemoryEditRequest')
+  expect(source).toContain('Please remember:')
 
   const forbiddenWrapperPolicy = [
+    'unstable_runAutoMemoryUserEdit',
+    'unstable_buildAutoMemoryUserEditPrompt',
+    'unstable_buildAutoMemoryControlsEditPrompt',
+    'unstable_buildAutoMemoryEditPrompt',
+    '## Memory edit request',
+    'Command: set_visible_memory_entries',
     ['Current projected', 'memory edits'].join(' '),
     ['Apply exactly this requested edit', 'to the native memory tree.'].join(' '),
     ['Use Read/Edit/Write only', 'inside the memory directory.'].join(' '),
@@ -49,7 +57,7 @@ test('SDK memory tool permission uses explicit hydrated memory dir for writes', 
 test('SDK memory edit forks use chat messages with native memory tools only', async () => {
   const source = await readFile(sourcePath, 'utf8')
 
-  expect(source).toContain('buildAutoMemoryEditCacheSafeParams(options.memoryRoot')
+  expect(source).toContain('buildAutoMemoryEditCacheSafeParams(')
   expect(source).toContain('const memoryTools = getTools(buildPermissionContext')
   expect(source).toContain('mcpClients: []')
   expect(source).toContain('getMessagesAfterCompactBoundary')
