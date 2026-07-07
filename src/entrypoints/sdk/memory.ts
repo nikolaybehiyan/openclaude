@@ -6,7 +6,6 @@ import {
   formatMemoryManifest,
   scanMemoryFiles,
 } from '../../memdir/memoryScan.js'
-import { getAutoMemPath } from '../../memdir/paths.js'
 import { buildConsolidationPrompt } from '../../services/autoDream/consolidationPrompt.js'
 import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLock.js'
 import { createAutoMemCanUseTool, drainPendingExtraction } from '../../services/extractMemories/extractMemories.js'
@@ -234,34 +233,44 @@ export async function unstable_buildAutoMemoryUserEditPrompt(
 export async function unstable_runAutoMemoryUserEdit(
   options: AutoMemoryUserEditRunOptions,
 ): Promise<AutoMemoryUserEditRunResult> {
-  return runWithAutoMemoryPathOverride(options.memoryRoot, async () => {
-    const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
-    const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.toolUseContext)
-    const result = await runWithCwdOverride(options.memoryRoot, () =>
-      runForkedAgent({
-        promptMessages: [createUserMessage({ content: prompt })],
-        cacheSafeParams,
-        canUseTool: createAutoMemCanUseTool(options.memoryRoot),
-        querySource: 'memory_user_edits',
-        forkLabel: 'memory_user_edits',
-        skipTranscript: true,
-        maxTurns: options.maxTurns ?? 5,
-      }),
-    )
-    const assistant = getLastAssistantMessage(result.messages)
-    const content = assistant?.message.content
-    return {
-      messages: result.messages,
-      result: Array.isArray(content) ? extractTextContent(content) : null,
-      usage: result.totalUsage as unknown as Record<string, unknown>,
-    }
-  })
+  const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
+  const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.toolUseContext)
+  const result = await runWithCwdOverride(options.memoryRoot, () =>
+    runForkedAgent({
+      promptMessages: [createUserMessage({ content: prompt })],
+      cacheSafeParams,
+      canUseTool: createAutoMemCanUseTool(options.memoryRoot),
+      querySource: 'memory_user_edits',
+      forkLabel: 'memory_user_edits',
+      skipTranscript: true,
+      maxTurns: options.maxTurns ?? 5,
+    }),
+  )
+  const assistant = getLastAssistantMessage(result.messages)
+  const content = assistant?.message.content
+  return {
+    messages: result.messages,
+    result: Array.isArray(content) ? extractTextContent(content) : null,
+    usage: result.totalUsage as unknown as Record<string, unknown>,
+  }
 }
 
 async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContext): Promise<CacheSafeParams> {
   const saved = getLastCacheSafeParams()
   if (toolUseContext) {
     const forkContextMessages = getMessagesAfterCompactBoundary(stripInProgressAssistantMessage(toolUseContext.messages ?? []))
+    if (saved) {
+      return {
+        systemPrompt: saved.systemPrompt,
+        userContext: saved.userContext,
+        systemContext: saved.systemContext,
+        toolUseContext: {
+          ...toolUseContext,
+          abortController: createAbortController(),
+        },
+        forkContextMessages,
+      }
+    }
     const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
       getSystemPrompt(
         toolUseContext.options.tools,
@@ -286,41 +295,12 @@ async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContex
   if (!saved) {
     throw new Error('OpenClaude auto-memory edit cache context is unavailable until a turn context exists')
   }
-  const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
-    getSystemPrompt(
-      saved.toolUseContext.options.tools,
-      saved.toolUseContext.options.mainLoopModel,
-      [],
-      saved.toolUseContext.options.mcpClients,
-    ),
-    getUserContext(),
-    getSystemContext(),
-  ])
   return {
-    systemPrompt: asSystemPrompt(rawSystemPrompt),
-    userContext,
-    systemContext,
+    ...saved,
     toolUseContext: {
       ...saved.toolUseContext,
       abortController: createAbortController(),
     },
-    forkContextMessages: saved.forkContextMessages,
-  }
-}
-
-async function runWithAutoMemoryPathOverride<T>(memoryRoot: string, fn: () => Promise<T>): Promise<T> {
-  const previous = process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE
-  process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = memoryRoot
-  getAutoMemPath.cache.clear()
-  try {
-    return await fn()
-  } finally {
-    if (previous === undefined) {
-      delete process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE
-    } else {
-      process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = previous
-    }
-    getAutoMemPath.cache.clear()
   }
 }
 
