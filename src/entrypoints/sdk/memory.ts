@@ -14,6 +14,7 @@ import { getDefaultAppState } from '../../state/AppStateStore.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
 import type { Tools, ToolUseContext } from '../../Tool.js'
+import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import type { AssistantMessage } from '../../types/message.js'
 import type { Message } from '../../types/message.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
@@ -239,7 +240,7 @@ export async function unstable_runAutoMemoryUserEdit(
     runForkedAgent({
       promptMessages: [createUserMessage({ content: prompt })],
       cacheSafeParams,
-      canUseTool: createAutoMemCanUseTool(options.memoryRoot),
+      canUseTool: createScopedAutoMemoryCanUseTool(options.memoryRoot),
       querySource: 'memory_user_edits',
       forkLabel: 'memory_user_edits',
       skipTranscript: true,
@@ -302,6 +303,34 @@ async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContex
       abortController: createAbortController(),
     },
   }
+}
+
+function createScopedAutoMemoryCanUseTool(memoryRoot: string): CanUseToolFn {
+  const canUseTool = createAutoMemCanUseTool(memoryRoot)
+  return async (tool, input, ...rest) => {
+    if (pathInputTargetsTeamMemory(input, memoryRoot)) {
+      return {
+        behavior: 'deny',
+        message: 'Team memory is disabled for this memory scope; update native memory files directly under the active memory directory.',
+        decisionReason: {
+          type: 'other',
+          reason: 'team memory disabled for active memory scope',
+        },
+      }
+    }
+    return canUseTool(tool, input, ...rest)
+  }
+}
+
+function pathInputTargetsTeamMemory(input: Record<string, unknown>, memoryRoot: string): boolean {
+  const teamRoot = join(memoryRoot, 'team')
+  for (const key of ['file_path', 'path'] as const) {
+    const value = input[key]
+    if (typeof value === 'string' && isPathInsideMemoryDir(value, teamRoot, memoryRoot)) {
+      return true
+    }
+  }
+  return false
 }
 
 function stripInProgressAssistantMessage(messages: Message[]): Message[] {
@@ -387,6 +416,7 @@ async function listMemoryTopicFiles(memoryRoot: string): Promise<string[]> {
     return entries
       .map(entry => String(entry).split(sep).join('/'))
       .filter(entry => entry.endsWith('.md') && basename(entry) !== ENTRYPOINT_NAME)
+      .filter(entry => !entry.startsWith(`team/`))
       .filter(entry => entry.split('/').length <= 3)
       .sort((a, b) => a.localeCompare(b))
   } catch (error) {
