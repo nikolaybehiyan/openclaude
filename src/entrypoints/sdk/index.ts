@@ -166,6 +166,7 @@ export function tool<Schema = any>(
     permissionBehavior?: 'allow' | 'ask' | 'deny'
     searchHint?: string
     alwaysLoad?: boolean
+    deferInputValidationToHandler?: boolean
     _meta?: Record<string, unknown>
   },
 ): import('./v2.js').SdkMcpToolDefinition<Schema> {
@@ -178,6 +179,7 @@ export function tool<Schema = any>(
     permissionBehavior: extras?.permissionBehavior,
     searchHint: extras?.searchHint,
     alwaysLoad: extras?.alwaysLoad,
+    deferInputValidationToHandler: extras?.deferInputValidationToHandler,
     _meta: extras?._meta,
   }
 }

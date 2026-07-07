@@ -277,6 +277,7 @@ export async function connectSdkMcpServers(
           searchHint?: string
           alwaysLoad?: boolean
           maxResultSizeChars?: number
+          deferInputValidationToHandler?: boolean
           _meta?: Record<string, unknown>
         }
         const sdkConfig = config as { type: 'sdk'; name: string; tools?: SdkToolDef[] }
@@ -307,6 +308,12 @@ export async function connectSdkMcpServers(
           },
           isOpenWorld() {
             return toolDef.annotations?.openWorldHint ?? false
+          },
+          async validateInput(input, context) {
+            if (toolDef.deferInputValidationToHandler === true) {
+              return { result: true as const }
+            }
+            return MCPTool.validateInput?.call(this, input, context) ?? { result: true as const }
           },
           async checkPermissions(input, context) {
             switch (toolDef.permissionBehavior) {
