@@ -1,6 +1,7 @@
 import { getTools } from '../../tools.js'
 import { readdir, readFile } from 'fs/promises'
 import { basename, isAbsolute, join, normalize, resolve, sep } from 'path'
+import { getSystemPromptSectionCache } from '../../bootstrap/state.js'
 import { ENTRYPOINT_NAME } from '../../memdir/memdir.js'
 import {
   formatMemoryManifest,
@@ -34,6 +35,7 @@ import { createAbortController } from '../../utils/abortController.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
+import { clearMemoryFileCaches } from '../../utils/claudemd.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { buildPermissionContext } from './permissions.js'
 import type { CanUseToolCallback } from './shared.js'
@@ -310,8 +312,13 @@ async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContex
 
 async function runWithAutoMemoryPathOverride<T>(memoryRoot: string, fn: () => Promise<T>): Promise<T> {
   const previous = process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE
+  const systemPromptSectionCache = getSystemPromptSectionCache()
+  const previousMemoryPromptSection = systemPromptSectionCache.get('memory')
+  const hadMemoryPromptSection = systemPromptSectionCache.has('memory')
   process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = memoryRoot
+  systemPromptSectionCache.delete('memory')
   getAutoMemPath.cache.clear()
+  clearMemoryContextCaches()
   try {
     return await fn()
   } finally {
@@ -320,8 +327,20 @@ async function runWithAutoMemoryPathOverride<T>(memoryRoot: string, fn: () => Pr
     } else {
       process.env.CLAUDE_COWORK_MEMORY_PATH_OVERRIDE = previous
     }
+    if (hadMemoryPromptSection) {
+      systemPromptSectionCache.set('memory', previousMemoryPromptSection ?? null)
+    } else {
+      systemPromptSectionCache.delete('memory')
+    }
     getAutoMemPath.cache.clear()
+    clearMemoryContextCaches()
   }
+}
+
+function clearMemoryContextCaches(): void {
+  clearMemoryFileCaches()
+  getUserContext.cache.clear?.()
+  getSystemContext.cache.clear?.()
 }
 
 function stripInProgressAssistantMessage(messages: Message[]): Message[] {
