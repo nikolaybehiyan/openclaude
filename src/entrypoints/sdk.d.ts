@@ -650,9 +650,22 @@ export type AutoMemoryControlsEditPromptOptions = {
   controls: string[]
 }
 
+export type AutoMemoryUserEditRunOptions = AutoMemoryUserEditPromptOptions & {
+  toolUseContext?: unknown
+  maxTurns?: number
+}
+
+export type AutoMemoryUserEditRunResult = {
+  messages: unknown[]
+  result: string | null
+  usage: Record<string, unknown>
+}
+
 export function unstable_buildAutoMemoryControlsEditPrompt(options: AutoMemoryControlsEditPromptOptions): Promise<string>
 
 export function unstable_buildAutoMemoryUserEditPrompt(options: AutoMemoryUserEditPromptOptions): Promise<string>
+
+export function unstable_runAutoMemoryUserEdit(options: AutoMemoryUserEditRunOptions): Promise<AutoMemoryUserEditRunResult>
 
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 

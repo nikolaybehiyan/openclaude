@@ -119,6 +119,8 @@ export type {
   AutoMemoryConsolidationPromptOptions,
   AutoMemoryControlsEditPromptOptions,
   AutoMemoryUserEditPromptOptions,
+  AutoMemoryUserEditRunOptions,
+  AutoMemoryUserEditRunResult,
 } from './memory.js'
 export {
   unstable_buildAutoMemoryControlsEditPrompt,
@@ -129,6 +131,7 @@ export {
   unstable_drainAutoMemoryExtraction,
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,
+  unstable_runAutoMemoryUserEdit,
 } from './memory.js'
 
 // ============================================================================

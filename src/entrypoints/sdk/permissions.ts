@@ -23,6 +23,8 @@ import type {
   CanUseToolCallback,
 } from './shared.js'
 
+type SdkMcpToolOutput = string | Array<{ type: string; text?: string }>
+
 // ============================================================================
 // Logger interface for SDK surface
 // ============================================================================
@@ -266,6 +268,7 @@ export async function connectSdkMcpServers(
           inputSchema?: Record<string, unknown>
           handler?: (args: unknown, extra: unknown) => Promise<{
             content: unknown
+            isError?: boolean
             _meta?: Record<string, unknown>
             structuredContent?: Record<string, unknown>
           }>
@@ -284,9 +287,7 @@ export async function connectSdkMcpServers(
           isMcp: true,
           searchHint: toolDef.searchHint,
           alwaysLoad: toolDef.alwaysLoad,
-          maxResultSizeChars: Number.isFinite(toolDef.maxResultSizeChars) || toolDef.maxResultSizeChars === Infinity
-            ? toolDef.maxResultSizeChars
-            : MCPTool.maxResultSizeChars,
+          maxResultSizeChars: sdkMcpToolMaxResultSizeChars(toolDef.maxResultSizeChars),
           ...(toolDef._meta ? { _meta: toolDef._meta } : {}),
           async description() {
             return toolDef.description ?? ''
@@ -328,9 +329,12 @@ export async function connectSdkMcpServers(
           },
           async call(args: Record<string, unknown>, context, _canUseTool, parentMessage, onProgress) {
             if (!toolDef.handler) {
-              return { data: { type: 'text', text: `SDK tool ${toolDef.name} has no handler` } }
+              return { data: `SDK tool ${toolDef.name} has no handler` }
             }
             const result = await toolDef.handler(args, { context, parentMessage, onProgress })
+            if (result.isError === true) {
+              throw new Error(sdkMcpToolErrorText(result.content))
+            }
             const mcpMeta =
               result && typeof result === 'object'
                 ? {
@@ -343,7 +347,7 @@ export async function connectSdkMcpServers(
                   }
                 : {}
             return {
-              data: result.content,
+              data: result.content as SdkMcpToolOutput,
               ...(Object.keys(mcpMeta).length > 0 ? { mcpMeta } : {}),
             }
           },
@@ -451,4 +455,33 @@ export function createDefaultCanUseTool(
     if (forceDecision) return forceDecision
     return hasPermissionsToUseTool(tool, input, toolUseContext, assistantMessage, toolUseID)
   }
+}
+
+function sdkMcpToolMaxResultSizeChars(value: unknown): number {
+  return typeof value === 'number' && (Number.isFinite(value) || value === Infinity)
+    ? value
+    : MCPTool.maxResultSizeChars
+}
+
+function sdkMcpToolErrorText(content: unknown): string {
+  if (typeof content === 'string') {
+    return content
+  }
+  if (Array.isArray(content)) {
+    const text = content
+      .map(block => {
+        if (!block || typeof block !== 'object' || !('text' in block)) {
+          return ''
+        }
+        const value = (block as { text?: unknown }).text
+        return typeof value === 'string' ? value : ''
+      })
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    if (text) {
+      return text
+    }
+  }
+  return 'SDK MCP tool returned an error'
 }
