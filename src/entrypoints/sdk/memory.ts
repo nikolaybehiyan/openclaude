@@ -30,6 +30,7 @@ import {
   getMessagesAfterCompactBoundary,
 } from '../../utils/messages.js'
 import { createAbortController } from '../../utils/abortController.js'
+import { runWithCwdOverride } from '../../utils/cwd.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
@@ -234,15 +235,17 @@ export async function unstable_runAutoMemoryUserEdit(
 ): Promise<AutoMemoryUserEditRunResult> {
   const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
   const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.toolUseContext)
-  const result = await runForkedAgent({
-    promptMessages: [createUserMessage({ content: prompt })],
-    cacheSafeParams,
-    canUseTool: createAutoMemCanUseTool(options.memoryRoot),
-    querySource: 'memory_user_edits',
-    forkLabel: 'memory_user_edits',
-    skipTranscript: true,
-    maxTurns: options.maxTurns ?? 5,
-  })
+  const result = await runWithCwdOverride(options.memoryRoot, () =>
+    runForkedAgent({
+      promptMessages: [createUserMessage({ content: prompt })],
+      cacheSafeParams,
+      canUseTool: createAutoMemCanUseTool(options.memoryRoot),
+      querySource: 'memory_user_edits',
+      forkLabel: 'memory_user_edits',
+      skipTranscript: true,
+      maxTurns: options.maxTurns ?? 5,
+    }),
+  )
   const assistant = getLastAssistantMessage(result.messages)
   const content = assistant?.message.content
   return {
