@@ -31,6 +31,7 @@ import { stat } from 'fs/promises'
 import {
   switchSession,
   runWithSdkContext,
+  setProjectRoot,
   setFlagSettingsInline,
   setAllowedSettingSources,
   getSessionId,
@@ -950,6 +951,7 @@ function createEngineFromOptions(
   configureSessionEventStore(options)
   applySessionSettingSources(options.settingSources)
   applySessionFlagSettings(options.settings)
+  setProjectRoot(cwd)
 
   // NOTE: cwd is NOT set on global state here. SDKSessionImpl.sendMessage()
   // sets/restores it per-message via the cwd mutex to prevent concurrent

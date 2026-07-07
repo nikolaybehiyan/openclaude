@@ -33,6 +33,7 @@ import {
   regenerateSessionId,
   getSessionId,
   runWithSdkContext,
+  setProjectRoot,
 } from '../../bootstrap/state.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
@@ -941,6 +942,7 @@ export function query(params: {
   if (!cwd) {
     throw new Error('query() requires options.cwd')
   }
+  setProjectRoot(cwd)
 
   // Note: We pass settings?.env to QueryImpl for application AFTER init() runs.
   // This ensures our env vars override config file env vars, not vice versa.
