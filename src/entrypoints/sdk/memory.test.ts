@@ -46,13 +46,13 @@ test('SDK memory tool permission uses explicit hydrated memory dir for writes', 
   expect(source).toContain('FILE_WRITE_TOOL_NAME')
 })
 
-test('SDK memory edit forks start from native memory context, not chat context', async () => {
+test('SDK memory edit forks use chat messages with native memory tools only', async () => {
   const source = await readFile(sourcePath, 'utf8')
 
   expect(source).toContain('buildAutoMemoryEditCacheSafeParams(options.memoryRoot')
   expect(source).toContain('const memoryTools = getTools(buildPermissionContext')
   expect(source).toContain('mcpClients: []')
-  expect(source).toContain('forkContextMessages: []')
+  expect(source).toContain('getMessagesAfterCompactBoundary')
   expect(source).not.toContain('getLastCacheSafeParams')
   expect(source).not.toContain('overrides:')
 })

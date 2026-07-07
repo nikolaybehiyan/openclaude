@@ -26,6 +26,7 @@ import {
   createUserMessage,
   extractTextContent,
   getLastAssistantMessage,
+  getMessagesAfterCompactBoundary,
 } from '../../utils/messages.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
@@ -234,8 +235,11 @@ export async function unstable_runAutoMemoryUserEdit(
   options: AutoMemoryUserEditRunOptions,
 ): Promise<AutoMemoryUserEditRunResult> {
   return await runWithCwdOverride(options.memoryRoot, async () => {
-    const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
     const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.memoryRoot, options.toolUseContext)
+    const prompt = await unstable_buildAutoMemoryUserEditPrompt(
+      options,
+      Math.max(1, cacheSafeParams.forkContextMessages.length),
+    )
     const result = await runForkedAgent({
       promptMessages: [createUserMessage({ content: prompt })],
       cacheSafeParams,
@@ -276,8 +280,18 @@ async function buildAutoMemoryEditCacheSafeParams(memoryRoot: string, parentCont
     userContext,
     systemContext,
     toolUseContext,
-    forkContextMessages: [],
+    forkContextMessages: parentContext
+      ? getMessagesAfterCompactBoundary(stripInProgressAssistantMessage(parentContext.messages ?? []))
+      : [],
   }
+}
+
+function stripInProgressAssistantMessage(messages: Message[]): Message[] {
+  const last = messages.at(-1)
+  if (last?.type === 'assistant' && last.message.stop_reason === null) {
+    return messages.slice(0, -1)
+  }
+  return messages
 }
 
 export async function unstable_buildAutoMemoryControlsEditPrompt(
