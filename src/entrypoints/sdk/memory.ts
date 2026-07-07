@@ -19,7 +19,6 @@ import type { Message } from '../../types/message.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
 import {
   type CacheSafeParams,
-  getLastCacheSafeParams,
   runForkedAgent,
 } from '../../utils/forkedAgent.js'
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
@@ -27,9 +26,7 @@ import {
   createUserMessage,
   extractTextContent,
   getLastAssistantMessage,
-  getMessagesAfterCompactBoundary,
 } from '../../utils/messages.js'
-import { createAbortController } from '../../utils/abortController.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
 import { getSystemPrompt } from '../../constants/prompts.js'
 import { getSystemContext, getUserContext } from '../../context.js'
@@ -174,13 +171,15 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }
 
-function createAutoMemoryToolUseContext(tools: Tools): ToolUseContext {
+function createAutoMemoryToolUseContext(tools: Tools, parentContext?: ToolUseContext): ToolUseContext {
   const appState = getDefaultAppState()
+  const mainLoopModel = parentContext?.options.mainLoopModel ||
+    (typeof appState.mainLoopModel === 'string' ? appState.mainLoopModel : '')
   return {
     options: {
       commands: [],
       debug: false,
-      mainLoopModel: typeof appState.mainLoopModel === 'string' ? appState.mainLoopModel : '',
+      mainLoopModel,
       tools,
       verbose: false,
       thinkingConfig: { type: 'disabled' },
@@ -188,6 +187,7 @@ function createAutoMemoryToolUseContext(tools: Tools): ToolUseContext {
       mcpResources: {},
       isNonInteractiveSession: true,
       agentDefinitions: { activeAgents: [], allAgents: [] },
+      providerOverride: parentContext?.options.providerOverride,
     },
     abortController: new AbortController(),
     readFileState: createFileStateCacheWithSizeLimit(100),
@@ -233,10 +233,10 @@ export async function unstable_buildAutoMemoryUserEditPrompt(
 export async function unstable_runAutoMemoryUserEdit(
   options: AutoMemoryUserEditRunOptions,
 ): Promise<AutoMemoryUserEditRunResult> {
-  const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
-  const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.toolUseContext)
-  const result = await runWithCwdOverride(options.memoryRoot, () =>
-    runForkedAgent({
+  return await runWithCwdOverride(options.memoryRoot, async () => {
+    const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
+    const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.memoryRoot, options.toolUseContext)
+    const result = await runForkedAgent({
       promptMessages: [createUserMessage({ content: prompt })],
       cacheSafeParams,
       canUseTool: createAutoMemCanUseTool(options.memoryRoot),
@@ -244,72 +244,40 @@ export async function unstable_runAutoMemoryUserEdit(
       forkLabel: 'memory_user_edits',
       skipTranscript: true,
       maxTurns: options.maxTurns ?? 5,
-    }),
-  )
-  const assistant = getLastAssistantMessage(result.messages)
-  const content = assistant?.message.content
-  return {
-    messages: result.messages,
-    result: Array.isArray(content) ? extractTextContent(content) : null,
-    usage: result.totalUsage as unknown as Record<string, unknown>,
-  }
-}
-
-async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContext): Promise<CacheSafeParams> {
-  const saved = getLastCacheSafeParams()
-  if (toolUseContext) {
-    const forkContextMessages = getMessagesAfterCompactBoundary(stripInProgressAssistantMessage(toolUseContext.messages ?? []))
-    if (saved) {
-      return {
-        systemPrompt: saved.systemPrompt,
-        userContext: saved.userContext,
-        systemContext: saved.systemContext,
-        toolUseContext: {
-          ...toolUseContext,
-          abortController: createAbortController(),
-        },
-        forkContextMessages,
-      }
-    }
-    const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
-      getSystemPrompt(
-        toolUseContext.options.tools,
-        toolUseContext.options.mainLoopModel,
-        [],
-        toolUseContext.options.mcpClients,
-      ),
-      getUserContext(),
-      getSystemContext(),
-    ])
+    })
+    const assistant = getLastAssistantMessage(result.messages)
+    const content = assistant?.message.content
     return {
-      systemPrompt: asSystemPrompt(rawSystemPrompt),
-      userContext,
-      systemContext,
-      toolUseContext: {
-        ...toolUseContext,
-        abortController: createAbortController(),
-      },
-      forkContextMessages,
+      messages: result.messages,
+      result: Array.isArray(content) ? extractTextContent(content) : null,
+      usage: result.totalUsage as unknown as Record<string, unknown>,
     }
-  }
-  if (!saved) {
-    throw new Error('OpenClaude auto-memory edit cache context is unavailable until a turn context exists')
-  }
-  return {
-    ...saved,
-    toolUseContext: {
-      ...saved.toolUseContext,
-      abortController: createAbortController(),
-    },
-  }
+  })
 }
 
-function stripInProgressAssistantMessage(messages: Message[]): Message[] {
-  const last = messages.at(-1)
-  if (last?.type === 'assistant' && last.message.stop_reason === null) {
-    return messages.slice(0, -1)
+async function buildAutoMemoryEditCacheSafeParams(memoryRoot: string, parentContext?: ToolUseContext): Promise<CacheSafeParams> {
+  const memoryTools = getTools(buildPermissionContext({
+    cwd: memoryRoot,
+    permissionMode: 'acceptEdits',
+  }))
+  const toolUseContext = createAutoMemoryToolUseContext(memoryTools, parentContext)
+  const [rawSystemPrompt, userContext, systemContext] = await Promise.all([
+    getSystemPrompt(
+      memoryTools,
+      toolUseContext.options.mainLoopModel,
+      [],
+      [],
+    ),
+    getUserContext(),
+    getSystemContext(),
+  ])
+  return {
+    systemPrompt: asSystemPrompt(rawSystemPrompt),
+    userContext,
+    systemContext,
+    toolUseContext,
+    forkContextMessages: [],
   }
-  return messages
 }
 
 export async function unstable_buildAutoMemoryControlsEditPrompt(
