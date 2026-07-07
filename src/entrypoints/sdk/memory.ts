@@ -7,6 +7,7 @@ import {
   scanMemoryFiles,
 } from '../../memdir/memoryScan.js'
 import { buildConsolidationPrompt } from '../../services/autoDream/consolidationPrompt.js'
+import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLock.js'
 import { createAutoMemCanUseTool, drainPendingExtraction } from '../../services/extractMemories/extractMemories.js'
 import { buildExtractAutoOnlyPrompt } from '../../services/extractMemories/prompts.js'
 import { getDefaultAppState } from '../../state/AppStateStore.js'
@@ -62,6 +63,13 @@ export type AutoMemoryControlsEditPromptOptions = {
 
 export async function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void> {
   await drainPendingExtraction(timeoutMs)
+}
+
+export async function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean> {
+  if (!Number.isFinite(sinceMs) || sinceMs <= 0) {
+    return false
+  }
+  return (await readLastConsolidatedAt()) >= sinceMs
 }
 
 export function unstable_buildAutoMemoryConsolidationPrompt(

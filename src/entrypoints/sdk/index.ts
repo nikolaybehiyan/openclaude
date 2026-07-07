@@ -125,6 +125,7 @@ export {
   unstable_buildAutoMemoryUserEditPrompt,
   unstable_buildAutoMemoryConsolidationPrompt,
   unstable_createAutoMemoryCanUseTool,
+  unstable_didAutoDreamFireSince,
   unstable_drainAutoMemoryExtraction,
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,

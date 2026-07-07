@@ -2,6 +2,7 @@ import { lstat, realpath } from 'fs/promises'
 import { dirname, join, resolve, sep } from 'path'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../services/analytics/growthbook.js'
 import { getErrnoCode } from '../utils/errors.js'
+import { getSettingsForSource } from '../utils/settings/settings.js'
 import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
 
 /**
@@ -73,6 +74,10 @@ function sanitizePathKey(key: string): string {
 export function isTeamMemoryEnabled(): boolean {
   if (!isAutoMemoryEnabled()) {
     return false
+  }
+  const sessionSetting = getSettingsForSource('flagSettings')?.teamMemoryEnabled
+  if (sessionSetting !== undefined) {
+    return sessionSetting === true
   }
   return getFeatureValue_CACHED_MAY_BE_STALE('tengu_herring_clock', true)
 }

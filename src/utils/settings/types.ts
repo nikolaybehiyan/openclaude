@@ -971,6 +971,12 @@ export const SettingsSchema = lazySchema(() =>
         .describe(
           'Enable auto-memory for this project. When false, Claude will not read from or write to the auto-memory directory.',
         ),
+      teamMemoryEnabled: z
+        .boolean()
+        .optional()
+        .describe(
+          'Enable native team-memory for this session. Managed SDK hosts set this only after their own accepted-membership checks.',
+        ),
       autoMemoryDirectory: z
         .string()
         .optional()

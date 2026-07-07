@@ -656,6 +656,8 @@ export function unstable_buildAutoMemoryUserEditPrompt(options: AutoMemoryUserEd
 
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 
+export function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean>
+
 export function unstable_createAutoMemoryCanUseTool(
   memoryDir: string,
   options?: AutoMemoryCanUseToolOptions,
