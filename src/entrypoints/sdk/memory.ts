@@ -21,6 +21,7 @@ import {
   type CacheSafeParams,
   getLastCacheSafeParams,
   runForkedAgent,
+  type SubagentContextOverrides,
 } from '../../utils/forkedAgent.js'
 import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 import {
@@ -235,10 +236,12 @@ export async function unstable_runAutoMemoryUserEdit(
 ): Promise<AutoMemoryUserEditRunResult> {
   const prompt = await unstable_buildAutoMemoryUserEditPrompt(options)
   const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(options.toolUseContext)
+  const forkOverrides = createAutoMemoryForkOverrides(cacheSafeParams, options.memoryRoot)
   const result = await runWithCwdOverride(options.memoryRoot, () =>
     runForkedAgent({
       promptMessages: [createUserMessage({ content: prompt })],
       cacheSafeParams,
+      overrides: forkOverrides,
       canUseTool: createAutoMemCanUseTool(options.memoryRoot),
       querySource: 'memory_user_edits',
       forkLabel: 'memory_user_edits',
@@ -300,6 +303,44 @@ async function buildAutoMemoryEditCacheSafeParams(toolUseContext?: ToolUseContex
     toolUseContext: {
       ...saved.toolUseContext,
       abortController: createAbortController(),
+    },
+  }
+}
+
+function createAutoMemoryForkOverrides(
+  cacheSafeParams: CacheSafeParams,
+  memoryRoot: string,
+): SubagentContextOverrides {
+  const memoryTools = getTools(buildPermissionContext({
+    cwd: memoryRoot,
+    permissionMode: 'acceptEdits',
+  }))
+  const parentContext = cacheSafeParams.toolUseContext
+  return {
+    options: {
+      ...parentContext.options,
+      commands: [],
+      tools: memoryTools,
+      mcpClients: [],
+      mcpResources: {},
+      agentDefinitions: { activeAgents: [], allAgents: [] },
+    },
+    getAppState: () => {
+      const state = parentContext.getAppState()
+      return {
+        ...state,
+        mcp: {
+          clients: [],
+          tools: [],
+          commands: [],
+          resources: {},
+          pluginReconnectKey: state.mcp.pluginReconnectKey,
+        },
+        toolPermissionContext: {
+          ...state.toolPermissionContext,
+          shouldAvoidPermissionPrompts: true,
+        },
+      }
     },
   }
 }
