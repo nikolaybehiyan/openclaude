@@ -66,6 +66,7 @@ test('SDK memory edits prune empty topic artifacts before rebuilding native prom
   expect(source).toContain('filter(line => !memoryIndexLinks(line).some')
   expect(source).toContain('if (!hasTopicLinks)')
   expect(source).toContain('await unlinkIfExists(join(memoryRoot, ENTRYPOINT_NAME))')
+  expect((source.match(/await unlinkIfExists\(join\(memoryRoot, ENTRYPOINT_NAME\)\)/g) ?? []).length).toBe(2)
   expect(source).not.toContain('hasTopicLinks ? `${keptLines.join')
 })
 

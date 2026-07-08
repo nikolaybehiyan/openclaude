@@ -371,6 +371,7 @@ async function pruneEmptyMemoryTopics(memoryRoot: string): Promise<string[]> {
 async function pruneMemoryIndexLinks(memoryRoot: string, removedFiles: Set<string>): Promise<void> {
   const index = await readMemoryIndex(memoryRoot)
   if (!index) {
+    await unlinkIfExists(join(memoryRoot, ENTRYPOINT_NAME))
     return
   }
   const keptLines = index
