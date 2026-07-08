@@ -28,7 +28,7 @@ test('SDK MCP tool isError becomes a thrown tool-call error', async () => {
   )).rejects.toThrow(text)
 })
 
-test('SDK MCP tool normalizes JSON-schema scalar strings before handler', async () => {
+test('SDK MCP tool can defer JSON schema validation to handler', async () => {
   const calls: unknown[] = []
   const { tools } = await connectSdkMcpServers({
     memory: {
@@ -61,5 +61,5 @@ test('SDK MCP tool normalizes JSON-schema scalar strings before handler', async 
     () => {},
   )
   expect(result.data).toEqual([{ type: 'text', text: 'handled' }])
-  expect(calls).toEqual([{ line_number: 1 }])
+  expect(calls).toEqual([{ line_number: '1' }])
 })

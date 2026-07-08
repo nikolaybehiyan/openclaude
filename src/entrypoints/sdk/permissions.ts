@@ -43,161 +43,6 @@ const defaultLogger: SDKLogger = {
   warn: (message: string) => console.warn(message),
 }
 
-function normalizeInputWithJsonSchema(
-  input: Record<string, unknown>,
-  schema: unknown,
-): Record<string, unknown> {
-  const normalized = normalizeJsonSchemaValue(input, schema)
-  return normalized && typeof normalized === 'object' && !Array.isArray(normalized)
-    ? normalized as Record<string, unknown>
-    : input
-}
-
-function normalizeJsonSchemaValue(value: unknown, schema: unknown): unknown {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    return value
-  }
-  const schemaObject = schema as Record<string, unknown>
-  const alternatives = schemaAlternatives(schemaObject)
-  if (alternatives.length > 0) {
-    if (alternatives.some(alternative => valueMatchesJsonSchemaType(value, alternative))) {
-      return value
-    }
-    for (const alternative of alternatives) {
-      const normalized = normalizeJsonSchemaValue(value, alternative)
-      if (normalized !== value) {
-        return normalized
-      }
-    }
-    return value
-  }
-  const types = jsonSchemaTypes(schemaObject.type)
-  if (types.has('string') && typeof value === 'string') {
-    return value
-  }
-  if (types.has('integer')) {
-    const normalized = normalizeIntegerString(value)
-    if (normalized !== value) {
-      return normalized
-    }
-  }
-  if (types.has('number')) {
-    const normalized = normalizeNumberString(value)
-    if (normalized !== value) {
-      return normalized
-    }
-  }
-  if (types.has('boolean')) {
-    const normalized = normalizeBooleanString(value)
-    if (normalized !== value) {
-      return normalized
-    }
-  }
-  const properties = schemaObject.properties
-  if (
-    (types.has('object') || properties) &&
-    value &&
-    typeof value === 'object' &&
-    !Array.isArray(value) &&
-    properties &&
-    typeof properties === 'object' &&
-    !Array.isArray(properties)
-  ) {
-    let changed = false
-    const result = { ...(value as Record<string, unknown>) }
-    for (const [key, propertySchema] of Object.entries(properties)) {
-      if (!(key in result)) {
-        continue
-      }
-      const normalized = normalizeJsonSchemaValue(result[key], propertySchema)
-      if (normalized !== result[key]) {
-        result[key] = normalized
-        changed = true
-      }
-    }
-    return changed ? result : value
-  }
-  const items = schemaObject.items
-  if (types.has('array') && Array.isArray(value) && items) {
-    let changed = false
-    const result = value.map(item => {
-      const normalized = normalizeJsonSchemaValue(item, items)
-      if (normalized !== item) {
-        changed = true
-      }
-      return normalized
-    })
-    return changed ? result : value
-  }
-  return value
-}
-
-function schemaAlternatives(schema: Record<string, unknown>): unknown[] {
-  for (const key of ['anyOf', 'oneOf']) {
-    const alternatives = schema[key]
-    if (Array.isArray(alternatives)) {
-      return alternatives
-    }
-  }
-  return []
-}
-
-function jsonSchemaTypes(value: unknown): Set<string> {
-  if (typeof value === 'string') {
-    return new Set([value])
-  }
-  if (Array.isArray(value)) {
-    return new Set(value.filter(item => typeof item === 'string'))
-  }
-  return new Set()
-}
-
-function valueMatchesJsonSchemaType(value: unknown, schema: unknown): boolean {
-  if (!schema || typeof schema !== 'object' || Array.isArray(schema)) {
-    return false
-  }
-  const types = jsonSchemaTypes((schema as Record<string, unknown>).type)
-  if (types.has('null') && value === null) return true
-  if (types.has('string') && typeof value === 'string') return true
-  if (types.has('boolean') && typeof value === 'boolean') return true
-  if (types.has('integer') && typeof value === 'number' && Number.isInteger(value)) return true
-  if (types.has('number') && typeof value === 'number' && Number.isFinite(value)) return true
-  if (types.has('array') && Array.isArray(value)) return true
-  return types.has('object') && !!value && typeof value === 'object' && !Array.isArray(value)
-}
-
-function normalizeIntegerString(value: unknown): unknown {
-  if (typeof value !== 'string' || !/^-?(?:0|[1-9]\d*)$/.test(value.trim())) {
-    return value
-  }
-  const parsed = Number(value)
-  return Number.isSafeInteger(parsed) ? parsed : value
-}
-
-function normalizeNumberString(value: unknown): unknown {
-  if (
-    typeof value !== 'string' ||
-    !/^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/.test(value.trim())
-  ) {
-    return value
-  }
-  const parsed = Number(value)
-  return Number.isFinite(parsed) ? parsed : value
-}
-
-function normalizeBooleanString(value: unknown): unknown {
-  if (value === 'true') return true
-  if (value === 'false') return false
-  return value
-}
-
-function replaceObjectContents(target: Record<string, unknown>, source: Record<string, unknown>): void {
-  for (const key of Object.keys(target)) {
-    delete target[key]
-  }
-  Object.assign(target, source)
-}
-
 // ============================================================================
 // buildPermissionContext
 // ============================================================================
@@ -464,18 +309,11 @@ export async function connectSdkMcpServers(
           isOpenWorld() {
             return toolDef.annotations?.openWorldHint ?? false
           },
-          backfillObservableInput(input) {
-            replaceObjectContents(input, normalizeInputWithJsonSchema(input, toolDef.inputSchema))
-          },
           async validateInput(input, context) {
             if (toolDef.deferInputValidationToHandler === true) {
               return { result: true as const }
             }
-            return MCPTool.validateInput?.call(
-              this,
-              normalizeInputWithJsonSchema(input, toolDef.inputSchema),
-              context,
-            ) ?? { result: true as const }
+            return MCPTool.validateInput?.call(this, input, context) ?? { result: true as const }
           },
           async checkPermissions(input, context) {
             switch (toolDef.permissionBehavior) {
@@ -500,10 +338,7 @@ export async function connectSdkMcpServers(
             if (!toolDef.handler) {
               return { data: `SDK tool ${toolDef.name} has no handler` }
             }
-            const result = await toolDef.handler(
-              normalizeInputWithJsonSchema(args, toolDef.inputSchema),
-              { context, parentMessage, onProgress },
-            )
+            const result = await toolDef.handler(args, { context, parentMessage, onProgress })
             if (result.isError === true) {
               throw new Error(sdkMcpToolErrorText(result.content))
             }
