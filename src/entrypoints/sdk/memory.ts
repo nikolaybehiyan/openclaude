@@ -264,10 +264,11 @@ function autoMemoryEditSourceMessages(
   options: AutoMemoryEditRunOptions,
   contextMessages: Message[],
 ): Message[] {
-  if (contextMessages.length > 0) {
-    return contextMessages
+  const eventMessage = createUserMessage({ content: buildManagedAutoMemoryEditEvent(options) })
+  if (contextMessages.length === 0) {
+    return [eventMessage]
   }
-  return [createUserMessage({ content: buildManagedAutoMemoryEditEvent(options) })]
+  return [...contextMessages, eventMessage]
 }
 
 function buildManagedAutoMemoryEditEvent(options: AutoMemoryEditRunOptions): string {
