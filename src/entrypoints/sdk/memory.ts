@@ -30,6 +30,7 @@ import {
 } from '../../utils/messages.js'
 import { runWithCwdOverride } from '../../utils/cwd.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
+import { init } from '../init.js'
 import { buildPermissionContext } from './permissions.js'
 import type { CanUseToolCallback } from './shared.js'
 
@@ -199,6 +200,7 @@ function createAutoMemoryToolUseContext(tools: Tools, parentContext?: ToolUseCon
 export async function unstable_applyAutoMemoryEdit(
   options: AutoMemoryEditRunOptions,
 ): Promise<AutoMemoryEditRunResult> {
+  await init()
   const memoryRoot = withTrailingSeparator(options.memoryRoot)
   return await runWithCwdOverride(memoryRoot, async () => {
     const restoreSettings = applyAutoMemoryEditSettings(options.settings)
