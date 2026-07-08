@@ -87,6 +87,8 @@ test('SDK memory edit forks use chat messages with native memory tools only', as
   expect(source).toContain('const memoryTools = getTools(buildPermissionContext')
   expect(source).toContain('promptMessages: [createUserMessage({ content: prompt })]')
   expect(source).toContain('forkContextMessages: autoMemoryEditSourceMessages(')
+  expect(source).toContain('sourceUserContent?: string')
+  expect(source).toContain('createUserMessage({ content: sourceUserContent })')
   expect(source).toContain('const eventMessage = createUserMessage({ content: buildManagedAutoMemoryEditEvent(options) })')
   expect(source).toContain('if (contextMessages.length > 0)')
   expect(source).toContain('return contextMessages')

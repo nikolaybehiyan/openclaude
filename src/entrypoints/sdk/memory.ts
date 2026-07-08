@@ -75,6 +75,7 @@ export type AutoMemoryEditRunOptions = {
   projection?: AutoMemoryProjection
   controls?: string[]
   toolUseContext?: ToolUseContext
+  sourceUserContent?: string
   settings?: Record<string, unknown>
   maxTurns?: number
 }
@@ -264,6 +265,13 @@ function autoMemoryEditSourceMessages(
   options: AutoMemoryEditRunOptions,
   contextMessages: Message[],
 ): Message[] {
+  const sourceUserContent = options.sourceUserContent?.trim()
+  if (sourceUserContent) {
+    return [
+      ...contextMessages,
+      createUserMessage({ content: sourceUserContent }),
+    ]
+  }
   if (contextMessages.length > 0) {
     return contextMessages
   }
