@@ -3,7 +3,7 @@ import { readFile } from 'fs/promises'
 
 const sourcePath = new URL('./memory.ts', import.meta.url)
 
-test('SDK memory edits reuse native extraction prompt with only request messages added', async () => {
+test('SDK memory edits reuse native extraction prompt without custom memory instructions', async () => {
   const source = await readFile(sourcePath, 'utf8')
 
   expect(source).toContain('buildMemoryPrompt')
@@ -11,16 +11,28 @@ test('SDK memory edits reuse native extraction prompt with only request messages
   expect(source).toContain('scanMemoryFiles')
   expect(source).toContain('formatMemoryManifest')
   expect(source).toContain('runForkedAgent')
-  expect(source).toContain('buildAutoMemoryEditRequest')
-  expect(source).toContain('Please remember:')
+  expect(source).toContain('buildManagedAutoMemoryEditEvent')
+  expect(source).toContain('autoMemoryEditSourceMessages')
 
   const forbiddenWrapperPolicy = [
     'unstable_runAutoMemoryUserEdit',
     'unstable_buildAutoMemoryUserEditPrompt',
     'unstable_buildAutoMemoryControlsEditPrompt',
     'unstable_buildAutoMemoryEditPrompt',
+    ['buildAutoMemoryEdit', 'Request'].join(''),
     '## Memory edit request',
     'Command: set_visible_memory_entries',
+    ['Please', 'remember'].join(' '),
+    ['Please', 'forget'].join(' '),
+    ['Remember', ':'].join(''),
+    ['Forget', 'this'].join(' '),
+    ['Forget', 'all'].join(' '),
+    ['Remember', 'these'].join(' '),
+    ['The user added', 'a visible memory edit'].join(' '),
+    ['The user replaced', 'a visible memory edit'].join(' '),
+    ['The user removed', 'this visible memory edit'].join(' '),
+    ['The user edited', 'visible memory'].join(' '),
+    ['The user cleared all', 'visible memory edits'].join(' '),
     ['Current projected', 'memory edits'].join(' '),
     ['Apply exactly this requested edit', 'to the native memory tree.'].join(' '),
     ['Use Read/Edit/Write only', 'inside the memory directory.'].join(' '),
@@ -44,6 +56,17 @@ test('SDK memory projection keeps summary markdown separate from numbered edit c
   expect(source).not.toContain('normalizeMemoryProjectionLine')
 })
 
+test('SDK memory edits prune empty topic artifacts before rebuilding native prompts', async () => {
+  const source = await readFile(sourcePath, 'utf8')
+
+  expect(source).toContain('const prePrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)')
+  expect(source).toContain('const postPrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)')
+  expect(source).toContain('if (!parsed.content.trim())')
+  expect(source).toContain('await unlink(join(memoryRoot, ...file.split')
+  expect(source).toContain('filter(line => !memoryIndexLinks(line).some')
+  expect(source).toContain('hasTopicLinks ? `${keptLines.join')
+})
+
 test('SDK memory tool permission uses explicit hydrated memory dir for writes', async () => {
   const source = await readFile(sourcePath, 'utf8')
 
@@ -59,6 +82,10 @@ test('SDK memory edit forks use chat messages with native memory tools only', as
 
   expect(source).toContain('buildAutoMemoryEditCacheSafeParams(')
   expect(source).toContain('const memoryTools = getTools(buildPermissionContext')
+  expect(source).toContain('promptMessages: [createUserMessage({ content: prompt })]')
+  expect(source).toContain('forkContextMessages: autoMemoryEditSourceMessages(')
+  expect(source).toContain('if (contextMessages.length > 0)')
+  expect(source).not.toContain('...cacheSafeParams.forkContextMessages,\n            requestMessage')
   expect(source).toContain('mcpClients: []')
   expect(source).toContain('getMessagesAfterCompactBoundary')
   expect(source).not.toContain('getLastCacheSafeParams')

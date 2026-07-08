@@ -1,5 +1,5 @@
 import { getTools } from '../../tools.js'
-import { readdir, readFile } from 'fs/promises'
+import { readdir, readFile, unlink, writeFile } from 'fs/promises'
 import { basename, isAbsolute, join, normalize, resolve, sep } from 'path'
 import { buildMemoryPrompt, ENTRYPOINT_NAME } from '../../memdir/memdir.js'
 import {
@@ -8,7 +8,10 @@ import {
 } from '../../memdir/memoryScan.js'
 import { buildConsolidationPrompt } from '../../services/autoDream/consolidationPrompt.js'
 import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLock.js'
-import { createAutoMemCanUseTool, drainPendingExtraction } from '../../services/extractMemories/extractMemories.js'
+import {
+  createAutoMemCanUseTool,
+  drainPendingExtraction,
+} from '../../services/extractMemories/extractMemories.js'
 import { buildExtractAutoOnlyPrompt } from '../../services/extractMemories/prompts.js'
 import { getDefaultAppState } from '../../state/AppStateStore.js'
 import { getFlagSettingsInline, setFlagSettingsInline } from '../../bootstrap/state.js'
@@ -205,22 +208,20 @@ export async function unstable_applyAutoMemoryEdit(
   return await runWithCwdOverride(memoryRoot, async () => {
     const restoreSettings = applyAutoMemoryEditSettings(options.settings)
     try {
+      const prePrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)
       const cacheSafeParams = await buildAutoMemoryEditCacheSafeParams(
         memoryRoot,
         options.toolUseContext,
       )
-      const requestMessage = createUserMessage({
-        content: buildAutoMemoryEditRequest(options),
-      })
       const prompt = await buildAutoMemoryEditExtractionPrompt(memoryRoot)
       const result = await runForkedAgent({
         promptMessages: [createUserMessage({ content: prompt })],
         cacheSafeParams: {
           ...cacheSafeParams,
-          forkContextMessages: [
-            ...cacheSafeParams.forkContextMessages,
-            requestMessage,
-          ],
+          forkContextMessages: autoMemoryEditSourceMessages(
+            options,
+            cacheSafeParams.forkContextMessages,
+          ),
         },
         canUseTool: createAutoMemCanUseTool(memoryRoot),
         querySource: 'extract_memories',
@@ -228,9 +229,16 @@ export async function unstable_applyAutoMemoryEdit(
         skipTranscript: true,
         maxTurns: options.maxTurns ?? 5,
       })
+      const postPrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)
       return {
         messages: result.messages,
-        writtenPaths: extractWrittenPaths(result.messages, memoryRoot),
+        writtenPaths: [
+          ...new Set([
+            ...extractWrittenPaths(result.messages, memoryRoot),
+            ...prePrunedPaths,
+            ...postPrunedPaths,
+          ]),
+        ],
         usage: result.totalUsage as unknown as Record<string, unknown>,
       }
     } finally {
@@ -252,40 +260,54 @@ function applyAutoMemoryEditSettings(settings?: Record<string, unknown>): () => 
   }
 }
 
-function buildAutoMemoryEditRequest(options: AutoMemoryEditRunOptions): string {
+function autoMemoryEditSourceMessages(
+  options: AutoMemoryEditRunOptions,
+  contextMessages: Message[],
+): Message[] {
+  if (contextMessages.length > 0) {
+    return contextMessages
+  }
+  return [createUserMessage({ content: buildManagedAutoMemoryEditEvent(options) })]
+}
+
+function buildManagedAutoMemoryEditEvent(options: AutoMemoryEditRunOptions): string {
+  if (Array.isArray(options.controls)) {
+    return JSON.stringify({
+      type: 'memory_ui_edit_event',
+      controls: options.controls,
+    })
+  }
   const projection = options.projection
   const entries = projection?.entries ?? []
   const target = options.line_number
     ? entries.find(entry => entry.line_number === options.line_number)
     : undefined
-  if (Array.isArray(options.controls)) {
-    return [
-      'Please update my visible memory edits to exactly this list:',
-      options.controls.length
-        ? options.controls.map((control, index) => `${index + 1}. ${control}`).join('\n')
-        : 'No visible memory entries should remain.',
-    ].join('\n')
-  }
   if (!options.command) {
     throw new Error('auto_memory_edit_command_required')
   }
   if (options.command === 'add') {
-    return `Please remember: ${options.control?.trim() ?? ''}`
+    return JSON.stringify({
+      type: 'memory_ui_edit_event',
+      command: 'add',
+      control: options.control?.trim() ?? '',
+    })
   }
   if (options.command === 'replace') {
-    return [
-      'Please replace this remembered item:',
-      target?.text ?? '',
-      '',
-      'With:',
-      options.replacement?.trim() ?? '',
-    ].join('\n')
+    return JSON.stringify({
+      type: 'memory_ui_edit_event',
+      command: 'replace',
+      line_number: options.line_number ?? null,
+      old_text: target?.text ?? '',
+      replacement: options.replacement?.trim() ?? '',
+    })
   }
   if (options.command === 'remove') {
-    return [
-      'Please forget this remembered item:',
-      target?.text ?? '',
-    ].join('\n')
+    return JSON.stringify({
+      type: 'memory_ui_edit_event',
+      command: 'remove',
+      line_number: options.line_number ?? null,
+      old_text: target?.text ?? '',
+    })
   }
   throw new Error('auto_memory_edit_command_unsupported')
 }
@@ -324,6 +346,47 @@ function stripInProgressAssistantMessage(messages: Message[]): Message[] {
     return messages.slice(0, -1)
   }
   return messages
+}
+
+async function pruneEmptyMemoryTopics(memoryRoot: string): Promise<string[]> {
+  const emptyFiles: string[] = []
+  for (const file of await listMemoryTopicFiles(memoryRoot)) {
+    const raw = await readFile(join(memoryRoot, ...file.split('/')), 'utf8')
+    const parsed = parseFrontmatter(raw, file)
+    if (!parsed.content.trim()) {
+      emptyFiles.push(file)
+    }
+  }
+  if (emptyFiles.length === 0) {
+    return []
+  }
+  for (const file of emptyFiles) {
+    try {
+      await unlink(join(memoryRoot, ...file.split('/')))
+    } catch (error) {
+      if ((error as { code?: string }).code !== 'ENOENT') {
+        throw error
+      }
+    }
+  }
+  await pruneMemoryIndexLinks(memoryRoot, new Set(emptyFiles))
+  return emptyFiles.map(file => join(memoryRoot, ...file.split('/')))
+}
+
+async function pruneMemoryIndexLinks(memoryRoot: string, removedFiles: Set<string>): Promise<void> {
+  const index = await readMemoryIndex(memoryRoot)
+  if (!index) {
+    return
+  }
+  const keptLines = index
+    .split(/\r?\n/)
+    .filter(line => !memoryIndexLinks(line).some(link => removedFiles.has(link)))
+  const hasTopicLinks = keptLines.some(line => memoryIndexLinks(line).length > 0)
+  await writeFile(
+    join(memoryRoot, ENTRYPOINT_NAME),
+    hasTopicLinks ? `${keptLines.join('\n').trim()}\n` : '',
+    'utf8',
+  )
 }
 
 export async function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string> {
