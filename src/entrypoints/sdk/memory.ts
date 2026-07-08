@@ -361,13 +361,7 @@ async function pruneEmptyMemoryTopics(memoryRoot: string): Promise<string[]> {
     return []
   }
   for (const file of emptyFiles) {
-    try {
-      await unlink(join(memoryRoot, ...file.split('/')))
-    } catch (error) {
-      if ((error as { code?: string }).code !== 'ENOENT') {
-        throw error
-      }
-    }
+    await unlinkIfExists(join(memoryRoot, ...file.split('/')))
   }
   await pruneMemoryIndexLinks(memoryRoot, new Set(emptyFiles))
   return emptyFiles.map(file => join(memoryRoot, ...file.split('/')))
@@ -382,11 +376,25 @@ async function pruneMemoryIndexLinks(memoryRoot: string, removedFiles: Set<strin
     .split(/\r?\n/)
     .filter(line => !memoryIndexLinks(line).some(link => removedFiles.has(link)))
   const hasTopicLinks = keptLines.some(line => memoryIndexLinks(line).length > 0)
+  if (!hasTopicLinks) {
+    await unlinkIfExists(join(memoryRoot, ENTRYPOINT_NAME))
+    return
+  }
   await writeFile(
     join(memoryRoot, ENTRYPOINT_NAME),
-    hasTopicLinks ? `${keptLines.join('\n').trim()}\n` : '',
+    `${keptLines.join('\n').trim()}\n`,
     'utf8',
   )
+}
+
+async function unlinkIfExists(path: string): Promise<void> {
+  try {
+    await unlink(path)
+  } catch (error) {
+    if ((error as { code?: string }).code !== 'ENOENT') {
+      throw error
+    }
+  }
 }
 
 export async function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string> {

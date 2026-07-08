@@ -62,9 +62,11 @@ test('SDK memory edits prune empty topic artifacts before rebuilding native prom
   expect(source).toContain('const prePrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)')
   expect(source).toContain('const postPrunedPaths = await pruneEmptyMemoryTopics(memoryRoot)')
   expect(source).toContain('if (!parsed.content.trim())')
-  expect(source).toContain('await unlink(join(memoryRoot, ...file.split')
+  expect(source).toContain('await unlinkIfExists(join(memoryRoot, ...file.split')
   expect(source).toContain('filter(line => !memoryIndexLinks(line).some')
-  expect(source).toContain('hasTopicLinks ? `${keptLines.join')
+  expect(source).toContain('if (!hasTopicLinks)')
+  expect(source).toContain('await unlinkIfExists(join(memoryRoot, ENTRYPOINT_NAME))')
+  expect(source).not.toContain('hasTopicLinks ? `${keptLines.join')
 })
 
 test('SDK memory tool permission uses explicit hydrated memory dir for writes', async () => {
