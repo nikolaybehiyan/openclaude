@@ -115,14 +115,10 @@ export {
 export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
-  AutoMemoryEditCommand,
-  AutoMemoryEditRunOptions,
-  AutoMemoryEditRunResult,
   AutoMemoryCanUseToolOptions,
   AutoMemoryConsolidationPromptOptions,
 } from './memory.js'
 export {
-  unstable_applyAutoMemoryEdit,
   unstable_buildAutoMemoryConsolidationPrompt,
   unstable_createAutoMemoryCanUseTool,
   unstable_didAutoDreamFireSince,

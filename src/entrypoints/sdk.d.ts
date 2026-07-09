@@ -638,29 +638,6 @@ export type AutoMemoryProjection = {
   files: string[]
 }
 
-export type AutoMemoryEditCommand = "add" | "replace" | "remove"
-
-export type AutoMemoryEditRunOptions = {
-  memoryRoot: string
-  command?: AutoMemoryEditCommand
-  control?: string
-  line_number?: number
-  replacement?: string
-  projection?: AutoMemoryProjection
-  controls?: string[]
-  toolUseContext?: unknown
-  settings?: Record<string, unknown>
-  maxTurns?: number
-}
-
-export type AutoMemoryEditRunResult = {
-  messages: unknown[]
-  writtenPaths: string[]
-  usage: Record<string, unknown>
-}
-
-export function unstable_applyAutoMemoryEdit(options: AutoMemoryEditRunOptions): Promise<AutoMemoryEditRunResult>
-
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 
 export function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean>

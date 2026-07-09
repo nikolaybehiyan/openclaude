@@ -2,7 +2,7 @@ import { expect, test } from 'bun:test'
 import { connectSdkMcpServers } from './permissions.js'
 
 test('SDK MCP tool isError becomes a thrown tool-call error', async () => {
-  const text = 'memory files did not change; requested memory edit was not saved; update/create native memory files and retry'
+  const text = 'tool handler reported a user-visible error'
   const { tools } = await connectSdkMcpServers({
     memory: {
       type: 'sdk',
