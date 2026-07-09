@@ -638,6 +638,14 @@ export type AutoMemoryProjection = {
   files: string[]
 }
 
+export type AutoMemoryRuntimeState = {
+  autoMemoryEnabled: boolean
+  extractModeActive: boolean
+  isRemoteMode: boolean
+  isNonInteractiveSession: boolean
+  autoMemPath: string
+}
+
 export function unstable_buildAutoMemoryConsolidationPrompt(options: AutoMemoryConsolidationPromptOptions): string
 
 export function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean>
@@ -650,6 +658,8 @@ export function unstable_createAutoMemoryCanUseTool(
 export function unstable_initAutoMemoryLifecycle(): void
 
 export function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void>
+
+export function unstable_getAutoMemoryRuntimeState(): AutoMemoryRuntimeState
 
 export function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string>
 

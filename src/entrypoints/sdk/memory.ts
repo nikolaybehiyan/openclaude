@@ -2,9 +2,18 @@ import { getTools } from '../../tools.js'
 import { readdir, readFile } from 'fs/promises'
 import { basename, isAbsolute, join, normalize, resolve, sep } from 'path'
 import { ENTRYPOINT_NAME } from '../../memdir/memdir.js'
+import {
+  getAutoMemPath,
+  isAutoMemoryEnabled,
+  isExtractModeActive,
+} from '../../memdir/paths.js'
 import { buildConsolidationPrompt } from '../../services/autoDream/consolidationPrompt.js'
 import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLock.js'
 import { initAutoDream } from '../../services/autoDream/autoDream.js'
+import {
+  getIsNonInteractiveSession,
+  getIsRemoteMode,
+} from '../../bootstrap/state.js'
 import {
   createAutoMemCanUseTool,
   drainPendingExtraction,
@@ -46,6 +55,14 @@ export type AutoMemoryProjection = {
   files: string[]
 }
 
+export type AutoMemoryRuntimeState = {
+  autoMemoryEnabled: boolean
+  extractModeActive: boolean
+  isRemoteMode: boolean
+  isNonInteractiveSession: boolean
+  autoMemPath: string
+}
+
 let autoMemoryLifecycleInitialized = false
 
 export function unstable_initAutoMemoryLifecycle(): void {
@@ -59,6 +76,16 @@ export function unstable_initAutoMemoryLifecycle(): void {
 
 export async function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void> {
   await drainPendingExtraction(timeoutMs)
+}
+
+export function unstable_getAutoMemoryRuntimeState(): AutoMemoryRuntimeState {
+  return {
+    autoMemoryEnabled: isAutoMemoryEnabled(),
+    extractModeActive: isExtractModeActive(),
+    isRemoteMode: getIsRemoteMode(),
+    isNonInteractiveSession: getIsNonInteractiveSession(),
+    autoMemPath: getAutoMemPath(),
+  }
 }
 
 export async function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean> {

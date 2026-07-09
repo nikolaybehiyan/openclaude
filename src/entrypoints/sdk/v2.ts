@@ -1447,6 +1447,8 @@ type ApiMediaSummary = {
   pdf_document_blocks: number
   tool_use_blocks: number
   tool_result_blocks: number
+  tool_use_names: string[]
+  tool_result_names: string[]
   image_media_types: string[]
   document_media_types: string[]
 }
@@ -1685,12 +1687,16 @@ function summarizeApiMessages(messages: unknown[]): ApiMediaSummary {
     pdf_document_blocks: 0,
     tool_use_blocks: 0,
     tool_result_blocks: 0,
+    tool_use_names: [],
+    tool_result_names: [],
     image_media_types: [] as string[],
     document_media_types: [] as string[],
   }
   for (const message of messages) {
     collectApiContentSummary((message as { content?: unknown })?.content, summary)
   }
+  summary.tool_use_names = [...new Set(summary.tool_use_names)]
+  summary.tool_result_names = [...new Set(summary.tool_result_names)]
   summary.image_media_types = [...new Set(summary.image_media_types)]
   summary.document_media_types = [...new Set(summary.document_media_types)]
   return summary
@@ -1725,8 +1731,10 @@ function collectApiContentSummary(content: unknown, summary: ApiMediaSummary): v
       }
     } else if (type === 'tool_use') {
       summary.tool_use_blocks += 1
+      if (typeof record.name === 'string') summary.tool_use_names.push(record.name)
     } else if (type === 'tool_result') {
       summary.tool_result_blocks += 1
+      if (typeof record.name === 'string') summary.tool_result_names.push(record.name)
       collectApiContentSummary(record.content, summary)
     }
   }

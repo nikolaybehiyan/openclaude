@@ -115,6 +115,7 @@ export {
 export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
+  AutoMemoryRuntimeState,
   AutoMemoryCanUseToolOptions,
   AutoMemoryConsolidationPromptOptions,
 } from './memory.js'
@@ -123,6 +124,7 @@ export {
   unstable_createAutoMemoryCanUseTool,
   unstable_didAutoDreamFireSince,
   unstable_drainAutoMemoryExtraction,
+  unstable_getAutoMemoryRuntimeState,
   unstable_initAutoMemoryLifecycle,
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,
