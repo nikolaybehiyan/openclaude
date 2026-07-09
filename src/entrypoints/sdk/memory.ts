@@ -4,9 +4,11 @@ import { basename, isAbsolute, join, normalize, resolve, sep } from 'path'
 import { ENTRYPOINT_NAME } from '../../memdir/memdir.js'
 import { buildConsolidationPrompt } from '../../services/autoDream/consolidationPrompt.js'
 import { readLastConsolidatedAt } from '../../services/autoDream/consolidationLock.js'
+import { initAutoDream } from '../../services/autoDream/autoDream.js'
 import {
   createAutoMemCanUseTool,
   drainPendingExtraction,
+  initExtractMemories,
 } from '../../services/extractMemories/extractMemories.js'
 import { getDefaultAppState } from '../../state/AppStateStore.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
@@ -42,6 +44,17 @@ export type AutoMemoryProjection = {
   controls: string[]
   entries: AutoMemoryProjectionEntry[]
   files: string[]
+}
+
+let autoMemoryLifecycleInitialized = false
+
+export function unstable_initAutoMemoryLifecycle(): void {
+  if (autoMemoryLifecycleInitialized) {
+    return
+  }
+  initExtractMemories()
+  initAutoDream()
+  autoMemoryLifecycleInitialized = true
 }
 
 export async function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void> {

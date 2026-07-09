@@ -123,6 +123,7 @@ export {
   unstable_createAutoMemoryCanUseTool,
   unstable_didAutoDreamFireSince,
   unstable_drainAutoMemoryExtraction,
+  unstable_initAutoMemoryLifecycle,
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,
 } from './memory.js'

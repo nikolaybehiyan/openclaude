@@ -15,6 +15,7 @@ test('SDK memory boundary exposes native lifecycle helpers', async () => {
     'unstable_didAutoDreamFireSince',
     'unstable_buildAutoMemoryConsolidationPrompt',
     'unstable_createAutoMemoryCanUseTool',
+    'unstable_initAutoMemoryLifecycle',
     'unstable_readAutoMemoryProjectionDetails',
   ]) {
     expect(source).toContain(symbol)
