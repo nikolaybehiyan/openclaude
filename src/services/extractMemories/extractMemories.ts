@@ -28,6 +28,7 @@ import {
   isAutoMemPath,
 } from '../../memdir/paths.js'
 import type { Tool, ToolUseContext } from '../../Tool.js'
+import { getEmptyToolPermissionContext } from '../../Tool.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -35,6 +36,7 @@ import { FILE_WRITE_TOOL_NAME } from '../../tools/FileWriteTool/prompt.js'
 import { GLOB_TOOL_NAME } from '../../tools/GlobTool/prompt.js'
 import { GREP_TOOL_NAME } from '../../tools/GrepTool/prompt.js'
 import { REPL_TOOL_NAME } from '../../tools/REPLTool/constants.js'
+import { getTools } from '../../tools.js'
 import type {
   AssistantMessage,
   Message,
@@ -233,9 +235,15 @@ export function createAutoMemCanUseTool(memoryDir: string): CanUseToolFn {
 export function createAutoMemoryForkOptions(
   options: ToolUseContext['options'],
 ): ToolUseContext['options'] {
+  const toolsByName = new Map(options.tools.map(tool => [tool.name, tool]))
+  for (const tool of getTools(getEmptyToolPermissionContext())) {
+    if (AUTO_MEMORY_FORK_TOOL_NAMES.has(tool.name) && !toolsByName.has(tool.name)) {
+      toolsByName.set(tool.name, tool)
+    }
+  }
   return {
     ...options,
-    tools: options.tools.filter(tool => AUTO_MEMORY_FORK_TOOL_NAMES.has(tool.name)),
+    tools: [...toolsByName.values()].filter(tool => AUTO_MEMORY_FORK_TOOL_NAMES.has(tool.name)),
   }
 }
 

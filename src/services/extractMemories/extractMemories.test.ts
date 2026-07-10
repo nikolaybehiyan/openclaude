@@ -17,6 +17,7 @@ test('native memory forks expose only memory-safe tools', async () => {
   expect(extractSource).toContain('GREP_TOOL_NAME')
   expect(extractSource).toContain('GLOB_TOOL_NAME')
   expect(extractSource).not.toContain('  BASH_TOOL_NAME,\n]')
+  expect(extractSource).toContain('getTools(getEmptyToolPermissionContext())')
   expect(extractSource).toContain('options: createAutoMemoryForkOptions(cacheSafeParams.toolUseContext.options)')
   expect(dreamSource).toContain('createAutoMemoryForkOptions(cacheSafeParams.toolUseContext.options)')
 })
