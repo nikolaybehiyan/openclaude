@@ -119,6 +119,90 @@ export type ForkedAgentResult = {
   totalUsage: NonNullableUsage
 }
 
+const FORK_DEBUG_CHUNK_SIZE = 3500
+
+function logForkDebugText(label: string, text: string): void {
+  if (!text) {
+    logForDebugging(`${label}: <empty>`)
+    return
+  }
+  for (let offset = 0; offset < text.length; offset += FORK_DEBUG_CHUNK_SIZE) {
+    const chunk = text.slice(offset, offset + FORK_DEBUG_CHUNK_SIZE)
+    logForDebugging(`${label} [${offset}-${offset + chunk.length}/${text.length}]: ${chunk}`)
+  }
+}
+
+function safeDebugJSON(value: unknown): string {
+  try {
+    return JSON.stringify(value)
+  } catch {
+    return String(value)
+  }
+}
+
+function messageRole(message: Message): string {
+  return typeof message?.message?.role === 'string'
+    ? message.message.role
+    : typeof message?.role === 'string'
+      ? message.role
+      : ''
+}
+
+function messageContent(message: Message): unknown {
+  return message?.message?.content ?? message?.content
+}
+
+function collectForkDebugBlocks(content: unknown): Record<string, unknown>[] {
+  if (typeof content === 'string') {
+    return [{ type: 'text', text: content }]
+  }
+  if (!Array.isArray(content)) {
+    return []
+  }
+  const blocks: Record<string, unknown>[] = []
+  for (const block of content) {
+    if (!block || typeof block !== 'object') {
+      continue
+    }
+    const record = block as Record<string, unknown>
+    const type = typeof record.type === 'string' ? record.type : ''
+    if (type === 'text') {
+      blocks.push({ type, text: typeof record.text === 'string' ? record.text : '' })
+    } else if (type === 'tool_use') {
+      blocks.push({
+        type,
+        name: typeof record.name === 'string' ? record.name : '',
+        input: record.input,
+      })
+    } else if (type === 'tool_result') {
+      blocks.push({
+        type,
+        tool_use_id: typeof record.tool_use_id === 'string' ? record.tool_use_id : '',
+        is_error: record.is_error,
+        content: record.content,
+      })
+    } else {
+      blocks.push({ type })
+    }
+  }
+  return blocks
+}
+
+function logForkDebugMessage(prefix: string, message: Message): void {
+  const content = messageContent(message)
+  const blocks = collectForkDebugBlocks(content)
+  logForDebugging(
+    `${prefix}: type=${message?.type ?? ''} role=${messageRole(message)} uuid=${message?.uuid ?? ''} blocks=${blocks.map(block => block.type).join(',')}`,
+  )
+  for (const [index, block] of blocks.entries()) {
+    if (block.type === 'text') {
+      logForkDebugText(`${prefix} text[${index}]`, String(block.text ?? ''))
+    } else {
+      logForkDebugText(`${prefix} block[${index}]`, safeDebugJSON(block))
+    }
+  }
+}
+
 /**
  * Creates CacheSafeParams from REPLHookContext.
  * Use this helper when forking from a post-sampling hook context.
@@ -522,6 +606,21 @@ export async function runForkedAgent({
   // tool_uses are repaired downstream by ensureToolResultPairing in claude.ts,
   // same as the main thread — identical post-repair prefix keeps the cache hit.
   const initialMessages: Message[] = [...forkContextMessages, ...promptMessages]
+  logForDebugging(
+    `[fork-debug:${forkLabel}] querySource=${querySource} skipTranscript=${skipTranscript === true} maxTurns=${maxTurns ?? ''} parentTools=${toolUseContext.options.tools.map(tool => tool.name).join(',')} isolatedTools=${isolatedToolUseContext.options.tools.map(tool => tool.name).join(',')} forkContextMessages=${forkContextMessages.length} promptMessages=${promptMessages.length}`,
+  )
+  logForkDebugText(
+    `[fork-debug:${forkLabel}] systemPrompt`,
+    typeof systemPrompt === 'string' ? systemPrompt : safeDebugJSON(systemPrompt),
+  )
+  logForkDebugText(`[fork-debug:${forkLabel}] userContext`, safeDebugJSON(userContext))
+  logForkDebugText(`[fork-debug:${forkLabel}] systemContext`, safeDebugJSON(systemContext))
+  forkContextMessages.forEach((message, index) => {
+    logForkDebugMessage(`[fork-debug:${forkLabel}] context[${index}]`, message)
+  })
+  promptMessages.forEach((message, index) => {
+    logForkDebugMessage(`[fork-debug:${forkLabel}] prompt[${index}]`, message)
+  })
 
   // Generate agent ID and record initial messages for transcript
   // When skipTranscript is set, skip agent ID creation and all transcript I/O
@@ -573,6 +672,7 @@ export async function runForkedAgent({
       logForDebugging(
         `Forked agent [${forkLabel}] received message: type=${message.type}`,
       )
+      logForkDebugMessage(`[fork-debug:${forkLabel}] output`, message as Message)
 
       outputMessages.push(message as Message)
       onMessage?.(message as Message)
