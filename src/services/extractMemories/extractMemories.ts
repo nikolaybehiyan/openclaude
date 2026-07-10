@@ -27,7 +27,7 @@ import {
   isAutoMemoryEnabled,
   isAutoMemPath,
 } from '../../memdir/paths.js'
-import type { Tool } from '../../Tool.js'
+import type { Tool, ToolUseContext } from '../../Tool.js'
 import { BASH_TOOL_NAME } from '../../tools/BashTool/toolName.js'
 import { FILE_EDIT_TOOL_NAME } from '../../tools/FileEditTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
@@ -66,6 +66,15 @@ const teamMemPaths = feature('TEAMMEM')
   ? (require('../../memdir/teamMemPaths.js') as typeof import('../../memdir/teamMemPaths.js'))
   : null
 /* eslint-enable @typescript-eslint/no-require-imports */
+
+const AUTO_MEMORY_FORK_TOOL_NAMES = new Set([
+  FILE_READ_TOOL_NAME,
+  GREP_TOOL_NAME,
+  GLOB_TOOL_NAME,
+  FILE_EDIT_TOOL_NAME,
+  FILE_WRITE_TOOL_NAME,
+  REPL_TOOL_NAME,
+])
 
 // ============================================================================
 // Helpers
@@ -218,6 +227,15 @@ export function createAutoMemCanUseTool(memoryDir: string): CanUseToolFn {
       tool,
       `only ${FILE_READ_TOOL_NAME}, ${GREP_TOOL_NAME}, ${GLOB_TOOL_NAME}, read-only ${BASH_TOOL_NAME}, and ${FILE_EDIT_TOOL_NAME}/${FILE_WRITE_TOOL_NAME} within ${memoryDir} are allowed`,
     )
+  }
+}
+
+export function createAutoMemoryForkOptions(
+  options: ToolUseContext['options'],
+): ToolUseContext['options'] {
+  return {
+    ...options,
+    tools: options.tools.filter(tool => AUTO_MEMORY_FORK_TOOL_NAMES.has(tool.name)),
   }
 }
 
@@ -418,6 +436,9 @@ export function initExtractMemories(): void {
         canUseTool,
         querySource: 'extract_memories',
         forkLabel: 'extract_memories',
+        overrides: {
+          options: createAutoMemoryForkOptions(cacheSafeParams.toolUseContext.options),
+        },
         // The extractMemories subagent does not need to record to transcript.
         // Doing so can create race conditions with the main thread.
         skipTranscript: true,

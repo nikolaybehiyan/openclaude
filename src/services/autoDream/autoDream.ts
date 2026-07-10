@@ -33,7 +33,10 @@ import {
   getIsRemoteMode,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { createAutoMemCanUseTool } from '../extractMemories/extractMemories.js'
+import {
+  createAutoMemCanUseTool,
+  createAutoMemoryForkOptions,
+} from '../extractMemories/extractMemories.js'
 import { buildConsolidationPrompt } from './consolidationPrompt.js'
 import {
   readLastConsolidatedAt,
@@ -220,15 +223,19 @@ export function initAutoDream(): void {
 Sessions since last consolidation (${sessionIds.length}):
 ${sessionIds.map(id => `- ${id}`).join('\n')}`
       const prompt = buildConsolidationPrompt(memoryRoot, transcriptDir, extra)
+      const cacheSafeParams = createCacheSafeParams(context)
 
       const result = await runForkedAgent({
         promptMessages: [createUserMessage({ content: prompt })],
-        cacheSafeParams: createCacheSafeParams(context),
+        cacheSafeParams,
         canUseTool: createAutoMemCanUseTool(memoryRoot),
         querySource: 'auto_dream',
         forkLabel: 'auto_dream',
         skipTranscript: true,
-        overrides: { abortController },
+        overrides: {
+          abortController,
+          options: createAutoMemoryForkOptions(cacheSafeParams.toolUseContext.options),
+        },
         onMessage: makeDreamProgressWatcher(taskId, setAppState),
       })
 
