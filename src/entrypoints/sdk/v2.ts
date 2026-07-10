@@ -91,7 +91,6 @@ import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
 import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
-import { registerPostSamplingHook } from '../../utils/hooks/postSamplingHooks.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
@@ -950,7 +949,6 @@ function createEngineFromOptions(
   }
   installFileReadAttachmentSupplementalContent()
   installBridgeDiagnostics()
-  installSdkBackgroundForkToolIsolation()
   configureSessionEventStore(options)
   applySessionSettingSources(options.settingSources)
   applySessionFlagSettings(options.settings)
@@ -1043,45 +1041,6 @@ function createEngineFromOptions(
   const engine = new QueryEngine(engineConfig)
 
   return { engine, appStateStore, abortController: ac }
-}
-
-let sdkBackgroundForkToolIsolationInstalled = false
-
-function installSdkBackgroundForkToolIsolation(): void {
-  if (sdkBackgroundForkToolIsolationInstalled) {
-    return
-  }
-  sdkBackgroundForkToolIsolationInstalled = true
-  registerPostSamplingHook(context => {
-    if (context.querySource !== 'sdk' || !isTerminalAssistantMessage(context.messages.at(-1))) {
-      return
-    }
-    const tools = context.toolUseContext.options.tools
-    const forkSafeTools = tools.filter(tool => tool.isMcp !== true)
-    if (forkSafeTools.length !== tools.length) {
-      context.toolUseContext.options.tools = forkSafeTools
-    }
-  })
-}
-
-function isTerminalAssistantMessage(message: unknown): boolean {
-  if (!message || typeof message !== 'object' || Array.isArray(message)) {
-    return false
-  }
-  const record = message as Record<string, unknown>
-  if (record.type !== 'assistant') {
-    return false
-  }
-  const content = (record.message as Record<string, unknown> | undefined)?.content
-  if (!Array.isArray(content)) {
-    return true
-  }
-  return !content.some(block => (
-    block &&
-    typeof block === 'object' &&
-    !Array.isArray(block) &&
-    (block as Record<string, unknown>).type === 'tool_use'
-  ))
 }
 
 function normalizeSDKSyncedMessages(messages: any[]): any[] {

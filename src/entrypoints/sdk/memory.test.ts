@@ -43,12 +43,3 @@ test('SDK memory tool permission uses explicit hydrated memory dir for writes', 
   expect(source).toContain('FILE_EDIT_TOOL_NAME')
   expect(source).toContain('FILE_WRITE_TOOL_NAME')
 })
-
-test('SDK native memory forks do not inherit SDK MCP runtime tools', async () => {
-  const source = await readFile(sdkV2Path, 'utf8')
-
-  expect(source).toContain('installSdkBackgroundForkToolIsolation()')
-  expect(source).toContain("context.querySource !== 'sdk'")
-  expect(source).toContain('isTerminalAssistantMessage')
-  expect(source).toContain('tool.isMcp !== true')
-})
