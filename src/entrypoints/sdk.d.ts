@@ -665,6 +665,8 @@ export function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<s
 
 export function unstable_readAutoMemoryProjectionDetails(memoryRoot: string): Promise<AutoMemoryProjection>
 
+export function unstable_shutdownRuntime(): Promise<void>
+
 /**
  * Scoped MCP server config with session scope.
  * Returned by createSdkMcpServer() for use with mcpServers option.

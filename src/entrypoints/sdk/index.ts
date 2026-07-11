@@ -129,6 +129,7 @@ export {
   unstable_readAutoMemoryProjection,
   unstable_readAutoMemoryProjectionDetails,
 } from './memory.js'
+export { unstable_shutdownRuntime } from './lifecycle.js'
 
 // ============================================================================
 // tool() — factory function for creating MCP tool definitions
