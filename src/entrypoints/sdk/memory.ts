@@ -273,11 +273,6 @@ function orderTopicFiles(index: string, files: string[]): string[] {
       ordered.push(link)
     }
   }
-  for (const file of files) {
-    if (!ordered.includes(file)) {
-      ordered.push(file)
-    }
-  }
   return ordered
 }
 

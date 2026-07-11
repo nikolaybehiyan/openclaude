@@ -32,6 +32,7 @@ test('SDK memory projection reads topic files and keeps MEMORY.md as ordering on
   expect(source).toContain('memoryBlocks.push(content)')
   expect(source).toContain('const controls = entries.map(entry => entry.text)')
   expect(source).not.toContain('controls.map((text, index)')
+  expect(source).not.toContain('for (const file of files)')
 })
 
 test('SDK memory tool permission uses explicit hydrated memory dir for writes', async () => {
