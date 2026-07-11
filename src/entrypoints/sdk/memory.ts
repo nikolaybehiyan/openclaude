@@ -15,6 +15,7 @@ import {
   getIsRemoteMode,
 } from '../../bootstrap/state.js'
 import {
+  createAutoMemoryForkOptions,
   createAutoMemCanUseTool,
   drainPendingExtraction,
   initExtractMemories,
@@ -150,6 +151,15 @@ export function unstable_createAutoMemoryCanUseTool(
       updatedInput: 'updatedInput' in result ? result.updatedInput : input,
     }
   }
+}
+
+export function unstable_getAutoMemoryToolNames(): string[] {
+  const tools = getTools(buildPermissionContext({
+    cwd: process.cwd(),
+    permissionMode: 'acceptEdits',
+  }))
+  const context = createAutoMemoryToolUseContext(tools)
+  return createAutoMemoryForkOptions(context.options).tools.map(tool => tool.name)
 }
 
 function isMemoryWriteTool(name: string): boolean {

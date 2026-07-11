@@ -13,6 +13,7 @@ test('SDK memory boundary exposes native lifecycle helpers', async () => {
 
   for (const symbol of [
     'unstable_drainAutoMemoryExtraction',
+    'unstable_getAutoMemoryToolNames',
     'unstable_didAutoDreamFireSince',
     'unstable_buildAutoMemoryConsolidationPrompt',
     'unstable_createAutoMemoryCanUseTool',
@@ -22,6 +23,13 @@ test('SDK memory boundary exposes native lifecycle helpers', async () => {
     expect(source).toContain(symbol)
     expect(index).toContain(symbol)
   }
+})
+
+test('SDK memory boundary reuses the native extraction tool set', async () => {
+  const source = await readFile(sourcePath, 'utf8')
+
+  expect(source).toContain('createAutoMemoryForkOptions(context.options)')
+  expect(source).not.toContain("return ['Read'")
 })
 
 test('SDK memory projection reads topic files and keeps MEMORY.md as ordering only', async () => {

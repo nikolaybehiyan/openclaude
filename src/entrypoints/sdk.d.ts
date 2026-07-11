@@ -659,6 +659,8 @@ export function unstable_initAutoMemoryLifecycle(): void
 
 export function unstable_drainAutoMemoryExtraction(timeoutMs?: number): Promise<void>
 
+export function unstable_getAutoMemoryToolNames(): string[]
+
 export function unstable_getAutoMemoryRuntimeState(): AutoMemoryRuntimeState
 
 export function unstable_readAutoMemoryProjection(memoryRoot: string): Promise<string>

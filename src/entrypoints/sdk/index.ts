@@ -124,6 +124,7 @@ export {
   unstable_createAutoMemoryCanUseTool,
   unstable_didAutoDreamFireSince,
   unstable_drainAutoMemoryExtraction,
+  unstable_getAutoMemoryToolNames,
   unstable_getAutoMemoryRuntimeState,
   unstable_initAutoMemoryLifecycle,
   unstable_readAutoMemoryProjection,
