@@ -1,6 +1,13 @@
 import { clearAllCaches } from '../../utils/plugins/cacheUtils.js'
 import { installPluginsForHeadless } from '../../utils/plugins/headlessPluginInstall.js'
 import { loadAllPlugins } from '../../utils/plugins/pluginLoader.js'
+import { updatePluginsForMarketplaces } from '../../utils/plugins/pluginAutoupdate.js'
+import {
+  loadKnownMarketplacesConfig,
+  refreshMarketplace,
+} from '../../utils/plugins/marketplaceManager.js'
+import { logForDebugging } from '../../utils/debug.js'
+import { errorMessage } from '../../utils/errors.js'
 import type { MarketplaceSource } from '../../utils/plugins/schemas.js'
 import {
   getSettingsForSource,
@@ -14,6 +21,12 @@ export type SDKPluginMarketplaceIntent = {
   source: SDKPluginMarketplaceSource
   installLocation?: string
   autoUpdate?: boolean
+  /**
+   * Host-owned content revision for this marketplace. It is deliberately not
+   * written to OpenClaude settings: it only tells the SDK when an already
+   * materialized source must be refreshed between turns.
+   */
+  revision?: string
 }
 
 export type SDKPluginRuntimeIntent = {
@@ -94,7 +107,19 @@ function validatePluginRuntimeIntent(intent: SDKPluginRuntimeIntent): void {
         `plugin runtime marketplace ${JSON.stringify(name)} requires a source`,
       )
     }
+    if (marketplace.revision !== undefined && !marketplace.revision.trim()) {
+      throw new Error(
+        `plugin runtime marketplace ${JSON.stringify(name)} revision must be non-empty`,
+      )
+    }
   }
+}
+
+function settingsMarketplaceIntent(
+  marketplace: SDKPluginMarketplaceIntent,
+): Omit<SDKPluginMarketplaceIntent, 'revision'> {
+  const { revision: _revision, ...settingsIntent } = marketplace
+  return settingsIntent
 }
 
 function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
@@ -115,7 +140,14 @@ function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
   }
 
   if (intent.marketplaces !== undefined) {
-    const desired = sortedRecord(intent.marketplaces)
+    const desired = sortedRecord(
+      Object.fromEntries(
+        Object.entries(intent.marketplaces).map(([name, marketplace]) => [
+          name,
+          settingsMarketplaceIntent(marketplace),
+        ]),
+      ),
+    )
     if (stableJSON(current.extraKnownMarketplaces ?? {}) !== stableJSON(desired)) {
       patch.extraKnownMarketplaces = replacementPatch(
         current.extraKnownMarketplaces,
@@ -136,6 +168,62 @@ function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
   return true
 }
 
+const preparedMarketplaceRevisions = new Map<string, Record<string, string>>()
+
+function pluginRuntimeStateKey(): string {
+  return process.env.CLAUDE_CONFIG_DIR?.trim() || '<default>'
+}
+
+export function pluginRuntimeMarketplacesToRefresh(
+  previousRevisions: Readonly<Record<string, string>>,
+  materializedBeforePrepare: ReadonlySet<string>,
+  marketplaces: Readonly<Record<string, SDKPluginMarketplaceIntent>>,
+): string[] {
+  const names: string[] = []
+  for (const [name, marketplace] of Object.entries(marketplaces)) {
+    const revision = marketplace.revision?.trim()
+    if (!revision) continue
+    const previous = previousRevisions[name]
+    if (previous !== undefined) {
+      if (previous !== revision) names.push(name)
+      continue
+    }
+    // A missing marketplace will be cloned at its current revision by the
+    // normal headless reconciler. Existing auto-update marketplaces need one
+    // startup refresh because their cache may predate this SDK host process.
+    if (marketplace.autoUpdate && materializedBeforePrepare.has(name)) {
+      names.push(name)
+    }
+  }
+  return names.sort((left, right) => left.localeCompare(right))
+}
+
+async function refreshPluginRuntimeMarketplaces(
+  names: readonly string[],
+): Promise<{ refreshed: Set<string>; errorCount: number }> {
+  const refreshed = new Set<string>()
+  let errorCount = 0
+  for (const name of names) {
+    try {
+      await refreshMarketplace(name, undefined, {
+        disableCredentialHelper: true,
+      })
+      refreshed.add(name.toLowerCase())
+    } catch (error) {
+      errorCount += 1
+      logForDebugging(
+        `SDK plugin runtime failed to refresh marketplace ${name}: ${errorMessage(error)}`,
+        { level: 'warn' },
+      )
+    }
+  }
+  if (refreshed.size > 0) {
+    await updatePluginsForMarketplaces(refreshed)
+    clearAllCaches()
+  }
+  return { refreshed, errorCount }
+}
+
 /**
  * Reconcile marketplace seeds and enabled plugin bundles for an SDK host.
  *
@@ -147,11 +235,38 @@ function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
 export async function unstable_preparePluginRuntime(
   intent?: SDKPluginRuntimeIntent,
 ): Promise<SDKPluginPreparationResult> {
+  const stateKey = pluginRuntimeStateKey()
+  const previousRevisions = preparedMarketplaceRevisions.get(stateKey) ?? {}
+  const materializedBeforePrepare = new Set(
+    Object.keys(await loadKnownMarketplacesConfig()),
+  )
   const intentChanged = intent ? applyPluginRuntimeIntent(intent) : false
   const marketplaceChanged = await installPluginsForHeadless()
   if (marketplaceChanged) {
     clearAllCaches()
   }
+
+  const marketplaces = intent?.marketplaces ?? {}
+  const refreshNames = pluginRuntimeMarketplacesToRefresh(
+    previousRevisions,
+    materializedBeforePrepare,
+    marketplaces,
+  )
+  const refresh = await refreshPluginRuntimeMarketplaces(refreshNames)
+  const nextRevisions: Record<string, string> = {}
+  for (const [name, marketplace] of Object.entries(marketplaces)) {
+    const revision = marketplace.revision?.trim()
+    if (!revision) continue
+    const refreshRequired = refreshNames.includes(name)
+    if (!refreshRequired || refresh.refreshed.has(name.toLowerCase())) {
+      nextRevisions[name] = revision
+    } else if (previousRevisions[name] !== undefined) {
+      // Keep the old revision so a transient refresh failure is retried on the
+      // next turn instead of silently accepting stale plugin content.
+      nextRevisions[name] = previousRevisions[name]!
+    }
+  }
+  preparedMarketplaceRevisions.set(stateKey, nextRevisions)
 
   // The full loader is deliberately owned by OpenClaude. It resolves source
   // policy, installs/caches enabled bundles, and warms the cache-only readers
@@ -159,10 +274,11 @@ export async function unstable_preparePluginRuntime(
   // declare intent; they never reproduce plugin installation semantics.
   const loaded = await loadAllPlugins()
   return {
-    changed: intentChanged || marketplaceChanged,
+    changed:
+      intentChanged || marketplaceChanged || refresh.refreshed.size > 0,
     ...(intent?.revision ? { revision: intent.revision } : {}),
     enabledPluginCount: loaded.enabled.length,
     disabledPluginCount: loaded.disabled.length,
-    errorCount: loaded.errors.length,
+    errorCount: loaded.errors.length + refresh.errorCount,
   }
 }

@@ -138,6 +138,7 @@ export type SDKPluginMarketplaceIntent = {
   source: SDKPluginMarketplaceSource
   installLocation?: string
   autoUpdate?: boolean
+  revision?: string
 }
 
 export type SDKPluginRuntimeIntent = {
