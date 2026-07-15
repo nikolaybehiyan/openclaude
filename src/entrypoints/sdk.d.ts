@@ -106,6 +106,122 @@ export type RewindFilesResult = {
   deletions?: number
 }
 
+export type SDKPluginPreparationResult = {
+  changed: boolean
+  revision?: string
+  enabledPluginCount: number
+  disabledPluginCount: number
+  errorCount: number
+}
+
+export type SDKPluginMarketplaceSource =
+  | { source: 'url'; url: string; headers?: Record<string, string> }
+  | { source: 'github'; repo: string; ref?: string; path?: string; sparsePaths?: string[] }
+  | { source: 'git'; url: string; ref?: string; path?: string; sparsePaths?: string[] }
+  | { source: 'npm'; package: string }
+  | { source: 'file'; path: string }
+  | { source: 'directory'; path: string }
+  | {
+      source: 'settings'
+      name: string
+      plugins: Array<{
+        name: string
+        source: string | Record<string, unknown>
+        description?: string
+        version?: string
+        strict?: boolean
+      }>
+      owner?: { name: string; email?: string }
+    }
+
+export type SDKPluginMarketplaceIntent = {
+  source: SDKPluginMarketplaceSource
+  installLocation?: string
+  autoUpdate?: boolean
+}
+
+export type SDKPluginRuntimeIntent = {
+  revision?: string
+  enabledPlugins?: Record<string, boolean>
+  marketplaces?: Record<string, SDKPluginMarketplaceIntent>
+}
+
+/**
+ * Apply declarative marketplace/plugin intent and let OpenClaude reconcile,
+ * install, cache, and load all bundle capabilities between SDK turns.
+ */
+export function unstable_preparePluginRuntime(
+  intent?: SDKPluginRuntimeIntent,
+): Promise<SDKPluginPreparationResult>
+
+export type SDKMessagesContentBlock = Record<string, unknown>
+
+export type SDKMessagesMessageParam = {
+  role: 'user' | 'assistant'
+  content: string | SDKMessagesContentBlock[]
+}
+
+export type SDKMessagesMcpServerParam = {
+  type?: 'url'
+  name: string
+  url: string
+}
+
+export type SDKMessagesCreateParams = {
+  model: string
+  max_tokens: number
+  messages: SDKMessagesMessageParam[]
+  system?: string | SDKMessagesContentBlock[]
+  tools?: Array<Record<string, unknown>>
+  mcp_servers?: SDKMessagesMcpServerParam[]
+  stream?: boolean
+  temperature?: number
+  top_p?: number
+  metadata?: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export type SDKResolvedMcpServer = {
+  name: string
+  url: string
+  sourceUrl?: string
+  transportType?: 'streamable-http' | 'sse'
+  allowedTools?: string[]
+  headers?: Record<string, string>
+}
+
+export type SDKMessagesProviderOverride = {
+  model: string
+  baseURL: string
+  apiKey: string
+  apiFormat?: 'chat_completions'
+}
+
+export type SDKMessagesRuntimeOptions = {
+  providerOverride: SDKMessagesProviderOverride
+  systemPrompt: string
+  resolvedMcpServers?: SDKResolvedMcpServer[]
+  signal?: AbortSignal
+  cwd?: string
+}
+
+export type SDKMessagesResponse = {
+  id: string
+  type: 'message'
+  role: 'assistant'
+  content: SDKMessagesContentBlock[]
+  model: string
+  stop_reason: string | null
+  stop_sequence: string | null
+  usage: Record<string, unknown>
+  [key: string]: unknown
+}
+
+export function unstable_messagesCreate(
+  params: SDKMessagesCreateParams,
+  options: SDKMessagesRuntimeOptions,
+): Promise<SDKMessagesResponse>
+
 export type McpServerStatus = {
   name: string
   status: 'connected' | 'failed' | 'needs-auth' | 'pending' | 'disabled'
@@ -390,6 +506,12 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** Bound the number of model/tool turns for this SDK session. */
+  maxTurns?: number
+  /** Route this SDK session through a specific OpenAI-compatible provider. */
+  providerOverride?: { model: string; baseURL: string; apiKey: string }
+  /** Persist this SDK session transcript. Defaults to the normal OpenClaude policy. */
+  persistSession?: boolean
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
@@ -433,6 +555,8 @@ export interface SDKSession {
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
   updateOptions(options: SDKSessionUpdateOptions): void
+  /** Reload filesystem-backed skills before the next turn without replacing session history. */
+  reloadSkills(): void
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   getMessages(): SDKMessage[]
@@ -594,12 +718,16 @@ export type SdkMcpSSEConfig = {
   type: "sse"
   url: string
   headers?: Record<string, string>
+  /** Limit this session-scoped server to the named upstream MCP tools. */
+  toolAllowlist?: string[]
 }
 
 export type SdkMcpHttpConfig = {
   type: "http"
   url: string
   headers?: Record<string, string>
+  /** Limit this session-scoped server to the named upstream MCP tools. */
+  toolAllowlist?: string[]
 }
 
 export type SdkMcpSdkConfig = {
@@ -607,6 +735,31 @@ export type SdkMcpSdkConfig = {
   name: string
   /** In-process tool definitions created via the tool() helper. */
   tools?: SdkMcpToolDefinition[]
+}
+
+export type SdkClientMcpToolDefinition<Schema = any> = {
+  name: string
+  description: string
+  inputSchema: Schema
+  annotations?: any
+  permissionBehavior?: 'allow' | 'ask' | 'deny'
+  searchHint?: string
+  alwaysLoad?: boolean
+  deferInputValidationToHandler?: boolean
+  _meta?: Record<string, unknown>
+}
+
+export type SdkClientMcpCall = {
+  serverName: string
+  toolName: string
+  args: any
+  extra: unknown
+}
+
+export type SdkClientMcpServerOptions = {
+  name: string
+  tools: SdkClientMcpToolDefinition[]
+  callTool: (call: SdkClientMcpCall) => Promise<any>
 }
 
 export type SdkMcpServerConfig = SdkMcpStdioConfig | SdkMcpSSEConfig | SdkMcpHttpConfig | SdkMcpSdkConfig
@@ -699,3 +852,9 @@ export type SdkScopedMcpServerConfig = SdkMcpServerConfig & {
  * ```
  */
 export function createSdkMcpServer(config: SdkMcpServerConfig): SdkScopedMcpServerConfig
+
+/**
+ * Creates a session-scoped MCP server whose execution is delegated to a
+ * client host while OpenClaude retains tool selection and the agent loop.
+ */
+export function createSdkClientMcpServer(options: SdkClientMcpServerOptions): SdkScopedMcpServerConfig

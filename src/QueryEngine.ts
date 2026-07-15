@@ -143,6 +143,10 @@ export type QueryEngineConfig = {
   thinkingConfig?: ThinkingConfig
   maxOutputTokensOverride?: number
   temperatureOverride?: number
+  /** Per-session provider route used by SDK hosts. */
+  providerOverride?: { model: string; baseURL: string; apiKey: string }
+  /** Override transcript persistence for isolated one-shot SDK calls. */
+  persistSession?: boolean
   maxTurns?: number
   maxBudgetUsd?: number
   taskBudget?: { total: number }
@@ -235,11 +239,13 @@ export class QueryEngine {
       agents = [],
       setSDKStatus,
       orphanedPermission,
+      providerOverride,
+      persistSession: persistSessionOverride,
     } = this.config
 
     this.discoveredSkillNames.clear()
     setCwd(cwd)
-    const persistSession = !isSessionPersistenceDisabled()
+    const persistSession = persistSessionOverride ?? !isSessionPersistenceDisabled()
     const startTime = Date.now()
 
     // Wrap canUseTool to track permission denials
@@ -364,6 +370,7 @@ export class QueryEngine {
         agentDefinitions: { activeAgents: agents, allAgents: agents },
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
+        providerOverride,
       },
       getAppState,
       setAppState,
@@ -512,6 +519,7 @@ export class QueryEngine {
         theme: resolveThemeSetting(getGlobalConfig().theme),
         agentDefinitions: { activeAgents: agents, allAgents: agents },
         maxBudgetUsd,
+        providerOverride,
       },
       getAppState,
       setAppState,

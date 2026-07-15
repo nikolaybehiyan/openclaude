@@ -251,10 +251,15 @@ export async function connectSdkMcpServers(
         }
       }
 
-      // Convert SDK config to internal format with session scope
+      const sdkConfig = config as Record<string, unknown>
+      const toolAllowlist = sdkMcpToolAllowlist(sdkConfig.toolAllowlist)
+
+      // Convert SDK config to internal format with session scope. SDK-only
+      // projection fields must not leak into the transport configuration.
       // Note: 'session' is SDK-specific, not part of internal ConfigScope
+      const { toolAllowlist: _toolAllowlist, ...transportConfig } = sdkConfig
       const scopedConfig = {
-        ...(config as Record<string, unknown>),
+        ...transportConfig,
         scope: 'session',
       } as const
 
@@ -381,7 +386,7 @@ export async function connectSdkMcpServers(
         // If connected, fetch tools
         if (client.type === 'connected') {
           const serverTools = await fetchToolsForClient(client)
-          return { client, tools: serverTools }
+          return { client, tools: filterSdkMcpToolsByAllowlist(serverTools, toolAllowlist) }
         }
 
         // Return failed/pending client with no tools
@@ -417,6 +422,31 @@ export async function connectSdkMcpServers(
   }
 
   return { clients, tools }
+}
+
+function sdkMcpToolAllowlist(value: unknown): Set<string> | undefined {
+  if (value === undefined) return undefined
+  if (!Array.isArray(value)) {
+    throw new Error('SDK MCP toolAllowlist must be an array of non-empty strings')
+  }
+  const names = value.map(item => {
+    if (typeof item !== 'string' || item.trim() === '') {
+      throw new Error('SDK MCP toolAllowlist must contain only non-empty strings')
+    }
+    return item.trim()
+  })
+  return new Set(names)
+}
+
+export function filterSdkMcpToolsByAllowlist(
+  tools: Tool[],
+  allowlist: Set<string> | undefined,
+): Tool[] {
+  if (!allowlist) return tools
+  return tools.filter(tool => {
+    const upstreamName = tool.mcpInfo?.toolName
+    return typeof upstreamName === 'string' && allowlist.has(upstreamName)
+  })
 }
 
 // ============================================================================

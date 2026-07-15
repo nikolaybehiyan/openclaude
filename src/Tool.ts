@@ -468,6 +468,12 @@ export type Tool<
    * or unprefixed (CLAUDE_AGENT_SDK_MCP_NO_PREFIX mode).
    */
   mcpInfo?: { serverName: string; toolName: string }
+  /**
+   * MCP tool-definition metadata used by MCP Apps hosts for resource
+   * discovery (for example ui/resourceUri). It remains internal and is not
+   * projected into the provider tool schema.
+   */
+  readonly _meta?: Record<string, unknown>
   readonly name: string
   /**
    * Maximum size in characters for tool result before it gets persisted to disk.

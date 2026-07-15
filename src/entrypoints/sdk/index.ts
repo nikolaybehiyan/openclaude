@@ -113,6 +113,13 @@ export {
   unstable_v2_generateSessionTitle,
 } from './v2.js'
 export type {
+  SDKPluginMarketplaceIntent,
+  SDKPluginMarketplaceSource,
+  SDKPluginPreparationResult,
+  SDKPluginRuntimeIntent,
+} from './plugins.js'
+export { unstable_preparePluginRuntime } from './plugins.js'
+export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
   AutoMemoryRuntimeState,
@@ -131,6 +138,17 @@ export {
   unstable_readAutoMemoryProjectionDetails,
 } from './memory.js'
 export { unstable_shutdownRuntime } from './lifecycle.js'
+export type {
+  SDKMessagesContentBlock,
+  SDKMessagesCreateParams,
+  SDKMessagesMcpServerParam,
+  SDKMessagesMessageParam,
+  SDKMessagesProviderOverride,
+  SDKMessagesResponse,
+  SDKMessagesRuntimeOptions,
+  SDKResolvedMcpServer,
+} from './messages.js'
+export { unstable_messagesCreate } from './messages.js'
 
 // ============================================================================
 // tool() — factory function for creating MCP tool definitions
@@ -200,12 +218,16 @@ export type SdkMcpSSEConfig = {
   type: 'sse'
   url: string
   headers?: Record<string, string>
+  /** Limit this session-scoped server to the named upstream MCP tools. */
+  toolAllowlist?: string[]
 }
 
 export type SdkMcpHttpConfig = {
   type: 'http'
   url: string
   headers?: Record<string, string>
+  /** Limit this session-scoped server to the named upstream MCP tools. */
+  toolAllowlist?: string[]
 }
 
 export type SdkMcpSdkConfig = {
@@ -213,6 +235,32 @@ export type SdkMcpSdkConfig = {
   name: string
   /** In-process tool definitions created via the tool() helper. */
   tools?: import('./v2.js').SdkMcpToolDefinition[]
+}
+
+/** A tool hosted by a client such as Electron rather than this process. */
+export type SdkClientMcpToolDefinition<Schema = any> = {
+  name: string
+  description: string
+  inputSchema: Schema
+  annotations?: ToolAnnotations
+  permissionBehavior?: 'allow' | 'ask' | 'deny'
+  searchHint?: string
+  alwaysLoad?: boolean
+  deferInputValidationToHandler?: boolean
+  _meta?: Record<string, unknown>
+}
+
+export type SdkClientMcpCall = {
+  serverName: string
+  toolName: string
+  args: any
+  extra: unknown
+}
+
+export type SdkClientMcpServerOptions = {
+  name: string
+  tools: SdkClientMcpToolDefinition[]
+  callTool: (call: SdkClientMcpCall) => Promise<CallToolResult>
 }
 
 export type SdkMcpServerConfig = SdkMcpStdioConfig | SdkMcpSSEConfig | SdkMcpHttpConfig | SdkMcpSdkConfig
@@ -254,6 +302,57 @@ export function createSdkMcpServer(config: SdkMcpServerConfig): SdkScopedMcpServ
     ...config,
     scope: 'session' as const,
   }
+}
+
+/**
+ * Create a session-scoped MCP server whose tools are executed by an external
+ * client host. OpenClaude still owns tool selection and the agent loop; the
+ * supplied callback is only the execution transport. This is suitable for
+ * Electron-hosted DXT/MCPB servers, browser-hosted tools, and remote workers.
+ */
+export function createSdkClientMcpServer(options: SdkClientMcpServerOptions): SdkScopedMcpServerConfig {
+  const name = options.name.trim()
+  if (!name) {
+    throw new Error('createSdkClientMcpServer: name must be non-empty')
+  }
+  if (typeof options.callTool !== 'function') {
+    throw new Error('createSdkClientMcpServer: callTool must be a function')
+  }
+  const seen = new Set<string>()
+  const tools = options.tools.map(definition => {
+    const toolName = definition.name.trim()
+    if (!toolName) {
+      throw new Error(`createSdkClientMcpServer(${name}): tool name must be non-empty`)
+    }
+    if (seen.has(toolName)) {
+      throw new Error(`createSdkClientMcpServer(${name}): duplicate tool ${toolName}`)
+    }
+    seen.add(toolName)
+    return tool(
+      toolName,
+      definition.description,
+      definition.inputSchema,
+      async (args, extra) => options.callTool({
+        serverName: name,
+        toolName,
+        args,
+        extra,
+      }),
+      {
+        annotations: definition.annotations,
+        permissionBehavior: definition.permissionBehavior,
+        searchHint: definition.searchHint,
+        alwaysLoad: definition.alwaysLoad,
+        deferInputValidationToHandler: definition.deferInputValidationToHandler,
+        _meta: definition._meta,
+      },
+    )
+  })
+  return createSdkMcpServer({
+    type: 'sdk',
+    name,
+    tools,
+  })
 }
 
 // ============================================================================

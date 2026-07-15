@@ -1816,6 +1816,7 @@ export const fetchToolsForClient = memoizeWithLRU(
             name: skipPrefix ? tool.name : fullyQualifiedName,
             mcpInfo: { serverName: client.name, toolName: tool.name },
             isMcp: true,
+            ...(tool._meta ? { _meta: tool._meta } : {}),
             // Collapse whitespace: _meta is open to external MCP servers, and
             // a newline here would inject orphan lines into the deferred-tool
             // list (formatDeferredToolLine joins on '\n').

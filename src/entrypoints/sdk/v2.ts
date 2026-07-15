@@ -91,6 +91,8 @@ import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
 import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
+import { clearCommandsCache } from '../../commands.js'
+import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
@@ -155,6 +157,12 @@ export type SDKSessionOptions = {
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
   temperature?: number
+  /** Bound the number of model/tool turns for this SDK session. */
+  maxTurns?: number
+  /** Route this SDK session through a specific OpenAI-compatible provider. */
+  providerOverride?: { model: string; baseURL: string; apiKey: string }
+  /** Persist this SDK session transcript. Defaults to the normal OpenClaude policy. */
+  persistSession?: boolean
   /** In-memory flag settings for this session. Used by managed/headless hosts. */
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
@@ -234,6 +242,8 @@ export interface SDKSession {
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
   updateOptions(options: SDKSessionUpdateOptions): void
+  /** Reload filesystem-backed skills before the next turn without replacing session history. */
+  reloadSkills(): void
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   /** Return all messages accumulated so far in this session. */
@@ -458,6 +468,11 @@ class SDKSessionImpl implements SDKSession {
     if (permissionContextChanged || mcpServersChanged) {
       this.applyPermissionContextFromOptions()
     }
+  }
+
+  reloadSkills(): void {
+    clearCommandsCache()
+    resetSentSkillNames()
   }
 
   async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
@@ -1034,6 +1049,9 @@ function createEngineFromOptions(
     thinkingConfig,
     maxOutputTokensOverride: options.maxOutputTokens,
     temperatureOverride: options.temperature,
+    maxTurns: options.maxTurns,
+    providerOverride: options.providerOverride,
+    persistSession: options.persistSession,
     includePartialMessages: options.includePartialMessages ?? false,
     ...(initialMessages ? { initialMessages } : {}),
   }

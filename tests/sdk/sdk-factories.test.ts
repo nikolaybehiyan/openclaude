@@ -2,6 +2,7 @@ import { describe, test, expect } from 'bun:test'
 import {
   tool,
   createSdkMcpServer,
+  createSdkClientMcpServer,
 } from '../../src/entrypoints/sdk/index.js'
 
 describe('tool() factory', () => {
@@ -98,5 +99,55 @@ describe('createSdkMcpServer()', () => {
     expect(config.command).toBe('node')
     expect(config.args).toEqual(['server.js'])
     expect((config as any).env).toEqual({ API_KEY: 'test' })
+  })
+})
+
+describe('createSdkClientMcpServer()', () => {
+  test('keeps OpenClaude tool definitions while delegating only execution', async () => {
+    const calls: any[] = []
+    const server = createSdkClientMcpServer({
+      name: 'Apple Notes',
+      tools: [{
+        name: 'search_notes',
+        description: 'Search local notes',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+        permissionBehavior: 'allow',
+        alwaysLoad: true,
+        _meta: { ui: { resourceUri: 'ui://apple-notes/search.html' } },
+      }],
+      async callTool(call) {
+        calls.push(call)
+        return { content: [{ type: 'text', text: 'one result' }] }
+      },
+    })
+
+    expect(server.type).toBe('sdk')
+    expect(server.scope).toBe('session')
+    expect(server.name).toBe('Apple Notes')
+    const definition = server.tools?.[0]
+    expect(definition?.name).toBe('search_notes')
+    expect(definition?.permissionBehavior).toBe('allow')
+    expect(definition?._meta).toEqual({ ui: { resourceUri: 'ui://apple-notes/search.html' } })
+    const result = await definition?.handler({ query: 'roadmap' }, { context: { toolUseId: 'toolu-1' } })
+    expect(result?.content).toEqual([{ type: 'text', text: 'one result' }])
+    expect(calls).toEqual([{
+      serverName: 'Apple Notes',
+      toolName: 'search_notes',
+      args: { query: 'roadmap' },
+      extra: { context: { toolUseId: 'toolu-1' } },
+    }])
+  })
+
+  test('rejects duplicate tool names within one client-hosted server', () => {
+    expect(() => createSdkClientMcpServer({
+      name: 'Duplicate server',
+      tools: [
+        { name: 'same', description: 'first', inputSchema: {} },
+        { name: 'same', description: 'second', inputSchema: {} },
+      ],
+      async callTool() {
+        return { content: [] }
+      },
+    })).toThrow('duplicate tool same')
   })
 })

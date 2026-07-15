@@ -66,6 +66,25 @@ test('toolToAPISchema preserves provider-specific schema keywords in input_schem
   })
 })
 
+test('toolToAPISchema keeps MCP Apps metadata internal', async () => {
+  const schema = await toolToAPISchema(
+    {
+      name: 'mcp__test__show_widget',
+      inputSchema: z.strictObject({}),
+      inputJSONSchema: { type: 'object', properties: {} },
+      _meta: { ui: { resourceUri: 'ui://test/widget.html' } },
+      prompt: async () => 'Show a widget',
+    } as unknown as Tool,
+    {
+      getToolPermissionContext: async () => getEmptyToolPermissionContext(),
+      tools: [] as unknown as Tools,
+      agents: [],
+    },
+  )
+
+  expect((schema as Record<string, unknown>)._meta).toBeUndefined()
+})
+
 test('toolToAPISchema keeps skill required for SkillTool', async () => {
   const schema = await toolToAPISchema(SkillTool, {
     getToolPermissionContext: async () => getEmptyToolPermissionContext(),
