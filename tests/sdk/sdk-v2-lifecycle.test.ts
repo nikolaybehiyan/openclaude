@@ -1,6 +1,7 @@
 import { describe, test, expect, afterEach, beforeAll, afterAll } from 'bun:test'
 import { randomUUID } from 'crypto'
-import { rmSync } from 'fs'
+import { mkdirSync, rmSync, writeFileSync } from 'fs'
+import { join } from 'path'
 import {
   unstable_v2_createSession,
   unstable_v2_resumeSession,
@@ -323,6 +324,55 @@ describe('V2: session creation', () => {
         setOriginalCwd(savedOriginalCwd)
       }
       expect(observedOriginalCwds).toEqual([dir, dir])
+    })
+  })
+
+  test('sendMessage() loads native skills and reloadSkills() refreshes them for the next turn', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const savedConfigDir = process.env.CLAUDE_CONFIG_DIR
+      const savedSimpleMode = process.env.CLAUDE_CODE_SIMPLE
+      const configDir = join(dir, 'claude-config')
+      process.env.CLAUDE_CONFIG_DIR = configDir
+      delete process.env.CLAUDE_CODE_SIMPLE
+      const firstSkillDir = join(configDir, 'skills', 'sdk-first-skill')
+      mkdirSync(firstSkillDir, { recursive: true })
+      writeFileSync(
+        join(firstSkillDir, 'SKILL.md'),
+        '---\nname: sdk-first-skill\ndescription: First SDK skill\n---\n\nUse the first skill.\n',
+      )
+
+      const session = unstable_v2_createSession({ cwd: dir, settingSources: ['user'] })
+      ;(session as any)._engine.submitMessage = async function* () {}
+      try {
+        await drainQuery(session.sendMessage('first turn'))
+        expect(
+          ((session as any)._engine?.config?.commands ?? []).map(
+            (command: { name: string }) => command.name,
+          ),
+        ).toContain('sdk-first-skill')
+
+        const secondSkillDir = join(configDir, 'skills', 'sdk-second-skill')
+        mkdirSync(secondSkillDir, { recursive: true })
+        writeFileSync(
+          join(secondSkillDir, 'SKILL.md'),
+          '---\nname: sdk-second-skill\ndescription: Second SDK skill\n---\n\nUse the second skill.\n',
+        )
+        session.reloadSkills()
+        await drainQuery(session.sendMessage('second turn'))
+
+        const refreshedCommandNames = ((session as any)._engine?.config?.commands ?? []).map(
+          (command: { name: string }) => command.name,
+        )
+        expect(refreshedCommandNames).toContain('sdk-first-skill')
+        expect(refreshedCommandNames).toContain('sdk-second-skill')
+      } finally {
+        session.close()
+        if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
+        else process.env.CLAUDE_CONFIG_DIR = savedConfigDir
+        if (savedSimpleMode === undefined) delete process.env.CLAUDE_CODE_SIMPLE
+        else process.env.CLAUDE_CODE_SIMPLE = savedSimpleMode
+      }
     })
   })
 

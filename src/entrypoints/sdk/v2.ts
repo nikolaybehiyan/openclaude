@@ -91,9 +91,10 @@ import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
 import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
-import { clearCommandsCache } from '../../commands.js'
+import { clearCommandsCache, getCommands } from '../../commands.js'
 import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
+import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
   OUTPUT_FILE_TAG,
@@ -363,6 +364,8 @@ class SDKSessionImpl implements SDKSession {
   private mcpServers?: Record<string, unknown>
   private mcpConnected = false
   private mcpTools: Tool[] = []
+  private commands: Command[] = []
+  private skillsLoaded = false
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -395,6 +398,11 @@ class SDKSessionImpl implements SDKSession {
   /** Late-bind the abort controller (used when session is created before engine). */
   setAbortController(ac: AbortController): void {
     this._abortController = ac
+  }
+
+  /** Keep the mutable command registry shared with QueryEngine. */
+  setCommands(commands: Command[]): void {
+    this.commands = commands
   }
 
   /** Set the resolved transcript directory (called by resumeSession after resolving the JSONL path). */
@@ -473,6 +481,16 @@ class SDKSessionImpl implements SDKSession {
   reloadSkills(): void {
     clearCommandsCache()
     resetSentSkillNames()
+    this.skillsLoaded = false
+  }
+
+  private async ensureSkillsLoaded(): Promise<void> {
+    if (this.skillsLoaded) {
+      return
+    }
+    const commands = await getCommands(this.options.cwd)
+    this.commands.splice(0, this.commands.length, ...commands)
+    this.skillsLoaded = true
   }
 
   async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
@@ -487,6 +505,7 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+        await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
           if (unavailable) {
@@ -564,6 +583,7 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+        await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
           if (unavailable) {
@@ -644,7 +664,7 @@ class SDKSessionImpl implements SDKSession {
         })
       }
     }
-    const { engine, appStateStore, abortController } = createEngineFromOptions(
+    const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
       this.options,
       signatureSafeMessages,
       this._sessionId,
@@ -652,6 +672,8 @@ class SDKSessionImpl implements SDKSession {
     this._engine = engine
     this._appStateStore = appStateStore
     this._abortController = abortController
+    this.commands = commands
+    this.skillsLoaded = false
     this.agentsLoaded = false
     this.mcpConnected = false
     this.mcpTools = []
@@ -956,7 +978,7 @@ function createEngineFromOptions(
   options: SDKSessionOptions,
   initialMessages?: any[],
   sessionId?: string,
-): { engine: QueryEngine; appStateStore: Store<AppState>; abortController: AbortController } {
+): { engine: QueryEngine; appStateStore: Store<AppState>; abortController: AbortController; commands: Command[] } {
   const { cwd, model, abortController, permissionMode } = options
 
   if (!cwd) {
@@ -1032,10 +1054,11 @@ function createEngineFromOptions(
   const ac = abortController ?? new AbortController()
 
   // Create QueryEngine config
+  const commands: Command[] = []
   const engineConfig = {
     cwd,
     tools,
-    commands: [] as Array<never>,
+    commands,
     mcpClients: [],
     agents: [],
     canUseTool,
@@ -1058,7 +1081,7 @@ function createEngineFromOptions(
 
   const engine = new QueryEngine(engineConfig)
 
-  return { engine, appStateStore, abortController: ac }
+  return { engine, appStateStore, abortController: ac, commands }
 }
 
 function normalizeSDKSyncedMessages(messages: any[]): any[] {
@@ -1280,11 +1303,12 @@ export function unstable_v2_createSession(options: SDKSessionOptions): SDKSessio
   const sessionId = randomUUID()
   configureSessionEventStore(options)
   const session = new SDKSessionImpl(null, sessionId, options, null)
-  const { engine, appStateStore, abortController } = createEngineFromOptions(options, undefined, sessionId)
+  const { engine, appStateStore, abortController, commands } = createEngineFromOptions(options, undefined, sessionId)
   // Wire the engine, store, and abort controller into the session
   session.setEngine(engine)
   session.setAppStateStore(appStateStore)
   session.setAbortController(abortController)
+  session.setCommands(commands)
   return session
 }
 
@@ -1431,7 +1455,7 @@ export async function unstable_v2_resumeSession(
 
   const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
   const signatureSafeInitialMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(initialMessages))
-  const { engine, appStateStore, abortController } = createEngineFromOptions(
+  const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
     sessionOptions,
     signatureSafeInitialMessages as any[],
     sessionId,
@@ -1439,6 +1463,7 @@ export async function unstable_v2_resumeSession(
   session.setEngine(engine)
   session.setAppStateStore(appStateStore)
   session.setAbortController(abortController)
+  session.setCommands(commands)
 
   // Store the resolved transcript directory for correct routing in sendMessage()
   // and set global state so tests and legacy code can verify the routing.
