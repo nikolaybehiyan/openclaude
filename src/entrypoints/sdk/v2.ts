@@ -169,6 +169,12 @@ export type SDKSessionOptions = {
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
   /**
+   * When true, yields OpenClaude's native non-meta user-message replays.
+   * Managed hosts use this to observe slash-command lifecycle metadata without
+   * reconstructing command or skill expansion outside QueryEngine.
+   */
+  replayUserMessages?: boolean
+  /**
    * Native OpenClaude/CCR-style session event writer. SDK hosts that run
    * ephemeral workers can mirror transcript entries to durable storage without
    * reconstructing history outside QueryEngine.
@@ -1075,6 +1081,7 @@ function createEngineFromOptions(
     maxTurns: options.maxTurns,
     providerOverride: options.providerOverride,
     persistSession: options.persistSession,
+    replayUserMessages: options.replayUserMessages ?? false,
     includePartialMessages: options.includePartialMessages ?? false,
     ...(initialMessages ? { initialMessages } : {}),
   }

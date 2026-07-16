@@ -517,6 +517,12 @@ export type SDKSessionOptions = {
   settings?: Record<string, unknown>
   /** When true, yields stream_event messages for token-by-token streaming. */
   includePartialMessages?: boolean
+  /**
+   * When true, yields OpenClaude's native non-meta user-message replays.
+   * Managed hosts use this to observe slash-command lifecycle metadata without
+   * reconstructing command or skill expansion outside QueryEngine.
+   */
+  replayUserMessages?: boolean
   /** Native OpenClaude/CCR-style durable transcript event writer. */
   sessionEventWriter?: SDKSessionEventWriter
   /** Native OpenClaude/CCR-style foreground transcript event reader for resume. */
