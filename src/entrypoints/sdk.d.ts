@@ -523,6 +523,11 @@ export type SDKSessionOptions = {
    * reconstructing command or skill expansion outside QueryEngine.
    */
   replayUserMessages?: boolean
+  /**
+   * Treat leading slash commands as normal user text so skills are invoked by
+   * OpenClaude's native Skill tool lifecycle.
+   */
+  skipSlashCommands?: boolean
   /** Native OpenClaude/CCR-style durable transcript event writer. */
   sessionEventWriter?: SDKSessionEventWriter
   /** Native OpenClaude/CCR-style foreground transcript event reader for resume. */

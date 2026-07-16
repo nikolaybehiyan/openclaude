@@ -153,6 +153,12 @@ export type QueryEngineConfig = {
   jsonSchema?: Record<string, unknown>
   verbose?: boolean
   replayUserMessages?: boolean
+  /**
+   * Treat leading slash commands as normal user text. Managed chat hosts use
+   * this so the model invokes skills through the native Skill tool lifecycle
+   * instead of QueryEngine expanding them before the first model turn.
+   */
+  skipSlashCommands?: boolean
   /** Handler for URL elicitations triggered by MCP tool -32042 errors. */
   handleElicitation?: ToolUseContext['handleElicitation']
   includePartialMessages?: boolean
@@ -235,6 +241,7 @@ export class QueryEngine {
       getAppState,
       setAppState,
       replayUserMessages = false,
+      skipSlashCommands = false,
       includePartialMessages = false,
       agents = [],
       setSDKStatus,
@@ -434,6 +441,7 @@ export class QueryEngine {
       uuid: options?.uuid,
       isMeta: options?.isMeta,
       querySource: 'sdk',
+      skipSlashCommands,
     })
 
     // Push new messages, including user input and any attachments
@@ -1360,6 +1368,7 @@ export async function* ask({
   setAppState,
   abortController,
   replayUserMessages = false,
+  skipSlashCommands = false,
   includePartialMessages = false,
   handleElicitation,
   agents = [],
@@ -1393,6 +1402,7 @@ export async function* ask({
   setReadFileCache: (cache: FileStateCache) => void
   abortController?: AbortController
   replayUserMessages?: boolean
+  skipSlashCommands?: boolean
   includePartialMessages?: boolean
   handleElicitation?: ToolUseContext['handleElicitation']
   agents?: AgentDefinition[]
@@ -1424,6 +1434,7 @@ export async function* ask({
     verbose,
     handleElicitation,
     replayUserMessages,
+    skipSlashCommands,
     includePartialMessages,
     setSDKStatus,
     abortController,

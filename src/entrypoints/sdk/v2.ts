@@ -175,6 +175,11 @@ export type SDKSessionOptions = {
    */
   replayUserMessages?: boolean
   /**
+   * Treat leading slash commands as normal user text so skills are invoked by
+   * OpenClaude's native Skill tool lifecycle.
+   */
+  skipSlashCommands?: boolean
+  /**
    * Native OpenClaude/CCR-style session event writer. SDK hosts that run
    * ephemeral workers can mirror transcript entries to durable storage without
    * reconstructing history outside QueryEngine.
@@ -1082,6 +1087,7 @@ function createEngineFromOptions(
     providerOverride: options.providerOverride,
     persistSession: options.persistSession,
     replayUserMessages: options.replayUserMessages ?? false,
+    skipSlashCommands: options.skipSlashCommands ?? false,
     includePartialMessages: options.includePartialMessages ?? false,
     ...(initialMessages ? { initialMessages } : {}),
   }
