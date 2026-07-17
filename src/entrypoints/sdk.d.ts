@@ -112,6 +112,14 @@ export type SDKPluginPreparationResult = {
   enabledPluginCount: number
   disabledPluginCount: number
   errorCount: number
+  pluginSkillProjection: SDKPluginSkillProjection[]
+}
+
+export type SDKPluginSkillProjection = {
+  name: string
+  source: string
+  pluginRoot: string
+  skillRoots: string[]
 }
 
 export type SDKPluginMarketplaceSource =

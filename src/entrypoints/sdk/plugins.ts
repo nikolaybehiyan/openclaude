@@ -14,6 +14,7 @@ import {
   updateSettingsForSource,
 } from '../../utils/settings/settings.js'
 import type { SettingsJson } from '../../utils/settings/types.js'
+import type { LoadedPlugin } from '../../types/plugin.js'
 
 export type SDKPluginMarketplaceSource = MarketplaceSource
 
@@ -41,12 +42,29 @@ export type SDKPluginRuntimeIntent = {
   marketplaces?: Record<string, SDKPluginMarketplaceIntent>
 }
 
+export type SDKPluginSkillProjection = {
+  /** OpenClaude-resolved plugin name. */
+  name: string
+  /** Marketplace/source that supplied the enabled plugin. */
+  source: string
+  /** OpenClaude's resolved plugin root. */
+  pluginRoot: string
+  /** Exact enabled skill roots resolved by the native plugin loader. */
+  skillRoots: string[]
+}
+
 export type SDKPluginPreparationResult = {
   changed: boolean
   revision?: string
   enabledPluginCount: number
   disabledPluginCount: number
   errorCount: number
+  /**
+   * Read-only filesystem projection of the enabled plugin skills already
+   * resolved by OpenClaude. Hosts may mirror these paths for a remote runtime,
+   * but must not reinterpret plugin manifests or enablement.
+   */
+  pluginSkillProjection: SDKPluginSkillProjection[]
 }
 
 function sortedRecord<T>(value: Record<string, T>): Record<string, T> {
@@ -66,6 +84,28 @@ function stableJSON(value: unknown): string {
       .join(',')}}`
   }
   return JSON.stringify(value)
+}
+
+export function pluginSkillProjectionFromLoadedPlugins(
+  plugins: readonly LoadedPlugin[],
+): SDKPluginSkillProjection[] {
+  return plugins
+    .map(plugin => ({
+      name: plugin.name,
+      source: plugin.source,
+      pluginRoot: plugin.path,
+      skillRoots: [...new Set(
+        [plugin.skillsPath, ...(plugin.skillsPaths ?? [])]
+          .filter((value): value is string => Boolean(value?.trim()))
+          .map(value => value.trim()),
+      )].sort((left, right) => left.localeCompare(right)),
+    }))
+    .filter(plugin => plugin.skillRoots.length > 0)
+    .sort((left, right) =>
+      left.name.localeCompare(right.name) ||
+      left.source.localeCompare(right.source) ||
+      left.pluginRoot.localeCompare(right.pluginRoot),
+    )
 }
 
 function replacementPatch<T>(
@@ -280,5 +320,8 @@ export async function unstable_preparePluginRuntime(
     enabledPluginCount: loaded.enabled.length,
     disabledPluginCount: loaded.disabled.length,
     errorCount: loaded.errors.length + refresh.errorCount,
+    pluginSkillProjection: pluginSkillProjectionFromLoadedPlugins(
+      loaded.enabled,
+    ),
   }
 }

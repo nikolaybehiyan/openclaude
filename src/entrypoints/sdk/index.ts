@@ -116,6 +116,7 @@ export type {
   SDKPluginMarketplaceIntent,
   SDKPluginMarketplaceSource,
   SDKPluginPreparationResult,
+  SDKPluginSkillProjection,
   SDKPluginRuntimeIntent,
 } from './plugins.js'
 export { unstable_preparePluginRuntime } from './plugins.js'

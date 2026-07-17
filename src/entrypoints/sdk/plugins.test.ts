@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { pluginRuntimeMarketplacesToRefresh } from './plugins.js'
+import {
+  pluginRuntimeMarketplacesToRefresh,
+  pluginSkillProjectionFromLoadedPlugins,
+} from './plugins.js'
 
 const githubSource = { source: 'github' as const, repo: 'example/plugins' }
 
@@ -58,5 +61,43 @@ describe('plugin runtime marketplace refresh planning', () => {
         },
       ),
     ).toEqual([])
+  })
+})
+
+describe('plugin runtime skill projection', () => {
+  test('returns only native skill roots from enabled loaded plugins', () => {
+    expect(
+      pluginSkillProjectionFromLoadedPlugins([
+        {
+          name: 'design',
+          source: 'official',
+          path: '/cache/design',
+          manifest: { name: 'design' },
+          repository: 'official',
+          skillsPath: '/cache/design/skills',
+          skillsPaths: [
+            '/cache/design/extra-skills',
+            '/cache/design/skills',
+          ],
+        },
+        {
+          name: 'mcp-only',
+          source: 'official',
+          path: '/cache/mcp-only',
+          manifest: { name: 'mcp-only' },
+          repository: 'official',
+        },
+      ]),
+    ).toEqual([
+      {
+        name: 'design',
+        source: 'official',
+        pluginRoot: '/cache/design',
+        skillRoots: [
+          '/cache/design/extra-skills',
+          '/cache/design/skills',
+        ],
+      },
+    ])
   })
 })
