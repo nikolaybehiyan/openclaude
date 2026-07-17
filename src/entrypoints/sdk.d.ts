@@ -112,15 +112,19 @@ export type SDKPluginPreparationResult = {
   enabledPluginCount: number
   disabledPluginCount: number
   errorCount: number
+  pluginProjection: SDKPluginProjection[]
   pluginSkillProjection: SDKPluginSkillProjection[]
 }
 
-export type SDKPluginSkillProjection = {
+export type SDKPluginProjection = {
   name: string
   source: string
   pluginRoot: string
   skillRoots: string[]
 }
+
+/** @deprecated Use SDKPluginProjection. */
+export type SDKPluginSkillProjection = SDKPluginProjection
 
 export type SDKPluginMarketplaceSource =
   | { source: 'url'; url: string; headers?: Record<string, string> }
@@ -153,6 +157,8 @@ export type SDKPluginRuntimeIntent = {
   revision?: string
   enabledPlugins?: Record<string, boolean>
   marketplaces?: Record<string, SDKPluginMarketplaceIntent>
+  inlinePluginPaths?: string[]
+  inlinePluginRevision?: string
 }
 
 /**

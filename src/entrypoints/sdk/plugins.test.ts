@@ -1,5 +1,6 @@
 import { describe, expect, test } from 'bun:test'
 import {
+  pluginProjectionFromLoadedPlugins,
   pluginRuntimeMarketplacesToRefresh,
   pluginSkillProjectionFromLoadedPlugins,
 } from './plugins.js'
@@ -65,6 +66,41 @@ describe('plugin runtime marketplace refresh planning', () => {
 })
 
 describe('plugin runtime skill projection', () => {
+  test('returns every enabled plugin root for remote runtime projection', () => {
+    expect(
+      pluginProjectionFromLoadedPlugins([
+        {
+          name: 'design',
+          source: 'official',
+          path: '/cache/design',
+          manifest: { name: 'design' },
+          repository: 'official',
+          skillsPath: '/cache/design/skills',
+        },
+        {
+          name: 'mcp-only',
+          source: 'official',
+          path: '/cache/mcp-only',
+          manifest: { name: 'mcp-only' },
+          repository: 'official',
+        },
+      ]),
+    ).toEqual([
+      {
+        name: 'design',
+        source: 'official',
+        pluginRoot: '/cache/design',
+        skillRoots: ['/cache/design/skills'],
+      },
+      {
+        name: 'mcp-only',
+        source: 'official',
+        pluginRoot: '/cache/mcp-only',
+        skillRoots: [],
+      },
+    ])
+  })
+
   test('returns only native skill roots from enabled loaded plugins', () => {
     expect(
       pluginSkillProjectionFromLoadedPlugins([

@@ -2,6 +2,7 @@ import { clearAllCaches } from '../../utils/plugins/cacheUtils.js'
 import { installPluginsForHeadless } from '../../utils/plugins/headlessPluginInstall.js'
 import { loadAllPlugins } from '../../utils/plugins/pluginLoader.js'
 import { updatePluginsForMarketplaces } from '../../utils/plugins/pluginAutoupdate.js'
+import { resolve } from 'node:path'
 import {
   loadKnownMarketplacesConfig,
   refreshMarketplace,
@@ -15,6 +16,10 @@ import {
 } from '../../utils/settings/settings.js'
 import type { SettingsJson } from '../../utils/settings/types.js'
 import type { LoadedPlugin } from '../../types/plugin.js'
+import {
+  getInlinePlugins,
+  setInlinePlugins,
+} from '../../bootstrap/state.js'
 
 export type SDKPluginMarketplaceSource = MarketplaceSource
 
@@ -40,9 +45,21 @@ export type SDKPluginRuntimeIntent = {
   enabledPlugins?: Record<string, boolean>
   /** Complete user-scope marketplace declaration projection. */
   marketplaces?: Record<string, SDKPluginMarketplaceIntent>
+  /**
+   * Complete session-local plugin roots, using the same native loader as
+   * repeated `--plugin-dir` CLI flags. Inline plugins override an installed
+   * plugin with the same name unless managed policy locks that plugin.
+   */
+  inlinePluginPaths?: string[]
+  /**
+   * Opaque host content revision for inline plugin roots. A changed revision
+   * invalidates native plugin/command/skill/MCP caches without making the SDK
+   * interpret host filesystem contents.
+   */
+  inlinePluginRevision?: string
 }
 
-export type SDKPluginSkillProjection = {
+export type SDKPluginProjection = {
   /** OpenClaude-resolved plugin name. */
   name: string
   /** Marketplace/source that supplied the enabled plugin. */
@@ -53,18 +70,23 @@ export type SDKPluginSkillProjection = {
   skillRoots: string[]
 }
 
+/** @deprecated Use SDKPluginProjection. */
+export type SDKPluginSkillProjection = SDKPluginProjection
+
 export type SDKPluginPreparationResult = {
   changed: boolean
   revision?: string
   enabledPluginCount: number
   disabledPluginCount: number
   errorCount: number
+  /** All enabled plugin roots resolved by the native OpenClaude loader. */
+  pluginProjection: SDKPluginProjection[]
   /**
    * Read-only filesystem projection of the enabled plugin skills already
    * resolved by OpenClaude. Hosts may mirror these paths for a remote runtime,
    * but must not reinterpret plugin manifests or enablement.
    */
-  pluginSkillProjection: SDKPluginSkillProjection[]
+  pluginSkillProjection: SDKPluginProjection[]
 }
 
 function sortedRecord<T>(value: Record<string, T>): Record<string, T> {
@@ -86,9 +108,9 @@ function stableJSON(value: unknown): string {
   return JSON.stringify(value)
 }
 
-export function pluginSkillProjectionFromLoadedPlugins(
+export function pluginProjectionFromLoadedPlugins(
   plugins: readonly LoadedPlugin[],
-): SDKPluginSkillProjection[] {
+): SDKPluginProjection[] {
   return plugins
     .map(plugin => ({
       name: plugin.name,
@@ -100,12 +122,18 @@ export function pluginSkillProjectionFromLoadedPlugins(
           .map(value => value.trim()),
       )].sort((left, right) => left.localeCompare(right)),
     }))
-    .filter(plugin => plugin.skillRoots.length > 0)
     .sort((left, right) =>
       left.name.localeCompare(right.name) ||
       left.source.localeCompare(right.source) ||
       left.pluginRoot.localeCompare(right.pluginRoot),
     )
+}
+
+export function pluginSkillProjectionFromLoadedPlugins(
+  plugins: readonly LoadedPlugin[],
+): SDKPluginProjection[] {
+  return pluginProjectionFromLoadedPlugins(plugins)
+    .filter(plugin => plugin.skillRoots.length > 0)
 }
 
 function replacementPatch<T>(
@@ -153,6 +181,19 @@ function validatePluginRuntimeIntent(intent: SDKPluginRuntimeIntent): void {
       )
     }
   }
+  for (const [index, pluginPath] of (intent.inlinePluginPaths ?? []).entries()) {
+    if (typeof pluginPath !== 'string' || !pluginPath.trim()) {
+      throw new Error(
+        `plugin runtime inlinePluginPaths[${index}] must be a non-empty path`,
+      )
+    }
+  }
+  if (
+    intent.inlinePluginRevision !== undefined &&
+    !intent.inlinePluginRevision.trim()
+  ) {
+    throw new Error('plugin runtime inlinePluginRevision must be non-empty')
+  }
 }
 
 function settingsMarketplaceIntent(
@@ -162,11 +203,14 @@ function settingsMarketplaceIntent(
   return settingsIntent
 }
 
+const preparedInlinePluginRevisions = new Map<string, string>()
+
 function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
   validatePluginRuntimeIntent(intent)
   const current = getSettingsForSource('userSettings') ?? {}
   const patch: SettingsJson = {}
   let changed = false
+  let settingsChanged = false
 
   if (intent.enabledPlugins !== undefined) {
     const desired = sortedRecord(intent.enabledPlugins)
@@ -176,6 +220,7 @@ function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
         desired,
       ) as SettingsJson['enabledPlugins']
       changed = true
+      settingsChanged = true
     }
   }
 
@@ -194,18 +239,39 @@ function applyPluginRuntimeIntent(intent: SDKPluginRuntimeIntent): boolean {
         desired,
       ) as SettingsJson['extraKnownMarketplaces']
       changed = true
+      settingsChanged = true
     }
   }
 
-  if (!changed) {
-    return false
+  if (intent.inlinePluginPaths !== undefined) {
+    const desired = [...new Set(intent.inlinePluginPaths.map(pluginPath =>
+      resolve(pluginPath.trim()),
+    ))].sort((left, right) => left.localeCompare(right))
+    const currentInline = [...new Set(getInlinePlugins().map(pluginPath =>
+      resolve(pluginPath),
+    ))].sort((left, right) => left.localeCompare(right))
+    if (stableJSON(currentInline) !== stableJSON(desired)) {
+      setInlinePlugins(desired)
+      changed = true
+    }
+    const stateKey = pluginRuntimeStateKey()
+    const desiredRevision = intent.inlinePluginRevision ?? ''
+    if (preparedInlinePluginRevisions.get(stateKey) !== desiredRevision) {
+      preparedInlinePluginRevisions.set(stateKey, desiredRevision)
+      changed = true
+    }
   }
-  const result = updateSettingsForSource('userSettings', patch)
-  if (result.error) {
-    throw result.error
+
+  if (settingsChanged) {
+    const result = updateSettingsForSource('userSettings', patch)
+    if (result.error) {
+      throw result.error
+    }
   }
-  clearAllCaches()
-  return true
+  if (changed) {
+    clearAllCaches()
+  }
+  return changed
 }
 
 const preparedMarketplaceRevisions = new Map<string, Record<string, string>>()
@@ -313,6 +379,7 @@ export async function unstable_preparePluginRuntime(
   // used by commands, skills, agents, hooks, LSP, and MCP. SDK hosts only
   // declare intent; they never reproduce plugin installation semantics.
   const loaded = await loadAllPlugins()
+  const pluginProjection = pluginProjectionFromLoadedPlugins(loaded.enabled)
   return {
     changed:
       intentChanged || marketplaceChanged || refresh.refreshed.size > 0,
@@ -320,8 +387,9 @@ export async function unstable_preparePluginRuntime(
     enabledPluginCount: loaded.enabled.length,
     disabledPluginCount: loaded.disabled.length,
     errorCount: loaded.errors.length + refresh.errorCount,
-    pluginSkillProjection: pluginSkillProjectionFromLoadedPlugins(
-      loaded.enabled,
+    pluginProjection,
+    pluginSkillProjection: pluginProjection.filter(
+      plugin => plugin.skillRoots.length > 0,
     ),
   }
 }

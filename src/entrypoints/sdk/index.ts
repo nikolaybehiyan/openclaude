@@ -116,6 +116,7 @@ export type {
   SDKPluginMarketplaceIntent,
   SDKPluginMarketplaceSource,
   SDKPluginPreparationResult,
+  SDKPluginProjection,
   SDKPluginSkillProjection,
   SDKPluginRuntimeIntent,
 } from './plugins.js'
