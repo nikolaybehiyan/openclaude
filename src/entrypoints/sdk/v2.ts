@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'crypto'
-import { basename, dirname, extname } from 'path'
+import { basename, dirname, extname, join } from 'path'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { QueryEngine } from '../../QueryEngine.js'
@@ -27,7 +27,7 @@ import {
   SKIP_PRECOMPACT_THRESHOLD,
 } from '../../utils/sessionStoragePortable.js'
 import { readJSONLFile } from '../../utils/json.js'
-import { stat } from 'fs/promises'
+import { realpath, stat } from 'fs/promises'
 import {
   switchSession,
   runWithSdkContext,
@@ -91,7 +91,11 @@ import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
 import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
-import { clearCommandsCache, getCommands } from '../../commands.js'
+import {
+  clearCommandsCache,
+  getCommands,
+  getSkillToolCommands,
+} from '../../commands.js'
 import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { Command } from '../../types/command.js'
@@ -216,6 +220,19 @@ export type SDKSessionUpdateOptions = Pick<
   | 'thinkingConfig'
 >
 
+export type SDKSkillDescriptor = {
+  name: string
+  displayName: string
+  description: string
+  whenToUse?: string
+  source: string
+  loadedFrom?: string
+  userInvocable: boolean
+  skillRoot: string
+  skillFile: string
+  pluginName?: string
+}
+
 /**
  * A persistent session wrapping a QueryEngine for multi-turn conversations.
  *
@@ -251,6 +268,11 @@ export interface SDKSession {
   updateOptions(options: SDKSessionUpdateOptions): void
   /** Reload filesystem-backed skills before the next turn without replacing session history. */
   reloadSkills(): void
+  /**
+   * Return OpenClaude's current model-invocable filesystem skills without
+   * enabling or invoking the native Skill tool.
+   */
+  listSkills(): Promise<SDKSkillDescriptor[]>
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   /** Return all messages accumulated so far in this session. */
@@ -488,6 +510,42 @@ class SDKSessionImpl implements SDKSession {
     clearCommandsCache()
     resetSentSkillNames()
     this.skillsLoaded = false
+  }
+
+  async listSkills(): Promise<SDKSkillDescriptor[]> {
+    await init()
+    await this.ensureSkillsLoaded()
+    const skills = await getSkillToolCommands(this.options.cwd)
+    const descriptors = await Promise.all(
+      skills.map(async skill => {
+        if (skill.type !== 'prompt' || !skill.skillRoot) {
+          return null
+        }
+        let skillRoot = skill.skillRoot
+        try {
+          skillRoot = await realpath(skillRoot)
+        } catch {
+          // Keep the loader-provided path if an external sync races this read.
+        }
+        return {
+          name: skill.name,
+          displayName: skill.userFacingName?.() ?? skill.name,
+          description: skill.description,
+          ...(skill.whenToUse ? { whenToUse: skill.whenToUse } : {}),
+          source: skill.source,
+          ...(skill.loadedFrom ? { loadedFrom: skill.loadedFrom } : {}),
+          userInvocable: skill.userInvocable !== false,
+          skillRoot,
+          skillFile: join(skillRoot, 'SKILL.md'),
+          ...(skill.pluginInfo?.pluginManifest?.name
+            ? { pluginName: skill.pluginInfo.pluginManifest.name }
+            : {}),
+        } satisfies SDKSkillDescriptor
+      }),
+    )
+    return descriptors
+      .filter((skill): skill is SDKSkillDescriptor => skill !== null)
+      .sort((left, right) => left.name.localeCompare(right.name))
   }
 
   private async ensureSkillsLoaded(): Promise<void> {
