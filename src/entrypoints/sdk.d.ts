@@ -555,19 +555,6 @@ export type SDKSessionUpdateOptions = Pick<
   | 'thinkingConfig'
 >
 
-export type SDKSkillDescriptor = {
-  name: string
-  displayName: string
-  description: string
-  whenToUse?: string
-  source: string
-  loadedFrom?: string
-  userInvocable: boolean
-  skillRoot: string
-  skillFile: string
-  pluginName?: string
-}
-
 export interface SDKSession {
   sessionId: string
   sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
@@ -577,11 +564,6 @@ export interface SDKSession {
   updateOptions(options: SDKSessionUpdateOptions): void
   /** Reload filesystem-backed skills before the next turn without replacing session history. */
   reloadSkills(): void
-  /**
-   * Return OpenClaude's current model-invocable filesystem skills without
-   * enabling or invoking the native Skill tool.
-   */
-  listSkills(): Promise<SDKSkillDescriptor[]>
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   getMessages(): SDKMessage[]

@@ -351,18 +351,6 @@ describe('V2: session creation', () => {
             (command: { name: string }) => command.name,
           ),
         ).toContain('sdk-first-skill')
-        const firstSkillListing = await session.listSkills()
-        expect(firstSkillListing).toEqual([
-          expect.objectContaining({
-            name: 'sdk-first-skill',
-            displayName: 'sdk-first-skill',
-            description: 'First SDK skill',
-            loadedFrom: 'skills',
-            userInvocable: true,
-          }),
-        ])
-        expect(firstSkillListing[0]?.skillRoot).toEndWith('/claude-config/skills/sdk-first-skill')
-        expect(firstSkillListing[0]?.skillFile).toEndWith('/claude-config/skills/sdk-first-skill/SKILL.md')
 
         const secondSkillDir = join(configDir, 'skills', 'sdk-second-skill')
         mkdirSync(secondSkillDir, { recursive: true })
@@ -378,10 +366,6 @@ describe('V2: session creation', () => {
         )
         expect(refreshedCommandNames).toContain('sdk-first-skill')
         expect(refreshedCommandNames).toContain('sdk-second-skill')
-        expect((await session.listSkills()).map(skill => skill.name)).toEqual([
-          'sdk-first-skill',
-          'sdk-second-skill',
-        ])
       } finally {
         session.close()
         if (savedConfigDir === undefined) delete process.env.CLAUDE_CONFIG_DIR
