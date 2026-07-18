@@ -1,4 +1,5 @@
 import { isAbsolute } from 'node:path'
+import { setTimeout as delay } from 'node:timers/promises'
 import {
   addSkillDirectories,
   clearDynamicSkills,
@@ -26,6 +27,7 @@ export type SDKSkillPreparationResult = {
 let currentIntentFingerprint = ''
 let enabledSkillNames = new Set<string>()
 let listenerInstalled = false
+const skillDiscoveryRetryDelaysMs = [0, 50, 100, 200, 400, 800, 1600]
 
 function applyAllowlist(): void {
   for (const skill of getDynamicSkills()) {
@@ -48,6 +50,40 @@ function ensureListener(): void {
   listenerInstalled = true
 }
 
+function discoveredEnabledSkillNames(): string[] {
+  return getDynamicSkills()
+    .filter(skill => enabledSkillNames.has(skill.name))
+    .map(skill => skill.name)
+    .sort()
+}
+
+function missingEnabledSkillNames(names: string[]): string[] {
+  const discovered = new Set(discoveredEnabledSkillNames())
+  return names.filter(name => !discovered.has(name))
+}
+
+async function loadSkillDirectoriesUntilReady(
+  skillDirectories: string[],
+  names: string[],
+): Promise<void> {
+  let missing = names
+  for (const retryDelayMs of skillDiscoveryRetryDelaysMs) {
+    if (retryDelayMs > 0) {
+      await delay(retryDelayMs)
+    }
+    clearDynamicSkills()
+    await addSkillDirectories(skillDirectories)
+    refreshSkillPresentation()
+    missing = missingEnabledSkillNames(names)
+    if (missing.length === 0) {
+      return
+    }
+  }
+  throw new Error(
+    `skill runtime could not discover enabled skills: ${missing.join(', ')}`,
+  )
+}
+
 export async function unstable_prepareSkillRuntime(
   intent: SDKSkillRuntimeIntent = {},
 ): Promise<SDKSkillPreparationResult> {
@@ -66,7 +102,7 @@ export async function unstable_prepareSkillRuntime(
     throw new Error('invalid standalone skill runtime intent')
   }
   const fingerprint = JSON.stringify([revision, skillDirectories, names])
-  const changed = fingerprint !== currentIntentFingerprint
+  let changed = fingerprint !== currentIntentFingerprint
 
   ensureListener()
   enabledSkillNames = new Set(names)
@@ -80,15 +116,18 @@ export async function unstable_prepareSkillRuntime(
         'skill runtime requires SDK settingSources to include "project"',
       )
     }
-    clearDynamicSkills()
-    await addSkillDirectories(skillDirectories)
-    refreshSkillPresentation()
+    await loadSkillDirectoriesUntilReady(skillDirectories, names)
     currentIntentFingerprint = fingerprint
   } else {
     applyAllowlist()
+    if (missingEnabledSkillNames(names).length > 0) {
+      await loadSkillDirectoriesUntilReady(skillDirectories, names)
+      changed = true
+    }
   }
 
   const discoveredSkills = getDynamicSkills()
+  const actualEnabledSkillNames = discoveredEnabledSkillNames()
   return {
     changed,
     revision,
@@ -96,6 +135,6 @@ export async function unstable_prepareSkillRuntime(
     enabledSkillCount: discoveredSkills.filter(skill =>
       enabledSkillNames.has(skill.name),
     ).length,
-    enabledSkillNames: names,
+    enabledSkillNames: actualEnabledSkillNames,
   }
 }

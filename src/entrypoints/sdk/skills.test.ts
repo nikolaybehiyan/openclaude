@@ -93,4 +93,22 @@ describe('SDK standalone skill runtime', () => {
     expect(unchanged.changed).toBe(false)
     expect(reloaded.changed).toBe(true)
   })
+
+  test('fails preparation instead of reporting an enabled skill that was not discovered', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'openclaude-sdk-skills-'))
+    roots.push(root)
+    const userRoot = join(root, 'user')
+    await mkdir(userRoot, { recursive: true })
+    setAllowedSettingSources(['userSettings', 'projectSettings'])
+
+    await expect(
+      unstable_prepareSkillRuntime({
+        revision: 'revision-missing',
+        skillDirectories: [userRoot],
+        enabledSkillNames: ['missing-skill'],
+      }),
+    ).rejects.toThrow(
+      'skill runtime could not discover enabled skills: missing-skill',
+    )
+  })
 })
