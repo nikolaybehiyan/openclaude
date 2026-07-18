@@ -1909,6 +1909,10 @@ export async function unstable_v2_generateSessionTitle(
   description: string,
   signal?: AbortSignal,
 ): Promise<string | null> {
+  // The title primitive is a valid standalone SDK entrypoint. Unlike
+  // SDKSession.sendMessage(), it has no session lifecycle that would otherwise
+  // initialize config/provider state before queryHaiku reads it.
+  await init()
   const titleSignal = signal ?? createAbortController().signal
   const title = await generateSourceSessionTitle(description, titleSignal)
   return title ?? truncateToWidth(description, 75)
