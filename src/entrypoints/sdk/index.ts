@@ -122,6 +122,11 @@ export type {
 } from './plugins.js'
 export { unstable_preparePluginRuntime } from './plugins.js'
 export type {
+  SDKSkillPreparationResult,
+  SDKSkillRuntimeIntent,
+} from './skills.js'
+export { unstable_prepareSkillRuntime } from './skills.js'
+export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
   AutoMemoryRuntimeState,

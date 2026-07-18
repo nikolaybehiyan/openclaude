@@ -169,6 +169,29 @@ export function unstable_preparePluginRuntime(
   intent?: SDKPluginRuntimeIntent,
 ): Promise<SDKPluginPreparationResult>
 
+export type SDKSkillRuntimeIntent = {
+  revision?: string
+  skillDirectories?: string[]
+  enabledSkillNames?: string[]
+}
+
+export type SDKSkillPreparationResult = {
+  changed: boolean
+  revision?: string
+  discoveredSkillCount: number
+  enabledSkillCount: number
+  enabledSkillNames: string[]
+}
+
+/**
+ * Register host-materialized standalone skills through OpenClaude's native
+ * loader. Call after creating/resuming a session with the "project" setting
+ * source enabled.
+ */
+export function unstable_prepareSkillRuntime(
+  intent?: SDKSkillRuntimeIntent,
+): Promise<SDKSkillPreparationResult>
+
 export type SDKMessagesContentBlock = Record<string, unknown>
 
 export type SDKMessagesMessageParam = {
