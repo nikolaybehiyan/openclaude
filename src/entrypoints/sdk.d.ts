@@ -728,6 +728,11 @@ export function unstable_v2_generateSessionTitle(
   signal?: AbortSignal,
 ): Promise<string | null>
 
+/**
+ * Initialize the SDK runtime without creating a session or sending a message.
+ */
+export function unstable_v2_initializeRuntime(): Promise<void>
+
 // ============================================================================
 // MCP tool functions
 // ============================================================================

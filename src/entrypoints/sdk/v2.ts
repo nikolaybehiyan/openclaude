@@ -1917,3 +1917,15 @@ export async function unstable_v2_generateSessionTitle(
   const title = await generateSourceSessionTitle(description, titleSignal)
   return title ?? truncateToWidth(description, 75)
 }
+
+/**
+ * Initialize the SDK runtime without creating a session or sending a message.
+ *
+ * Remote hosts use this after installing the turn-scoped environment so the
+ * native SDK initialization can overlap independent snapshot hydration. The
+ * same memoized initializer is still awaited by sendMessage(), so this changes
+ * only when initialization runs, not which initialization path owns it.
+ */
+export async function unstable_v2_initializeRuntime(): Promise<void> {
+  await init()
+}
