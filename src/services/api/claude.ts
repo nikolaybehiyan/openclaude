@@ -1851,6 +1851,12 @@ async function* queryModel(
 
         const params = paramsFromContext(context)
         captureAPIRequest(params, options.querySource) // Capture for bug reports
+        logForDebugging(
+          `[API TOOL SNAPSHOT] count=${params.tools.length} names=${params.tools.map(tool => tool.name).join(',')}`,
+        )
+        logForDebugging(
+          `[API TOOL DEFINITIONS] ${jsonStringify(params.tools.map(tool => ({ name: tool.name, description: tool.description, input_schema: tool.input_schema })))}`,
+        )
 
         maxOutputTokens = params.max_tokens
 
@@ -2050,6 +2056,9 @@ async function* queryModel(
           case 'content_block_start':
             switch (part.content_block.type) {
               case 'tool_use':
+                logForDebugging(
+                  `[API TOOL USE] index=${part.index} name=${part.content_block.name} id=${part.content_block.id}`,
+                )
                 contentBlocks[part.index] = {
                   ...part.content_block,
                   input: '',
