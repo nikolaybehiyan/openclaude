@@ -43,6 +43,7 @@ import {
 } from '../../utils/sessionStorage.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
+import { AGENT_TOOL_NAME } from '../../tools/AgentTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { FileReadTool } from '../../tools/FileReadTool/FileReadTool.js'
 import type {
@@ -96,6 +97,7 @@ import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
+import { resolveSDKMcpServerConfigs } from './mcpRuntime.js'
 import {
   OUTPUT_FILE_TAG,
   STATUS_TAG,
@@ -499,6 +501,43 @@ class SDKSessionImpl implements SDKSession {
     this.skillsLoaded = true
   }
 
+  private async ensureAgentsLoaded(): Promise<void> {
+    if (this.agentsLoaded) {
+      return
+    }
+    try {
+      const agentDefs = await getAgentDefinitionsWithOverrides(this.options.cwd)
+      this.appStateStore.setState(prev => ({
+        ...prev,
+        agentDefinitions: agentDefs,
+      }))
+      // Loading plugin metadata is independent from exposing the Agent tool.
+      // Chat intentionally hides Agent, so injecting those definitions into a
+      // filtered main-thread tool pool would make native validation reject
+      // legitimate plugin-agent tools such as Read. Code/Cowork expose Agent
+      // and receive the full native definitions after MCP tools are connected.
+      const visibleTools = mergeRuntimeTools(
+        getTools(sdkVisiblePermissionContext(this.options)),
+        this.mcpTools,
+      )
+      if (
+        visibleTools.some(tool => tool.name === AGENT_TOOL_NAME) &&
+        agentDefs.activeAgents.length > 0
+      ) {
+        this.engine.injectAgents(agentDefs.activeAgents)
+      }
+    } catch (err) {
+      const errorMessage = err instanceof Error ? err.message : String(err)
+      console.warn('SDK: agent loading failed:', errorMessage)
+      this.pushAgentFailure({
+        type: 'agent_load_failure',
+        stage: 'definitions',
+        error_message: errorMessage,
+      })
+    }
+    this.agentsLoaded = true
+  }
+
   async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
     const sdkContext = {
       sessionId: this._sessionId as SessionId,
@@ -526,31 +565,8 @@ class SDKSessionImpl implements SDKSession {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
 
-        // Load agent definitions once (not on every sendMessage call)
-        if (!self.agentsLoaded) {
-          try {
-            const agentDefs = await getAgentDefinitionsWithOverrides(self.options.cwd)
-            self.appStateStore.setState(prev => ({
-              ...prev,
-              agentDefinitions: agentDefs,
-            }))
-            if (agentDefs.activeAgents.length > 0) {
-              self.engine.injectAgents(agentDefs.activeAgents)
-            }
-          } catch (err) {
-            // Agent loading failed — continue without agents but emit failure event
-            const errorMessage = err instanceof Error ? err.message : String(err)
-            console.warn('SDK: agent loading failed:', errorMessage)
-            self.pushAgentFailure({
-              type: 'agent_load_failure',
-              stage: 'definitions',
-              error_message: errorMessage,
-            })
-          }
-          self.agentsLoaded = true
-        }
-
         await self.ensureMcpServersConnected()
+        await self.ensureAgentsLoaded()
 
         // Switch session for transcript writes using session's own resolved dir
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
@@ -604,28 +620,8 @@ class SDKSessionImpl implements SDKSession {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
         const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
-        if (!self.agentsLoaded) {
-          try {
-            const agentDefs = await getAgentDefinitionsWithOverrides(self.options.cwd)
-            self.appStateStore.setState(prev => ({
-              ...prev,
-              agentDefinitions: agentDefs,
-            }))
-            if (agentDefs.activeAgents.length > 0) {
-              self.engine.injectAgents(agentDefs.activeAgents)
-            }
-          } catch (err) {
-            const errorMessage = err instanceof Error ? err.message : String(err)
-            console.warn('SDK: agent loading failed:', errorMessage)
-            self.pushAgentFailure({
-              type: 'agent_load_failure',
-              stage: 'definitions',
-              error_message: errorMessage,
-            })
-          }
-          self.agentsLoaded = true
-        }
         await self.ensureMcpServersConnected()
+        await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
         try {
           yield* self.runEngineTurn(retryPrompt, { uuid: parentUserMessageUuid })
@@ -804,12 +800,18 @@ class SDKSessionImpl implements SDKSession {
     if (this.mcpConnected) {
       return
     }
-    if (!this.mcpServers || Object.keys(this.mcpServers).length === 0) {
-      this.mcpConnected = true
-      return
-    }
     try {
-      const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(this.mcpServers)
+      const resolved = await resolveSDKMcpServerConfigs(this.mcpServers)
+      if (resolved.errors.length > 0) {
+        console.warn(
+          `SDK: native MCP/plugin config loading reported ${resolved.errors.length} error(s): ${JSON.stringify(resolved.errors)}`,
+        )
+      }
+      if (Object.keys(resolved.servers).length === 0) {
+        this.mcpConnected = true
+        return
+      }
+      const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(resolved.servers)
       this.engine.setMcpClients(mcpClients)
       this.mcpTools = mcpTools
       this.applyPermissionContextFromOptions()
