@@ -98,6 +98,7 @@ import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import { resolveSDKMcpServerConfigs } from './mcpRuntime.js'
+import { refreshActivePlugins } from '../../utils/plugins/refresh.js'
 import {
   OUTPUT_FILE_TAG,
   STATUS_TAG,
@@ -253,6 +254,8 @@ export interface SDKSession {
   updateOptions(options: SDKSessionUpdateOptions): void
   /** Reload filesystem-backed skills before the next turn without replacing session history. */
   reloadSkills(): void
+  /** Reload native plugin components without replacing session history. */
+  reloadPlugins(): Promise<void>
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   /** Return all messages accumulated so far in this session. */
@@ -374,6 +377,7 @@ class SDKSessionImpl implements SDKSession {
   private mcpTools: Tool[] = []
   private commands: Command[] = []
   private skillsLoaded = false
+  private pluginLifecycleLoaded = false
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -492,6 +496,25 @@ class SDKSessionImpl implements SDKSession {
     this.skillsLoaded = false
   }
 
+  async reloadPlugins(): Promise<void> {
+    await refreshActivePlugins(updater => this.appStateStore.setState(updater))
+    this.pluginLifecycleLoaded = true
+    this.reloadSkills()
+    this.agentsLoaded = false
+    this.disconnectMcpClients('SDKSession.reloadPlugins')
+    this.mcpConnected = false
+    this.mcpTools = []
+    this.applyPermissionContextFromOptions()
+  }
+
+  private async ensurePluginLifecycleLoaded(): Promise<void> {
+    if (this.pluginLifecycleLoaded) {
+      return
+    }
+    await refreshActivePlugins(updater => this.appStateStore.setState(updater))
+    this.pluginLifecycleLoaded = true
+  }
+
   private async ensureSkillsLoaded(): Promise<void> {
     if (this.skillsLoaded) {
       return
@@ -520,10 +543,7 @@ class SDKSessionImpl implements SDKSession {
         getTools(sdkVisiblePermissionContext(this.options)),
         this.mcpTools,
       )
-      if (
-        visibleTools.some(tool => tool.name === AGENT_TOOL_NAME) &&
-        agentDefs.activeAgents.length > 0
-      ) {
+      if (visibleTools.some(tool => tool.name === AGENT_TOOL_NAME)) {
         this.engine.injectAgents(agentDefs.activeAgents)
       }
     } catch (err) {
@@ -550,6 +570,7 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+        await self.ensurePluginLifecycleLoaded()
         await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
@@ -605,6 +626,8 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+        const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
+        await self.ensurePluginLifecycleLoaded()
         await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
@@ -619,7 +642,6 @@ class SDKSessionImpl implements SDKSession {
         ) {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
-        const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
         await self.ensureMcpServersConnected()
         await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
@@ -676,6 +698,7 @@ class SDKSessionImpl implements SDKSession {
     this._abortController = abortController
     this.commands = commands
     this.skillsLoaded = false
+    this.pluginLifecycleLoaded = false
     this.agentsLoaded = false
     this.mcpConnected = false
     this.mcpTools = []

@@ -601,6 +601,8 @@ export interface SDKSession {
   updateOptions(options: SDKSessionUpdateOptions): void
   /** Reload filesystem-backed skills before the next turn without replacing session history. */
   reloadSkills(): void
+  /** Reload native plugin components without replacing session history. */
+  reloadPlugins(): Promise<void>
   /** Replace SDK session history with a host-provided active conversation path. */
   unstable_syncMessages(messages: unknown[]): void
   getMessages(): SDKMessage[]
