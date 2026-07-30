@@ -68,6 +68,7 @@ import { headlessProfilerCheckpoint } from './utils/headlessProfiler.js'
 import { registerStructuredOutputEnforcement } from './utils/hooks/hookHelpers.js'
 import { getInMemoryErrors } from './utils/log.js'
 import { countToolCalls, SYNTHETIC_MESSAGES } from './utils/messages.js'
+import { permissionRuleValueFromString } from './utils/permissions/permissionRuleParser.js'
 import {
   getMainLoopModel,
   parseUserSpecifiedModel,
@@ -1247,8 +1248,10 @@ export class QueryEngine {
         for (const toolSpec of a.tools as string[]) {
           // Wildcard '*' means all tools are allowed - skip validation
           if (toolSpec === '*') continue
-          // Parse tool spec to get base tool name (may contain permission rules)
-          const toolName = toolSpec.split(':')[0] ?? toolSpec
+          // Agent tool entries use permission-rule syntax, e.g.
+          // Bash(gh run list:*). Validate the base tool without discarding the
+          // original rule that runAgent later enforces.
+          const { toolName } = permissionRuleValueFromString(toolSpec)
           if (!validToolNames.has(toolName)) {
             throw new TypeError(`agent references unknown tool '${toolSpec}'`)
           }
@@ -1290,7 +1293,7 @@ export class QueryEngine {
       if (agent.tools) {
         for (const toolSpec of agent.tools) {
           if (toolSpec === '*') continue
-          const toolName = toolSpec.split(':')[0] ?? toolSpec
+          const { toolName } = permissionRuleValueFromString(toolSpec)
           if (!validAgentToolNames.has(toolName)) {
             throw new TypeError(
               `updateTools: agent '${agent.agentType}' references tool '${toolSpec}' which is not in the new tool set`
