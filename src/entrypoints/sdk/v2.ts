@@ -558,7 +558,28 @@ class SDKSessionImpl implements SDKSession {
         agentDefinitions: agentDefs,
       }))
       if (agentDefs.activeAgents.length > 0) {
-        this.engine.injectAgents(agentDefs.activeAgents)
+        const compatibleAgents = []
+        for (const agent of agentDefs.activeAgents) {
+          try {
+            // Reuse QueryEngine's native agent/tool validation. A plugin agent
+            // that references a tool disabled by this SDK session must not
+            // prevent unrelated compatible plugin agents from loading.
+            this.engine.injectAgents([agent])
+            compatibleAgents.push(agent)
+          } catch (err) {
+            const errorMessage = err instanceof Error ? err.message : String(err)
+            console.warn(
+              `SDK: agent '${agent.agentType}' skipped:`,
+              errorMessage,
+            )
+            this.pushAgentFailure({
+              type: 'agent_load_failure',
+              stage: 'injection',
+              error_message: `agent '${agent.agentType}': ${errorMessage}`,
+            })
+          }
+        }
+        this.engine.injectAgents(compatibleAgents)
       }
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)

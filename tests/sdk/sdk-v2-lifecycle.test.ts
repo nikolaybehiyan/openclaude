@@ -14,6 +14,8 @@ import {
   getSessionProjectDir,
   setOriginalCwd,
 } from '../../src/bootstrap/state.js'
+import { clearAgentDefinitionsCache } from '../../src/tools/AgentTool/loadAgentsDir.js'
+import { loadMarkdownFilesForSubdir } from '../../src/utils/markdownConfigLoader.js'
 import {
   drainQuery,
   withTempDir,
@@ -201,6 +203,48 @@ describe('V2: session creation', () => {
     } finally {
       session.close()
     }
+  })
+
+  test('SDK skips one incompatible agent without dropping compatible plugin agents', async () => {
+    await withTempDir(async (dir) => {
+      tempDirs.push(dir)
+      const agentsDir = join(dir, '.openclaude', 'agents')
+      mkdirSync(agentsDir, { recursive: true })
+      writeFileSync(
+        join(agentsDir, 'compatible-worker.md'),
+        '---\nname: compatible-worker\ndescription: Compatible SDK worker\ntools: Read\n---\n\nUse Read only.\n',
+      )
+      writeFileSync(
+        join(agentsDir, 'incompatible-worker.md'),
+        '---\nname: incompatible-worker\ndescription: Incompatible SDK worker\ntools: WebFetch\n---\n\nUse WebFetch.\n',
+      )
+      clearAgentDefinitionsCache()
+      loadMarkdownFilesForSubdir.cache.clear?.()
+
+      const session = unstable_v2_createSession({
+        cwd: dir,
+        tools: ['Skill'],
+        disallowedTools: ['WebFetch'],
+      })
+      ;(session as any)._engine.submitMessage = async function* () {}
+      try {
+        const events = await drainQuery(session.sendMessage('load agents'))
+        const agentNames = ((session as any)._engine?.config?.agents ?? []).map(
+          (agent: { agentType: string }) => agent.agentType,
+        )
+        expect(agentNames).toContain('compatible-worker')
+        expect(agentNames).not.toContain('incompatible-worker')
+        expect(events).toContainEqual(expect.objectContaining({
+          type: 'agent_load_failure',
+          stage: 'injection',
+          error_message: expect.stringContaining("agent 'incompatible-worker'"),
+        }))
+      } finally {
+        session.close()
+        clearAgentDefinitionsCache()
+        loadMarkdownFilesForSubdir.cache.clear?.()
+      }
+    })
   })
 
   test('SDK retry MCP refresh keeps attachment-only Read hidden from model tools', async () => {
