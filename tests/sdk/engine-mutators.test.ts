@@ -194,6 +194,21 @@ describe('updateTools transactional safety', () => {
     expect(((engine as any).config.tools as Tools).map(t => t.name)).toEqual(['toolX'])
   })
 
+  test('updateTools validates SDK agents against their internal tool pool', () => {
+    const engine = new QueryEngine(makeConfig({
+      tools: [makeTool('visibleTool')],
+      agentTools: [makeTool('workerTool')],
+      agents: [
+        { agentType: 'plugin-worker', tools: ['workerTool'] } as any,
+      ],
+    }))
+
+    expect(() => engine.updateTools([makeTool('visibleTool')])).not.toThrow()
+    expect(((engine as any).config.tools as Tools).map(t => t.name)).toEqual([
+      'visibleTool',
+    ])
+  })
+
   test('updateTools rejects non-iterable input', () => {
     const engine = new QueryEngine(makeConfig())
     expect(() => engine.updateTools(42 as any)).toThrow(/expected iterable/)

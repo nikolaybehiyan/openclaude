@@ -36,7 +36,12 @@ import { query } from './query.js'
 import { categorizeRetryableAPIError } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
 import type { AppState } from './state/AppState.js'
-import { type Tools, type ToolUseContext, toolMatchesName } from './Tool.js'
+import {
+  type ToolPermissionContext,
+  type Tools,
+  type ToolUseContext,
+  toolMatchesName,
+} from './Tool.js'
 import type { AgentDefinition } from './tools/AgentTool/loadAgentsDir.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from './tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import type { Message } from './types/message.js'
@@ -128,6 +133,8 @@ const snipProjection = feature('HISTORY_SNIP')
 export type QueryEngineConfig = {
   cwd: string
   tools: Tools
+  agentTools?: Tools
+  agentPermissionContext?: ToolPermissionContext
   commands: Command[]
   mcpClients: MCPServerConnection[]
   agents: AgentDefinition[]
@@ -218,6 +225,8 @@ export class QueryEngine {
       cwd,
       commands,
       tools,
+      agentTools,
+      agentPermissionContext,
       mcpClients,
       verbose = false,
       thinkingConfig,
@@ -358,6 +367,8 @@ export class QueryEngine {
         commands,
         debug: false, // we use stdout, so don't want to clobber it
         tools,
+        agentTools,
+        agentPermissionContext,
         verbose,
         mainLoopModel: initialMainLoopModel,
         thinkingConfig: initialThinkingConfig,
@@ -507,6 +518,8 @@ export class QueryEngine {
         commands,
         debug: false,
         tools,
+        agentTools,
+        agentPermissionContext,
         verbose,
         mainLoopModel,
         thinkingConfig: initialThinkingConfig,
@@ -1228,7 +1241,9 @@ export class QueryEngine {
         throw new TypeError("missing or invalid 'getSystemPrompt' (expected function)")
       }
       if (a.tools !== undefined) {
-        const validToolNames = new Set(this.config.tools.map(t => t.name))
+        const validToolNames = new Set(
+          (this.config.agentTools ?? this.config.tools).map(t => t.name),
+        )
         for (const toolSpec of a.tools as string[]) {
           // Wildcard '*' means all tools are allowed - skip validation
           if (toolSpec === '*') continue
@@ -1263,13 +1278,20 @@ export class QueryEngine {
     }, 'updateTools')
 
     // Phase 2: Validate agent compatibility BEFORE commit (transactional)
-    const validToolNames = new Set(toolArray.map(t => (t as Record<string, unknown>).name as string))
+    const visibleToolNames = new Set(
+      toolArray.map(t => (t as Record<string, unknown>).name as string),
+    )
+    const validAgentToolNames = new Set(
+      (this.config.agentTools ?? toolArray).map(
+        t => (t as Record<string, unknown>).name as string,
+      ),
+    )
     for (const agent of this.config.agents) {
       if (agent.tools) {
         for (const toolSpec of agent.tools) {
           if (toolSpec === '*') continue
           const toolName = toolSpec.split(':')[0] ?? toolSpec
-          if (!validToolNames.has(toolName)) {
+          if (!validAgentToolNames.has(toolName)) {
             throw new TypeError(
               `updateTools: agent '${agent.agentType}' references tool '${toolSpec}' which is not in the new tool set`
             )
@@ -1285,7 +1307,20 @@ export class QueryEngine {
     // Selective invalidation preserves cached schemas for tools that remain,
     // avoiding unnecessary recomputation for concurrent engines in multi-session
     // SDK scenarios. New tools (not yet cached) will be computed on first render.
-    invalidateRemovedToolSchemas(validToolNames)
+    invalidateRemovedToolSchemas(visibleToolNames)
+  }
+
+  /**
+   * Update the SDK-only worker pool without changing tools exposed to the
+   * main model. Other entrypoints leave this unset and retain existing
+   * behavior.
+   */
+  updateAgentRuntime(
+    tools: Tools,
+    permissionContext: ToolPermissionContext,
+  ): void {
+    this.config.agentTools = Array.from(tools)
+    this.config.agentPermissionContext = permissionContext
   }
 
   getReadFileState(): FileStateCache {

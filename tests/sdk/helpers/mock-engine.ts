@@ -12,6 +12,8 @@ export class MockQueryEngine {
   config = {
     mcpClients: [] as unknown[],
     tools: [] as unknown[],
+    agentTools: [] as unknown[],
+    agentPermissionContext: null as unknown,
     agents: [] as unknown[],
   }
 
@@ -60,6 +62,11 @@ export class MockQueryEngine {
 
   updateTools(tools: unknown[]): void {
     this.config.tools = tools
+  }
+
+  updateAgentRuntime(tools: unknown[], permissionContext: unknown): void {
+    this.config.agentTools = tools
+    this.config.agentPermissionContext = permissionContext
   }
 
   getMcpClients(): readonly unknown[] {

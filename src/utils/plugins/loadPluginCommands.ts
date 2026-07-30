@@ -25,6 +25,7 @@ import {
 } from '../markdownConfigLoader.js'
 import { parseUserSpecifiedModel } from '../model/model.js'
 import { executeShellCommandsInPrompt } from '../promptShellExecution.js'
+import { parseHooksFromFrontmatter } from '../../skills/loadSkillsDir.js'
 import { loadAllPluginsCacheOnly } from './pluginLoader.js'
 import {
   loadPluginOptions,
@@ -296,6 +297,10 @@ function createPluginCommand(
         : parseBooleanFrontmatter(userInvocableValue)
 
     const shell = parseShellFrontmatter(frontmatter.shell, commandName)
+    const context = frontmatter.context === 'fork' ? 'fork' : undefined
+    const agent =
+      typeof frontmatter.agent === 'string' ? frontmatter.agent : undefined
+    const hooks = parseHooksFromFrontmatter(frontmatter, commandName)
 
     return {
       type: 'prompt',
@@ -311,6 +316,10 @@ function createPluginCommand(
       effort,
       disableModelInvocation,
       userInvocable,
+      context,
+      agent,
+      hooks,
+      skillRoot: pluginPath,
       contentLength: content.length,
       source: 'plugin' as const,
       loadedFrom: isSkill || config.isSkillMode ? 'plugin' : undefined,

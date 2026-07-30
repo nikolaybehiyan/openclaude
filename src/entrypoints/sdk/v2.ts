@@ -43,7 +43,6 @@ import {
 } from '../../utils/sessionStorage.js'
 import type { SessionId } from '../../types/ids.js'
 import { getAgentDefinitionsWithOverrides } from '../../tools/AgentTool/loadAgentsDir.js'
-import { AGENT_TOOL_NAME } from '../../tools/AgentTool/constants.js'
 import { FILE_READ_TOOL_NAME } from '../../tools/FileReadTool/prompt.js'
 import { FileReadTool } from '../../tools/FileReadTool/FileReadTool.js'
 import type {
@@ -99,6 +98,7 @@ import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import { resolveSDKMcpServerConfigs } from './mcpRuntime.js'
 import { refreshActivePlugins } from '../../utils/plugins/refresh.js'
+import { processSessionStartHooks } from '../../utils/sessionStart.js'
 import {
   OUTPUT_FILE_TAG,
   STATUS_TAG,
@@ -378,6 +378,8 @@ class SDKSessionImpl implements SDKSession {
   private commands: Command[] = []
   private skillsLoaded = false
   private pluginLifecycleLoaded = false
+  private sessionStartHooksPromise: Promise<void> | null = null
+  private sessionStartSource: 'startup' | 'resume'
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -388,6 +390,7 @@ class SDKSessionImpl implements SDKSession {
     options: SDKSessionOptions,
     appStateStore: Store<AppState> | null,
     abortController?: AbortController | null,
+    sessionStartSource: 'startup' | 'resume' = 'startup',
   ) {
     if (engine) this._engine = engine
     this._sessionId = sessionId
@@ -395,6 +398,7 @@ class SDKSessionImpl implements SDKSession {
     if (appStateStore) this._appStateStore = appStateStore
     if (abortController) this._abortController = abortController
     this.mcpServers = options.mcpServers
+    this.sessionStartSource = sessionStartSource
   }
 
   /** Late-bind the engine (used when session is created before engine). */
@@ -524,6 +528,25 @@ class SDKSessionImpl implements SDKSession {
     this.skillsLoaded = true
   }
 
+  private ensureSessionStartHooksProcessed(): Promise<void> {
+    if (!this.sessionStartHooksPromise) {
+      this.sessionStartHooksPromise = (async () => {
+        const hookMessages = await processSessionStartHooks(
+          this.sessionStartSource,
+          {
+            sessionId: this._sessionId,
+            model: this.options.model,
+            forceSyncExecution: true,
+          },
+        )
+        if (hookMessages.length > 0) {
+          this.engine.injectMessages(hookMessages)
+        }
+      })()
+    }
+    return this.sessionStartHooksPromise
+  }
+
   private async ensureAgentsLoaded(): Promise<void> {
     if (this.agentsLoaded) {
       return
@@ -534,16 +557,7 @@ class SDKSessionImpl implements SDKSession {
         ...prev,
         agentDefinitions: agentDefs,
       }))
-      // Loading plugin metadata is independent from exposing the Agent tool.
-      // Chat intentionally hides Agent, so injecting those definitions into a
-      // filtered main-thread tool pool would make native validation reject
-      // legitimate plugin-agent tools such as Read. Code/Cowork expose Agent
-      // and receive the full native definitions after MCP tools are connected.
-      const visibleTools = mergeRuntimeTools(
-        getTools(sdkVisiblePermissionContext(this.options)),
-        this.mcpTools,
-      )
-      if (visibleTools.some(tool => tool.name === AGENT_TOOL_NAME)) {
+      if (agentDefs.activeAgents.length > 0) {
         this.engine.injectAgents(agentDefs.activeAgents)
       }
     } catch (err) {
@@ -586,6 +600,7 @@ class SDKSessionImpl implements SDKSession {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
 
+        await self.ensureSessionStartHooksProcessed()
         await self.ensureMcpServersConnected()
         await self.ensureAgentsLoaded()
 
@@ -642,6 +657,7 @@ class SDKSessionImpl implements SDKSession {
         ) {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
+        await self.ensureSessionStartHooksProcessed()
         await self.ensureMcpServersConnected()
         await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
@@ -812,11 +828,16 @@ class SDKSessionImpl implements SDKSession {
 
   private applyPermissionContextFromOptions(): void {
     const permissionContext = sdkVisiblePermissionContext(this.options)
+    const agentPermissionContext = sdkAgentPermissionContext(this.options)
     this.appStateStore.setState(prev => ({
       ...prev,
       toolPermissionContext: attachmentReadPermissionContext(permissionContext),
     }))
     this.engine.updateTools(mergeRuntimeTools(getTools(permissionContext), this.mcpTools))
+    this.engine.updateAgentRuntime(
+      mergeRuntimeTools(getTools(agentPermissionContext), this.mcpTools),
+      agentPermissionContext,
+    )
   }
 
   private async ensureMcpServersConnected(): Promise<void> {
@@ -977,7 +998,10 @@ function normalizeThinkingConfig(value: unknown): ThinkingConfig | undefined {
   throw new Error('SDKSession.updateOptions.thinkingConfig.type must be adaptive, enabled, or disabled')
 }
 
-function mergeRuntimeTools(builtinTools: Tool[], mcpTools: Tool[]): Tool[] {
+function mergeRuntimeTools(
+  builtinTools: readonly Tool[],
+  mcpTools: readonly Tool[],
+): Tool[] {
   const merged = [...builtinTools]
   for (const tool of mcpTools) {
     if (!merged.some(existing => existing.name === tool.name)) {
@@ -1028,6 +1052,7 @@ function createEngineFromOptions(
 
   // Build permission context
   const permissionContext = sdkVisiblePermissionContext(options)
+  const agentPermissionContext = sdkAgentPermissionContext(options)
 
   // Create AppState store (minimal, headless)
   const initialAppState = getDefaultAppState()
@@ -1054,6 +1079,7 @@ function createEngineFromOptions(
 
   // Get tools filtered by permission context
   const tools = getTools(permissionContext)
+  const agentTools = getTools(agentPermissionContext)
 
   // Create file state cache
   const readFileCache = createFileStateCacheWithSizeLimit(100)
@@ -1089,6 +1115,8 @@ function createEngineFromOptions(
   const engineConfig = {
     cwd,
     tools,
+    agentTools,
+    agentPermissionContext,
     commands,
     mcpClients: [],
     agents: [],
@@ -1281,13 +1309,21 @@ function attachmentReadPermissionContext(
 }
 
 function sdkVisiblePermissionContext(options: SDKSessionOptions): ToolPermissionContext {
-  return applyBuiltinToolsFilter(buildPermissionContext({
+  return applyBuiltinToolsFilter(
+    sdkAgentPermissionContext(options),
+    options.tools,
+    getToolsForDefaultPreset(),
+  )
+}
+
+function sdkAgentPermissionContext(options: SDKSessionOptions): ToolPermissionContext {
+  return buildPermissionContext({
     cwd: options.cwd,
     permissionMode: options.permissionMode,
     additionalDirectories: options.additionalDirectories,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
-  }), options.tools, getToolsForDefaultPreset())
+  })
 }
 
 function applySessionFlagSettings(settings?: Record<string, unknown>): void {
@@ -1485,7 +1521,14 @@ export async function unstable_v2_resumeSession(
     initialMessages = []
   }
 
-  const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
+  const session = new SDKSessionImpl(
+    null,
+    sessionId,
+    sessionOptions,
+    null,
+    null,
+    'resume',
+  )
   const signatureSafeInitialMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(initialMessages))
   const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
     sessionOptions,

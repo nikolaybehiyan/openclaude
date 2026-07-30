@@ -57,6 +57,11 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { createUserMessage, normalizeMessages } from '../../utils/messages.js'
 import type { ModelAlias } from '../../utils/model/aliases.js'
 import { resolveSkillModelOverride } from '../../utils/model/model.js'
+import { registerSkillHooks } from '../../utils/hooks/registerSkillHooks.js'
+import {
+  isRestrictedToPluginOnly,
+  isSourceAdminTrusted,
+} from '../../utils/settings/pluginOnlyPolicy.js'
 import { recordSkillUsage } from '../../utils/suggestions/skillUsageTracking.js'
 import { createAgentId } from '../../utils/uuid.js'
 import { runAgent } from '../AgentTool/runAgent.js'
@@ -205,6 +210,23 @@ async function executeForkedSkill(
   const { modifiedGetAppState, baseAgent, promptMessages, skillContent } =
     await prepareForkedCommandContext(command, args || '', context)
 
+  const hooksAllowedForThisSkill =
+    !isRestrictedToPluginOnly('hooks') ||
+    isSourceAdminTrusted(command.source)
+  if (command.hooks && hooksAllowedForThisSkill) {
+    registerSkillHooks(
+      context.setAppState,
+      getSessionId(),
+      command.hooks,
+      command.name,
+      command.skillRoot,
+    )
+  }
+  const skillPath = command.source
+    ? `${command.source}:${command.name}`
+    : command.name
+  addInvokedSkill(command.name, skillPath, skillContent, agentId)
+
   // Merge skill's effort into the agent definition so runAgent applies it
   const agentDefinition =
     command.effort !== undefined
@@ -231,7 +253,7 @@ async function executeForkedSkill(
       isAsync: false,
       querySource: 'agent:custom',
       model: command.model as ModelAlias | undefined,
-      availableTools: context.options.tools,
+      availableTools: context.options.agentTools ?? context.options.tools,
       override: { agentId },
     })) {
       agentMessages.push(message)

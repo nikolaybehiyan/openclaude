@@ -167,6 +167,12 @@ describe('V2: session creation', () => {
         expect(toolNames).toContain('Bash')
         expect(toolNames).toContain('local_echo')
         expect(toolNames).not.toContain('Read')
+        const agentToolNames = ((session as any)._engine?.config?.agentTools ?? []).map(
+          (item: { name: string }) => item.name,
+        )
+        expect(agentToolNames).toContain('Bash')
+        expect(agentToolNames).toContain('Read')
+        expect(agentToolNames).toContain('local_echo')
         const attachmentDenyRules =
           (session as any)._appStateStore?.getState().toolPermissionContext.alwaysDenyRules.cliArg ?? []
         expect(attachmentDenyRules).not.toContain('Read')
@@ -174,6 +180,27 @@ describe('V2: session creation', () => {
         session.close()
       }
     })
+  })
+
+  test('SDK explicit deny rules also constrain the internal agent tool pool', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      tools: ['Bash'],
+      disallowedTools: ['Read'],
+    })
+    try {
+      const toolNames = ((session as any)._engine?.config?.tools ?? []).map(
+        (item: { name: string }) => item.name,
+      )
+      const agentToolNames = ((session as any)._engine?.config?.agentTools ?? []).map(
+        (item: { name: string }) => item.name,
+      )
+      expect(toolNames).toEqual(['Bash'])
+      expect(agentToolNames).toContain('Bash')
+      expect(agentToolNames).not.toContain('Read')
+    } finally {
+      session.close()
+    }
   })
 
   test('SDK retry MCP refresh keeps attachment-only Read hidden from model tools', async () => {

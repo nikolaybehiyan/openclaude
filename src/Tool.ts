@@ -161,6 +161,11 @@ export type ToolUseContext = {
     debug: boolean
     mainLoopModel: string
     tools: Tools
+    /** Internal worker tool pool. SDK hosts use this to keep plugin-agent tools
+     * available without exposing them to the main model. */
+    agentTools?: Tools
+    /** Permission context paired with agentTools. */
+    agentPermissionContext?: ToolPermissionContext
     verbose: boolean
     thinkingConfig: ThinkingConfig
     mcpClients: MCPServerConnection[]
