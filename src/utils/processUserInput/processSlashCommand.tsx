@@ -16,6 +16,8 @@ import { resetMicrocompactState } from '../../services/compact/microCompact.js';
 import type { Progress as AgentProgress } from '../../tools/AgentTool/AgentTool.js';
 import { runAgent } from '../../tools/AgentTool/runAgent.js';
 import { renderToolUseProgressMessage } from '../../tools/AgentTool/UI.js';
+import { createActivityDescriptionResolver, createProgressTracker, getProgressUpdate, updateProgressFromMessage } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
+import { emitTaskProgress, getLastToolUseName } from '../../tools/AgentTool/agentToolUtils.js';
 import type { CommandResultDisplay } from '../../types/command.js';
 import { createAbortController } from '../abortController.js';
 import { getAgentContext } from '../agentContext.js';
@@ -39,6 +41,7 @@ import { isOfficialMarketplaceName, parsePluginIdentifier } from '../plugins/plu
 import { isRestrictedToPluginOnly, isSourceAdminTrusted } from '../settings/pluginOnlyPolicy.js';
 import { parseSlashCommand } from '../slashCommandParsing.js';
 import { sleep } from '../sleep.js';
+import { enqueueSdkEvent } from '../sdkEventQueue.js';
 import { recordSkillUsage } from '../suggestions/skillUsageTracking.js';
 import { logOTelEvent, redactIfDisabled } from '../telemetry/events.js';
 import { buildPluginCommandTelemetryFields } from '../telemetry/pluginTelemetry.js';
@@ -184,6 +187,23 @@ async function executeForkedSlashCommand(command: CommandBase & PromptCommand, a
 
   // Collect messages from the forked agent
   const agentMessages: Message[] = [];
+  const agentStartTime = Date.now();
+  const sdkTracker = createProgressTracker();
+  const sdkResolveActivity = createActivityDescriptionResolver(context.options.tools);
+  const sdkDescription = command.description || command.name;
+  let agentError: unknown;
+
+  // Direct context:fork commands bypass AgentTool, so they do not pass through
+  // registerAgentForeground(). Emit the same native SDK lifecycle that
+  // AgentTool emits. enqueueSdkEvent is a no-op in the interactive Ink UI.
+  enqueueSdkEvent({
+    type: 'system',
+    subtype: 'task_started',
+    task_id: agentId,
+    description: sdkDescription,
+    task_type: 'local_agent',
+    prompt: skillContent
+  });
 
   // Build progress messages for the agent progress UI
   const progressMessages: ProgressMessage<AgentProgress>[] = [];
@@ -240,6 +260,11 @@ async function executeForkedSlashCommand(command: CommandBase & PromptCommand, a
       availableTools: context.options.tools
     })) {
       agentMessages.push(message);
+      updateProgressFromMessage(sdkTracker, message, sdkResolveActivity, context.options.tools);
+      const lastToolName = getLastToolUseName(message);
+      if (lastToolName) {
+        emitTaskProgress(sdkTracker, agentId, undefined, sdkDescription, agentStartTime, lastToolName);
+      }
       const normalizedNew = normalizeMessages([message]);
 
       // Add progress message for assistant messages (which contain tool uses)
@@ -265,9 +290,26 @@ async function executeForkedSlashCommand(command: CommandBase & PromptCommand, a
         }
       }
     }
+  } catch (error) {
+    agentError = error;
+    throw error;
   } finally {
     // Clear the progress display
     setToolJSX(null);
+    const sdkProgress = getProgressUpdate(sdkTracker);
+    enqueueSdkEvent({
+      type: 'system',
+      subtype: 'task_notification',
+      task_id: agentId,
+      status: agentError instanceof AbortError ? 'stopped' : agentError ? 'failed' : 'completed',
+      output_file: '',
+      summary: sdkDescription,
+      usage: {
+        total_tokens: sdkProgress.tokenCount,
+        tool_uses: sdkProgress.toolUseCount,
+        duration_ms: Date.now() - agentStartTime
+      }
+    });
   }
   let resultText = extractResultText(agentMessages, 'Command completed');
   logForDebugging(`Forked slash command /${command.name} completed with agent ${agentId}`);

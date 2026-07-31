@@ -77,7 +77,7 @@ import {
 import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
 import { parseSettingSourcesFlag } from '../../utils/settings/constants.js'
 import { SandboxManager } from '../../utils/sandbox/sandbox-adapter.js'
-import { drainSdkEvents } from '../../utils/sdkEventQueue.js'
+import { createSdkEventWaiter, drainSdkEvents } from '../../utils/sdkEventQueue.js'
 import { stripSignatureBlocks } from '../../utils/messages.js'
 import { getRunningTasks } from '../../utils/task/framework.js'
 import { isBackgroundTask } from '../../tasks/types.js'
@@ -762,7 +762,33 @@ class SDKSessionImpl implements SDKSession {
     options?: { uuid?: string; isMeta?: boolean },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     let heldBackResult: SDKMessage | null = null
-    for await (const engineMsg of this.engine.submitMessage(content, options)) {
+    const iterator = this.engine.submitMessage(content, options)[Symbol.asyncIterator]()
+    let pendingNext = iterator.next()
+    while (true) {
+      const waiter = createSdkEventWaiter()
+      const outcome = await Promise.race([
+        pendingNext.then(
+          result => ({ type: 'engine' as const, result }),
+          error => ({ type: 'error' as const, error }),
+        ),
+        waiter.promise.then(() => ({ type: 'sdk-event' as const })),
+      ])
+      waiter.cancel()
+
+      if (outcome.type === 'sdk-event') {
+        yield* drainSdkEvents()
+        yield* this.drainAgentFailureQueue()
+        continue
+      }
+      if (outcome.type === 'error') {
+        throw outcome.error
+      }
+      if (outcome.result.done) {
+        break
+      }
+
+      const engineMsg = outcome.result.value
+      pendingNext = iterator.next()
       const sdkMessage = await hydrateToolProgressOutput(engineMsg)
       if (sdkMessage.type === 'result' && this.shouldHoldResultForBackgroundTasks()) {
         heldBackResult = sdkMessage

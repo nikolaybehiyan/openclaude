@@ -16,6 +16,7 @@ import {
 } from '../../src/bootstrap/state.js'
 import { clearAgentDefinitionsCache } from '../../src/tools/AgentTool/loadAgentsDir.js'
 import { loadMarkdownFilesForSubdir } from '../../src/utils/markdownConfigLoader.js'
+import { drainSdkEvents, enqueueSdkEvent } from '../../src/utils/sdkEventQueue.js'
 import {
   drainQuery,
   withTempDir,
@@ -43,6 +44,7 @@ afterAll(() => {
 const tempDirs: string[] = []
 
 afterEach(() => {
+  drainSdkEvents()
   for (const dir of tempDirs) {
     try { rmSync(dir, { recursive: true, force: true }) } catch {}
   }
@@ -396,6 +398,39 @@ describe('V2: session creation', () => {
       }
       expect(observedOriginalCwds).toEqual([dir, dir])
     })
+  })
+
+  test('runEngineTurn emits SDK task events while the engine iterator is still blocked', async () => {
+    const session = unstable_v2_createSession({ cwd: process.cwd() })
+    let releaseEngine: (() => void) | undefined
+    ;(session as any)._engine.submitMessage = async function* () {
+      enqueueSdkEvent({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'forked-agent-test',
+        description: 'Forked agent test',
+        task_type: 'local_agent',
+      })
+      await new Promise<void>(resolve => {
+        releaseEngine = resolve
+      })
+    }
+
+    const iterator = (session as any).runEngineTurn('run forked agent')
+    try {
+      const first = await iterator.next()
+      expect(first.done).toBe(false)
+      expect(first.value).toMatchObject({
+        type: 'system',
+        subtype: 'task_started',
+        task_id: 'forked-agent-test',
+      })
+      releaseEngine?.()
+      expect((await iterator.next()).done).toBe(true)
+    } finally {
+      releaseEngine?.()
+      session.close()
+    }
   })
 
   test('sendMessage() loads native skills and reloadSkills() refreshes them for the next turn', async () => {

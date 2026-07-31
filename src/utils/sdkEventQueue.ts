@@ -73,6 +73,7 @@ export type SdkEvent =
 
 const MAX_QUEUE_SIZE = 1000
 const queue: SdkEvent[] = []
+const eventWaiters = new Set<() => void>()
 
 export function enqueueSdkEvent(event: SdkEvent): void {
   // SDK events are only consumed (drained) in headless/streaming mode.
@@ -84,6 +85,35 @@ export function enqueueSdkEvent(event: SdkEvent): void {
     queue.shift()
   }
   queue.push(event)
+  for (const wake of eventWaiters) {
+    wake()
+  }
+  eventWaiters.clear()
+}
+
+/**
+ * Wait until an SDK event is available without polling. The caller must cancel
+ * the waiter when another source wins its race, otherwise a completed engine
+ * message would leave a stale waiter behind until the next SDK event.
+ */
+export function createSdkEventWaiter(): {
+  promise: Promise<void>
+  cancel: () => void
+} {
+  if (queue.length > 0) {
+    return { promise: Promise.resolve(), cancel: () => {} }
+  }
+  let wake: (() => void) | undefined
+  const promise = new Promise<void>(resolve => {
+    wake = resolve
+    eventWaiters.add(resolve)
+  })
+  return {
+    promise,
+    cancel: () => {
+      if (wake) eventWaiters.delete(wake)
+    },
+  }
 }
 
 export function drainSdkEvents(): Array<
