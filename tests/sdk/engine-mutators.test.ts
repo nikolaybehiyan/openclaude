@@ -194,42 +194,6 @@ describe('updateTools transactional safety', () => {
     expect(((engine as any).config.tools as Tools).map(t => t.name)).toEqual(['toolX'])
   })
 
-  test('updateTools validates SDK agents against their internal tool pool', () => {
-    const engine = new QueryEngine(makeConfig({
-      tools: [makeTool('visibleTool')],
-      agentTools: [makeTool('workerTool')],
-      agents: [
-        { agentType: 'plugin-worker', tools: ['workerTool'] } as any,
-      ],
-    }))
-
-    expect(() => engine.updateTools([makeTool('visibleTool')])).not.toThrow()
-    expect(((engine as any).config.tools as Tools).map(t => t.name)).toEqual([
-      'visibleTool',
-    ])
-  })
-
-  test('agent validation preserves permission-pattern tool references', () => {
-    const patternAgent = {
-      agentType: 'deploy-investigator',
-      whenToUse: 'Investigate deployments',
-      getSystemPrompt: () => 'Investigate deployments',
-      source: 'plugin',
-      plugin: 'monitor-examples',
-      tools: ['Bash(gh run list:*)'],
-    } as any
-    const engine = new QueryEngine(makeConfig({
-      tools: [makeTool('visibleTool')],
-      agentTools: [makeTool('Bash')],
-    }))
-
-    expect(() => engine.injectAgents([patternAgent])).not.toThrow()
-    expect(() => engine.updateTools([makeTool('visibleTool')])).not.toThrow()
-    expect(((engine as any).config.agents[0].tools as string[])).toEqual([
-      'Bash(gh run list:*)',
-    ])
-  })
-
   test('updateTools rejects non-iterable input', () => {
     const engine = new QueryEngine(makeConfig())
     expect(() => engine.updateTools(42 as any)).toThrow(/expected iterable/)

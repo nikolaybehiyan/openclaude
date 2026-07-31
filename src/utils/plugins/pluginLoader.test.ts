@@ -1,27 +1,7 @@
-import { afterEach, describe, expect, test } from 'bun:test'
-import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'fs'
-import { tmpdir } from 'os'
-import { join } from 'path'
+import { describe, expect, test } from 'bun:test'
 
-import { setInlinePlugins } from '../../bootstrap/state.js'
 import type { LoadedPlugin } from '../../types/plugin.js'
-import {
-  clearPluginSkillsCache,
-  getPluginSkills,
-} from './loadPluginCommands.js'
-import { clearPluginCache, mergePluginSources } from './pluginLoader.js'
-
-const tempPluginDirs: string[] = []
-
-afterEach(() => {
-  setInlinePlugins([])
-  clearPluginCache('pluginLoader.test cleanup')
-  clearPluginSkillsCache()
-  for (const dir of tempPluginDirs) {
-    rmSync(dir, { recursive: true, force: true })
-  }
-  tempPluginDirs.length = 0
-})
+import { mergePluginSources } from './pluginLoader.js'
 
 function marketplacePlugin(
   name: string,
@@ -87,56 +67,5 @@ describe('mergePluginSources', () => {
       source: legacy.source,
       plugin: legacy.name,
     })
-  })
-})
-
-describe('plugin skill runtime metadata', () => {
-  test('preserves fork agent and hooks from SKILL.md', async () => {
-    const pluginDir = mkdtempSync(join(tmpdir(), 'openclaude-plugin-skill-'))
-    tempPluginDirs.push(pluginDir)
-    const manifestDir = join(pluginDir, '.claude-plugin')
-    const skillDir = join(pluginDir, 'skills', 'investigate-deploy')
-    mkdirSync(manifestDir, { recursive: true })
-    mkdirSync(skillDir, { recursive: true })
-    writeFileSync(
-      join(manifestDir, 'plugin.json'),
-      JSON.stringify({ name: 'runtime-metadata-fixture', version: '1.0.0' }),
-    )
-    writeFileSync(
-      join(skillDir, 'SKILL.md'),
-      `---
-description: Verify plugin runtime metadata
-context: fork
-agent: runtime-metadata-fixture:deploy-investigator
-hooks:
-  PreToolUse:
-    - matcher: Bash
-      hooks:
-        - type: command
-          command: echo checked
----
-Verify metadata.
-`,
-    )
-
-    setInlinePlugins([pluginDir])
-    clearPluginCache('pluginLoader.test fixture')
-    clearPluginSkillsCache()
-    const skills = await getPluginSkills()
-    const skill = skills.find(
-      item => item.name === 'runtime-metadata-fixture:investigate-deploy',
-    )
-
-    if (skill?.type !== 'prompt') {
-      throw new Error(
-        `plugin skill was not loaded; available: ${skills.map(item => item.name).join(', ')}`,
-      )
-    }
-    expect(skill.context).toBe('fork')
-    expect(skill.agent).toBe(
-      'runtime-metadata-fixture:deploy-investigator',
-    )
-    expect(skill.skillRoot).toBe(pluginDir)
-    expect(skill.hooks?.PreToolUse?.[0]?.matcher).toBe('Bash')
   })
 })

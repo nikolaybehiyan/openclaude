@@ -14,9 +14,6 @@ import {
   getSessionProjectDir,
   setOriginalCwd,
 } from '../../src/bootstrap/state.js'
-import { clearAgentDefinitionsCache } from '../../src/tools/AgentTool/loadAgentsDir.js'
-import { loadMarkdownFilesForSubdir } from '../../src/utils/markdownConfigLoader.js'
-import { drainSdkEvents, enqueueSdkEvent } from '../../src/utils/sdkEventQueue.js'
 import {
   drainQuery,
   withTempDir,
@@ -44,7 +41,6 @@ afterAll(() => {
 const tempDirs: string[] = []
 
 afterEach(() => {
-  drainSdkEvents()
   for (const dir of tempDirs) {
     try { rmSync(dir, { recursive: true, force: true }) } catch {}
   }
@@ -171,80 +167,11 @@ describe('V2: session creation', () => {
         expect(toolNames).toContain('Bash')
         expect(toolNames).toContain('local_echo')
         expect(toolNames).not.toContain('Read')
-        const agentToolNames = ((session as any)._engine?.config?.agentTools ?? []).map(
-          (item: { name: string }) => item.name,
-        )
-        expect(agentToolNames).toContain('Bash')
-        expect(agentToolNames).toContain('Read')
-        expect(agentToolNames).toContain('local_echo')
         const attachmentDenyRules =
           (session as any)._appStateStore?.getState().toolPermissionContext.alwaysDenyRules.cliArg ?? []
         expect(attachmentDenyRules).not.toContain('Read')
       } finally {
         session.close()
-      }
-    })
-  })
-
-  test('SDK explicit deny rules also constrain the internal agent tool pool', () => {
-    const session = unstable_v2_createSession({
-      cwd: process.cwd(),
-      tools: ['Bash'],
-      disallowedTools: ['Read'],
-    })
-    try {
-      const toolNames = ((session as any)._engine?.config?.tools ?? []).map(
-        (item: { name: string }) => item.name,
-      )
-      const agentToolNames = ((session as any)._engine?.config?.agentTools ?? []).map(
-        (item: { name: string }) => item.name,
-      )
-      expect(toolNames).toEqual(['Bash'])
-      expect(agentToolNames).toContain('Bash')
-      expect(agentToolNames).not.toContain('Read')
-    } finally {
-      session.close()
-    }
-  })
-
-  test('SDK skips one incompatible agent without dropping compatible plugin agents', async () => {
-    await withTempDir(async (dir) => {
-      tempDirs.push(dir)
-      const agentsDir = join(dir, '.openclaude', 'agents')
-      mkdirSync(agentsDir, { recursive: true })
-      writeFileSync(
-        join(agentsDir, 'compatible-worker.md'),
-        '---\nname: compatible-worker\ndescription: Compatible SDK worker\ntools: Read\n---\n\nUse Read only.\n',
-      )
-      writeFileSync(
-        join(agentsDir, 'incompatible-worker.md'),
-        '---\nname: incompatible-worker\ndescription: Incompatible SDK worker\ntools: WebFetch\n---\n\nUse WebFetch.\n',
-      )
-      clearAgentDefinitionsCache()
-      loadMarkdownFilesForSubdir.cache.clear?.()
-
-      const session = unstable_v2_createSession({
-        cwd: dir,
-        tools: ['Skill'],
-        disallowedTools: ['WebFetch'],
-      })
-      ;(session as any)._engine.submitMessage = async function* () {}
-      try {
-        const events = await drainQuery(session.sendMessage('load agents'))
-        const agentNames = ((session as any)._engine?.config?.agents ?? []).map(
-          (agent: { agentType: string }) => agent.agentType,
-        )
-        expect(agentNames).toContain('compatible-worker')
-        expect(agentNames).not.toContain('incompatible-worker')
-        expect(events).toContainEqual(expect.objectContaining({
-          type: 'agent_load_failure',
-          stage: 'injection',
-          error_message: expect.stringContaining("agent 'incompatible-worker'"),
-        }))
-      } finally {
-        session.close()
-        clearAgentDefinitionsCache()
-        loadMarkdownFilesForSubdir.cache.clear?.()
       }
     })
   })
@@ -398,39 +325,6 @@ describe('V2: session creation', () => {
       }
       expect(observedOriginalCwds).toEqual([dir, dir])
     })
-  })
-
-  test('runEngineTurn emits SDK task events while the engine iterator is still blocked', async () => {
-    const session = unstable_v2_createSession({ cwd: process.cwd() })
-    let releaseEngine: (() => void) | undefined
-    ;(session as any)._engine.submitMessage = async function* () {
-      enqueueSdkEvent({
-        type: 'system',
-        subtype: 'task_started',
-        task_id: 'forked-agent-test',
-        description: 'Forked agent test',
-        task_type: 'local_agent',
-      })
-      await new Promise<void>(resolve => {
-        releaseEngine = resolve
-      })
-    }
-
-    const iterator = (session as any).runEngineTurn('run forked agent')
-    try {
-      const first = await iterator.next()
-      expect(first.done).toBe(false)
-      expect(first.value).toMatchObject({
-        type: 'system',
-        subtype: 'task_started',
-        task_id: 'forked-agent-test',
-      })
-      releaseEngine?.()
-      expect((await iterator.next()).done).toBe(true)
-    } finally {
-      releaseEngine?.()
-      session.close()
-    }
   })
 
   test('sendMessage() loads native skills and reloadSkills() refreshes them for the next turn', async () => {

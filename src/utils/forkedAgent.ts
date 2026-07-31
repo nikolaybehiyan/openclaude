@@ -287,14 +287,8 @@ export async function prepareForkedCommandContext(
   const allowedTools = parseToolListFromCLI(command.allowedTools ?? [])
 
   // Create modified context with allowed tools
-  const agentGetAppState = context.options.agentPermissionContext
-    ? () => ({
-        ...context.getAppState(),
-        toolPermissionContext: context.options.agentPermissionContext!,
-      })
-    : context.getAppState
   const modifiedGetAppState = createGetAppStateWithAllowedTools(
-    agentGetAppState,
+    context.getAppState,
     allowedTools,
   )
 
