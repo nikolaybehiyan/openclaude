@@ -41,7 +41,9 @@ import type {
   RewindFilesResult,
   McpServerStatus,
   ApiKeySource,
+  SdkPluginConfig,
 } from './coreTypes.generated.js'
+import { applySDKLocalPlugins } from './plugins.js'
 import {
   fileHistoryCanRestore,
   fileHistoryGetDiffStats,
@@ -125,6 +127,8 @@ export type QueryOptions = {
   hooks?: Record<string, unknown[]>
   /** MCP server configuration. */
   mcpServers?: Record<string, unknown>
+  /** Local plugin roots loaded by OpenClaude's native plugin loader. */
+  plugins?: SdkPluginConfig[]
   /** Settings overrides. */
   settings?: {
     env?: Record<string, string>
@@ -942,6 +946,7 @@ export function query(params: {
   if (!cwd) {
     throw new Error('query() requires options.cwd')
   }
+  applySDKLocalPlugins(options.plugins)
   setProjectRoot(cwd)
 
   // Note: We pass settings?.env to QueryImpl for application AFTER init() runs.

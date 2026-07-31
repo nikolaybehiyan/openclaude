@@ -87,6 +87,7 @@ export {
 export type { QueryOptions } from './query.js'
 export { query, queryAsync } from './query.js'
 export type { Query } from './query.js'
+export type { SdkPluginConfig } from './coreTypes.generated.js'
 
 // ============================================================================
 // Re-exports from v2

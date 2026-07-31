@@ -398,6 +398,11 @@ export type QueryPermissionMode =
   | 'bypassPermissions'
   | 'acceptEdits'
 
+export type SdkPluginConfig = {
+  type: 'local'
+  path: string
+}
+
 export type QueryOptions = {
   cwd: string
   additionalDirectories?: string[]
@@ -426,6 +431,8 @@ export type QueryOptions = {
   tools?: string[]
   hooks?: Record<string, unknown[]>
   mcpServers?: Record<string, unknown>
+  /** Local plugin roots loaded by OpenClaude's native plugin loader. */
+  plugins?: SdkPluginConfig[]
   settings?: {
     env?: Record<string, string>
     attribution?: { commit: string; pr: string }
@@ -522,6 +529,8 @@ export type SDKSessionOptions = {
   ) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown }>
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
+  /** Local plugin roots loaded by OpenClaude's native plugin loader. */
+  plugins?: SdkPluginConfig[]
   /**
    * Built-in tools to make available to Claude. When set, unlisted built-ins
    * are removed from context. SDK MCP/custom tools are unaffected.
@@ -586,6 +595,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'permissionMode'
   | 'additionalDirectories'
   | 'mcpServers'
+  | 'plugins'
   | 'tools'
   | 'allowedTools'
   | 'disallowedTools'

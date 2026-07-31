@@ -49,7 +49,9 @@ import { FileReadTool } from '../../tools/FileReadTool/FileReadTool.js'
 import type {
   HookEvent,
   SDKResultMessage as GeneratedSDKResultMessage,
+  SdkPluginConfig,
 } from './coreTypes.generated.js'
+import { applySDKLocalPlugins } from './plugins.js'
 import type {
   SDKMessage,
   SDKAgentLoadFailureMessage,
@@ -139,6 +141,8 @@ export type SDKSessionOptions = {
   canUseTool?: CanUseToolCallback
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
+  /** Local plugin roots loaded by OpenClaude's native plugin loader. */
+  plugins?: SdkPluginConfig[]
   /**
    * Built-in tools to make available to Claude. When set, unlisted built-ins
    * are removed from context. SDK MCP/custom tools are unaffected.
@@ -213,6 +217,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'permissionMode'
   | 'additionalDirectories'
   | 'mcpServers'
+  | 'plugins'
   | 'tools'
   | 'allowedTools'
   | 'disallowedTools'
@@ -481,6 +486,19 @@ class SDKSessionImpl implements SDKSession {
         mcpServersChanged = true
       } else {
         this.mcpServers = nextMcpServers
+      }
+    }
+
+    if (hasOwn(options, 'plugins')) {
+      const applied = applySDKLocalPlugins(options.plugins)
+      nextOptions.plugins = applied.paths.map(path => ({ type: 'local', path }))
+      if (applied.changed) {
+        this.pluginLifecycleLoaded = false
+        this.reloadSkills()
+        this.agentsLoaded = false
+        this.disconnectMcpClients('SDKSession.updateOptions.plugins')
+        this.mcpConnected = false
+        this.mcpTools = []
       }
     }
 
@@ -1015,6 +1033,7 @@ function createEngineFromOptions(
   if (!cwd) {
     throw new Error('SDKSessionOptions requires cwd')
   }
+  applySDKLocalPlugins(options.plugins)
   installFileReadAttachmentSupplementalContent()
   installBridgeDiagnostics()
   configureSessionEventStore(options)

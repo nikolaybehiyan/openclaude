@@ -16,6 +16,7 @@ import {
 } from '../../utils/settings/settings.js'
 import type { SettingsJson } from '../../utils/settings/types.js'
 import type { LoadedPlugin } from '../../types/plugin.js'
+import type { SdkPluginConfig } from './coreTypes.generated.js'
 import {
   getInlinePlugins,
   setInlinePlugins,
@@ -57,6 +58,41 @@ export type SDKPluginRuntimeIntent = {
    * interpret host filesystem contents.
    */
   inlinePluginRevision?: string
+}
+
+/**
+ * Apply the official Agent SDK local-plugin option to OpenClaude's existing
+ * native inline-plugin loader. This deliberately performs no marketplace
+ * refresh, installation, or manifest interpretation: the supplied paths are
+ * already-materialized plugin roots and the native loader owns discovery.
+ */
+export function applySDKLocalPlugins(
+  plugins: readonly SdkPluginConfig[] | undefined,
+): { paths: string[]; changed: boolean } {
+  if (plugins === undefined) {
+    return { paths: [...getInlinePlugins()], changed: false }
+  }
+
+  const paths = [...new Set(plugins.map((plugin, index) => {
+    if (!plugin || plugin.type !== 'local') {
+      throw new Error(`plugins[${index}] must have type "local"`)
+    }
+    const pluginPath = plugin.path?.trim()
+    if (!pluginPath) {
+      throw new Error(`plugins[${index}].path must be non-empty`)
+    }
+    return resolve(pluginPath)
+  }))].sort((left, right) => left.localeCompare(right))
+
+  const current = [...new Set(getInlinePlugins().map(pluginPath =>
+    resolve(pluginPath),
+  ))].sort((left, right) => left.localeCompare(right))
+  const changed = stableJSON(current) !== stableJSON(paths)
+  if (changed) {
+    setInlinePlugins(paths)
+    clearAllCaches()
+  }
+  return { paths, changed }
 }
 
 export type SDKPluginProjection = {
