@@ -5,7 +5,7 @@
  * and the unstable_v2_* functions.
  */
 
-import { randomUUID } from 'crypto'
+import { createHash, randomUUID } from 'crypto'
 import { basename, dirname, extname } from 'path'
 import type { CallToolResult, ToolAnnotations } from '@modelcontextprotocol/sdk/types.js'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
@@ -1801,12 +1801,112 @@ async function emitApiRequestMediaDiagnostic(
   }
   const body = JSON.parse(bodyText) as Record<string, unknown>
   const messages = Array.isArray(body.messages) ? body.messages : []
+  const systemText = apiRequestTextFragments(body.system).join('\n')
+  const skillListing = extractApiSkillListingEvidence(body.system, messages)
+  const requestToolNames = (Array.isArray(body.tools) ? body.tools : [])
+    .map(apiRequestToolName)
+    .filter((name): name is string => name !== '')
   emitBridgeDiagnostic('api_request_media', {
     url_kind: apiURLKind(url),
     model: typeof body.model === 'string' ? body.model : '',
     message_count: messages.length,
     media: summarizeApiMessages(messages),
   })
+  emitBridgeDiagnostic('api_request_prompt_contract', {
+    system_prompt_chars: systemText.length,
+    system_prompt_sha256: createHash('sha256').update(systemText).digest('hex'),
+    skill_listing_sources: skillListing.sources,
+    skill_listing_entries: skillListing.entries,
+    skill_listing_names: skillListing.names,
+    skill_listing_count: skillListing.names.length,
+    request_tool_names: requestToolNames,
+    request_tool_count: requestToolNames.length,
+    mcp_tool_names: requestToolNames.filter(name => name.startsWith('mcp__')),
+    has_skill_tool: requestToolNames.includes('Skill'),
+    has_tool_search: requestToolNames.includes('ToolSearch'),
+  })
+}
+
+function apiRequestToolName(tool: unknown): string {
+  if (!tool || typeof tool !== 'object' || Array.isArray(tool)) {
+    return ''
+  }
+  const record = tool as { name?: unknown; function?: { name?: unknown } }
+  if (typeof record.name === 'string') {
+    return record.name
+  }
+  return typeof record.function?.name === 'string' ? record.function.name : ''
+}
+
+function apiRequestTextFragments(value: unknown): string[] {
+  if (typeof value === 'string') {
+    return [value]
+  }
+  if (!Array.isArray(value)) {
+    return []
+  }
+  return value.flatMap(item => {
+    if (typeof item === 'string') {
+      return [item]
+    }
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return []
+    }
+    const text = (item as { text?: unknown }).text
+    return typeof text === 'string' ? [text] : []
+  })
+}
+
+function extractApiSkillListingEvidence(
+  system: unknown,
+  messages: unknown[],
+): { sources: string[]; entries: string[]; names: string[] } {
+  const marker = 'The following skills are available for use with the Skill tool:'
+  const sources = new Set<string>()
+  const entries = new Set<string>()
+  const names = new Set<string>()
+  const candidates = [
+    { source: 'system', text: apiRequestTextFragments(system).join('\n') },
+    ...messages.map((message, index) => ({
+      source: `messages[${index}].content`,
+      text: apiRequestTextFragments((message as { content?: unknown })?.content).join('\n'),
+    })),
+  ]
+  for (const { source, text } of candidates) {
+    let searchFrom = 0
+    while (searchFrom < text.length) {
+      const markerIndex = text.indexOf(marker, searchFrom)
+      if (markerIndex < 0) {
+        break
+      }
+      const lines = text.slice(markerIndex + marker.length).split('\n')
+      let listingStarted = false
+      for (const line of lines) {
+        const trimmed = line.trim()
+        if (!trimmed) {
+          if (listingStarted) break
+          continue
+        }
+        if (!trimmed.startsWith('- ')) {
+          if (listingStarted) break
+          continue
+        }
+        listingStarted = true
+        const entry = trimmed.slice(2)
+        sources.add(source)
+        entries.add(entry)
+        const descriptionIndex = entry.indexOf(': ')
+        const name = (descriptionIndex >= 0 ? entry.slice(0, descriptionIndex) : entry).trim()
+        if (name) names.add(name)
+      }
+      searchFrom = markerIndex + marker.length
+    }
+  }
+  return {
+    sources: [...sources].sort(),
+    entries: [...entries].sort(),
+    names: [...names].sort(),
+  }
 }
 
 function bridgeDiagnosticsEnabled(): boolean {
