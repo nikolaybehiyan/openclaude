@@ -1,12 +1,40 @@
 import { describe, expect, test } from 'bun:test'
 import type { ScopedMcpServerConfig } from '../../services/mcp/types.js'
+import type { MCPServerConnection } from '../../services/mcp/types.js'
+import type { AppState } from '../../state/AppStateStore.js'
+import type { Tool } from '../../Tool.js'
 import {
+  assembleSDKMcpAppState,
   connectSDKMcpServersIncrementally,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
 } from './mcpRuntime.js'
 
 describe('persistent SDK MCP runtime', () => {
+  test('publishes pending clients and settled tools through interactive AppState', () => {
+    const pending = { name: 'plugin:demo:server', type: 'pending' } as MCPServerConnection
+    const tool = { name: 'mcp__plugin_demo_server__search' } as Tool
+    const current = {
+      clients: [],
+      tools: [],
+      commands: [{ name: 'unchanged-command' }],
+      resources: { unchanged: [] },
+      pluginReconnectKey: 7,
+    } as unknown as AppState['mcp']
+
+    const published = assembleSDKMcpAppState(
+      current,
+      new Map([['plugin:demo:server', [pending]]]),
+      new Map([['plugin:demo:server', [tool]]]),
+    )
+
+    expect(published.clients).toEqual([pending])
+    expect(published.tools).toEqual([tool])
+    expect(published.commands).toBe(current.commands)
+    expect(published.resources).toBe(current.resources)
+    expect(published.pluginReconnectKey).toBe(7)
+  })
+
   test('keeps in-process SDK tools on turn one and defers transport connections', () => {
     const sdkServer = { type: 'sdk', name: 'host-tools', tools: [] }
     const httpServer = { type: 'http', url: 'https://example.test/mcp' }
@@ -82,14 +110,14 @@ describe('persistent SDK MCP runtime', () => {
               command: 'disabled-server',
               scope: 'dynamic',
             },
-          },
+          } as unknown as Record<string, ScopedMcpServerConfig>,
           errors: [],
         }
       },
       name => name === 'disabled',
     )
 
-    expect(receivedDynamic).toBe(dynamic)
+    expect(receivedDynamic as unknown).toBe(dynamic)
     expect(result.servers).toEqual({
       'plugin:forge:governance': {
         type: 'stdio',

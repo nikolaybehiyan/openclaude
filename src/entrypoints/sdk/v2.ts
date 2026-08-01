@@ -103,6 +103,7 @@ import { buildMcpToolName } from '../../services/mcp/mcpStringUtils.js'
 import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
+  assembleSDKMcpAppState,
   connectSDKMcpServersIncrementally,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
@@ -407,6 +408,8 @@ class SDKSessionImpl implements SDKSession {
   private commands: Command[] = []
   private skillsLoaded = false
   private pluginLifecycleLoaded = false
+  private pluginLifecycleGeneration = 0
+  private pluginLifecyclePromise: Promise<void> | null = null
   private agentFailureQueue: SDKAgentLoadFailureMessage[] = []
   /** Resolved transcript directory — dirname of the JSONL file, or null for default project dir */
   private _sessionProjectDir: string | null = null
@@ -444,6 +447,31 @@ class SDKSessionImpl implements SDKSession {
   /** Keep the mutable command registry shared with QueryEngine. */
   setCommands(commands: Command[]): void {
     this.commands = commands
+  }
+
+  /**
+   * Mirror interactive startup: begin live plugin/MCP discovery as soon as the
+   * persistent session exists, before the first user message is submitted.
+   * This only primes native connections; it never delays session creation.
+   */
+  startBackgroundRuntime(): void {
+    const sdkContext = {
+      sessionId: this._sessionId as SessionId,
+      sessionProjectDir: this._sessionProjectDir,
+      cwd: this.options.cwd,
+      originalCwd: this.options.cwd,
+    }
+    void runWithSdkContext(sdkContext, async () => {
+      await init()
+      const pluginStartup = this.ensurePluginLifecycleLoaded()
+      const mcpStartup = this.ensureMcpServersConnected()
+      await Promise.all([pluginStartup, mcpStartup])
+    }).catch(error => {
+      console.warn(
+        'SDK: background plugin/MCP startup failed:',
+        error instanceof Error ? error.message : String(error),
+      )
+    })
   }
 
   /** Set the resolved transcript directory (called by resumeSession after resolving the JSONL path). */
@@ -517,7 +545,7 @@ class SDKSessionImpl implements SDKSession {
       const applied = applySDKLocalPlugins(options.plugins)
       nextOptions.plugins = applied.paths.map(path => ({ type: 'local', path }))
       if (applied.changed) {
-        this.pluginLifecycleLoaded = false
+        this.invalidatePluginLifecycle()
         this.reloadSkills()
         this.agentsLoaded = false
         this.disconnectMcpClients('SDKSession.updateOptions.plugins')
@@ -530,6 +558,9 @@ class SDKSessionImpl implements SDKSession {
     if (permissionContextChanged || mcpServersChanged) {
       this.applyPermissionContextFromOptions()
     }
+    if (mcpServersChanged || hasOwn(options, 'plugins')) {
+      this.startBackgroundRuntime()
+    }
   }
 
   reloadSkills(): void {
@@ -539,22 +570,49 @@ class SDKSessionImpl implements SDKSession {
   }
 
   async reloadPlugins(): Promise<void> {
+    const generation = ++this.pluginLifecycleGeneration
+    this.pluginLifecyclePromise = null
+    this.pluginLifecycleLoaded = false
     await refreshActivePlugins(updater => this.appStateStore.setState(updater))
-    this.pluginLifecycleLoaded = true
+    if (generation === this.pluginLifecycleGeneration) {
+      this.pluginLifecycleLoaded = true
+    }
     this.reloadSkills()
     this.agentsLoaded = false
     this.disconnectMcpClients('SDKSession.reloadPlugins')
     this.mcpConnected = false
     this.mcpTools = []
     this.applyPermissionContextFromOptions()
+    this.startBackgroundRuntime()
   }
 
   private async ensurePluginLifecycleLoaded(): Promise<void> {
     if (this.pluginLifecycleLoaded) {
       return
     }
-    await initializeSDKLocalPlugins(updater => this.appStateStore.setState(updater))
-    this.pluginLifecycleLoaded = true
+    if (this.pluginLifecyclePromise) {
+      await this.pluginLifecyclePromise
+      return
+    }
+    const generation = this.pluginLifecycleGeneration
+    const startup = initializeSDKLocalPlugins(updater => this.appStateStore.setState(updater))
+    this.pluginLifecyclePromise = startup
+    try {
+      await startup
+      if (generation === this.pluginLifecycleGeneration) {
+        this.pluginLifecycleLoaded = true
+      }
+    } finally {
+      if (this.pluginLifecyclePromise === startup) {
+        this.pluginLifecyclePromise = null
+      }
+    }
+  }
+
+  private invalidatePluginLifecycle(): void {
+    this.pluginLifecycleGeneration += 1
+    this.pluginLifecyclePromise = null
+    this.pluginLifecycleLoaded = false
   }
 
   private async ensureSkillsLoaded(): Promise<void> {
@@ -959,6 +1017,10 @@ class SDKSessionImpl implements SDKSession {
     dynamicServerNames: Set<string>,
   ): Promise<void> {
     try {
+      // Native interactive startup loads the enabled plugin set before reading
+      // plugin MCP configs. Preserve that ordering while the host SDK tools
+      // continue to publish independently.
+      await this.ensurePluginLifecycleLoaded()
       const resolved = await resolveSDKMcpServerConfigs(dynamicServers)
       if (generation !== this.mcpConnectionGeneration) {
         return
@@ -1200,8 +1262,17 @@ class SDKSessionImpl implements SDKSession {
   }
 
   private refreshPublishedMcpRuntime(): void {
-    this.engine.setMcpClients([...this.mcpClientsByServer.values()].flat())
+    const clients = [...this.mcpClientsByServer.values()].flat()
     this.mcpTools = [...this.mcpToolsByServer.values()].flat()
+    this.engine.setMcpClients(clients)
+    this.appStateStore.setState(prev => ({
+      ...prev,
+      mcp: assembleSDKMcpAppState(
+        prev.mcp,
+        this.mcpClientsByServer,
+        this.mcpToolsByServer,
+      ),
+    }))
     this.applyPermissionContextFromOptions()
   }
 
@@ -1221,6 +1292,9 @@ class SDKSessionImpl implements SDKSession {
     this._engine?.setMcpClients?.([])
     this.mcpClientsByServer.clear()
     this.mcpToolsByServer.clear()
+    if (this._engine && this._appStateStore) {
+      this.refreshPublishedMcpRuntime()
+    }
   }
 
   private failNativeMcpWaiters(error: Error, generation?: number): void {
@@ -1356,7 +1430,10 @@ function normalizeThinkingConfig(value: unknown): ThinkingConfig | undefined {
   throw new Error('SDKSession.updateOptions.thinkingConfig.type must be adaptive, enabled, or disabled')
 }
 
-function mergeRuntimeTools(builtinTools: Tool[], mcpTools: Tool[]): Tool[] {
+function mergeRuntimeTools(
+  builtinTools: readonly Tool[],
+  mcpTools: readonly Tool[],
+): Tool[] {
   const merged = [...builtinTools]
   for (const tool of mcpTools) {
     if (!merged.some(existing => existing.name === tool.name)) {
@@ -1751,6 +1828,7 @@ export function unstable_v2_createSession(options: SDKSessionOptions): SDKSessio
   session.setAppStateStore(appStateStore)
   session.setAbortController(abortController)
   session.setCommands(commands)
+  session.startBackgroundRuntime()
   return session
 }
 
@@ -1914,6 +1992,8 @@ export async function unstable_v2_resumeSession(
     session.setSessionProjectDir(transcriptDir)
     switchSession(sessionId as SessionId, transcriptDir)
   }
+
+  session.startBackgroundRuntime()
 
   return session
 }

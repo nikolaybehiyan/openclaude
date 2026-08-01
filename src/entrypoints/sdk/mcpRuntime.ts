@@ -2,7 +2,12 @@ import {
   getClaudeCodeMcpConfigs,
   isMcpServerDisabled,
 } from '../../services/mcp/config.js'
-import type { ScopedMcpServerConfig } from '../../services/mcp/types.js'
+import type {
+  MCPServerConnection,
+  ScopedMcpServerConfig,
+} from '../../services/mcp/types.js'
+import type { AppState } from '../../state/AppStateStore.js'
+import type { Tool } from '../../Tool.js'
 import type { PluginError } from '../../types/plugin.js'
 
 export type SDKMcpServerConfigPartitions = {
@@ -13,6 +18,24 @@ export type SDKMcpServerConfigPartitions = {
 export type SDKMcpIncrementalSettlement<T> =
   | { status: 'fulfilled'; value: T }
   | { status: 'rejected'; reason: unknown }
+
+/**
+ * Publish the SDK-owned MCP runtime through the same AppState surface used by
+ * interactive OpenClaude. Keeping pending clients here is important: the
+ * model request retains ToolSearch while live servers are still connecting,
+ * and newly-settled tools are visible to the next agent-loop step.
+ */
+export function assembleSDKMcpAppState(
+  current: AppState['mcp'],
+  clientsByServer: ReadonlyMap<string, readonly MCPServerConnection[]>,
+  toolsByServer: ReadonlyMap<string, readonly Tool[]>,
+): AppState['mcp'] {
+  return {
+    ...current,
+    clients: [...clientsByServer.values()].flat(),
+    tools: [...toolsByServer.values()].flat(),
+  }
+}
 
 /**
  * In-process SDK servers are JavaScript tool definitions and never open a
