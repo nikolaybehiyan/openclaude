@@ -466,6 +466,11 @@ export type SDKSessionOptions = {
   ) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown }>
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
+  /**
+   * Non-blocking observer for successful native plugin MCP tools/list results.
+   * Reporter failures never affect the session or the model request.
+   */
+  mcpToolReporter?: (report: SDKMcpToolReport) => void | Promise<void>
   /** Local plugin roots loaded by OpenClaude's native plugin loader. */
   plugins?: SdkPluginConfig[]
   /**
@@ -514,6 +519,18 @@ export type SDKSessionOptions = {
   sessionSubagentEventReader?: SDKSessionEventReader
   /** In-memory session hooks backed by OpenClaude's native session hook runtime. */
   hooks?: SDKSessionFunctionHooks
+}
+
+export type SDKMcpToolReport = {
+  serverName: string
+  tools: Array<{
+    name: string
+    description: string
+    inputSchema: Record<string, unknown>
+    searchHint?: string
+    alwaysLoad?: boolean
+    _meta?: Record<string, unknown>
+  }>
 }
 
 export type SDKSessionFunctionHook = {

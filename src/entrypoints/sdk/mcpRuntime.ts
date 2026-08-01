@@ -20,6 +20,43 @@ export type SDKMcpIncrementalSettlement<T> =
   | { status: 'fulfilled'; value: T }
   | { status: 'rejected'; reason: unknown }
 
+export function nativePluginMcpToolReport(
+  serverName: string,
+  tools: readonly Tool[],
+): {
+  serverName: string
+  tools: Array<{
+    name: string
+    description: string
+    inputSchema: Record<string, unknown>
+    searchHint?: string
+    alwaysLoad?: boolean
+    _meta?: Record<string, unknown>
+  }>
+} | null {
+  if (!serverName.startsWith('plugin:')) {
+    return null
+  }
+  const projected = tools.flatMap(tool => {
+    const upstreamName = tool.mcpInfo?.serverName === serverName
+      ? tool.mcpInfo.toolName.trim()
+      : ''
+    const inputSchema = tool.inputJSONSchema
+    if (!upstreamName || inputSchema === undefined) {
+      return []
+    }
+    return [{
+      name: upstreamName,
+      description: '',
+      inputSchema: inputSchema as Record<string, unknown>,
+      ...(tool.searchHint ? { searchHint: tool.searchHint } : {}),
+      ...(tool.alwaysLoad !== undefined ? { alwaysLoad: tool.alwaysLoad } : {}),
+      ...(tool._meta ? { _meta: tool._meta } : {}),
+    }]
+  })
+  return projected.length > 0 ? { serverName, tools: projected } : null
+}
+
 /**
  * Publish the SDK-owned MCP runtime through the same AppState surface used by
  * interactive OpenClaude. Keeping pending clients here is important: the

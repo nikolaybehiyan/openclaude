@@ -103,6 +103,7 @@ export type {
   SDKSessionFunctionHook,
   SDKSessionFunctionHooks,
   SDKSessionUpdateOptions,
+  SDKMcpToolReport,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'

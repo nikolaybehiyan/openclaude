@@ -6,6 +6,7 @@ import type { Tool } from '../../Tool.js'
 import {
   assembleSDKMcpAppState,
   connectSDKMcpServersIncrementally,
+  nativePluginMcpToolReport,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
 } from './mcpRuntime.js'
@@ -84,6 +85,30 @@ describe('persistent SDK MCP runtime', () => {
     releaseSlow()
     await completion
     expect(settled).toEqual(['fast', 'slow'])
+  })
+
+  test('reports exact native plugin tool identity and JSON schema without reporting host connectors', () => {
+    const tool = {
+      name: 'mcp__plugin_demo_research__search',
+      mcpInfo: { serverName: 'plugin:demo:research', toolName: 'search' },
+      inputJSONSchema: { type: 'object', properties: { query: { type: 'string' } } },
+      searchHint: 'papers evidence',
+      alwaysLoad: true,
+      _meta: { 'anthropic/alwaysLoad': true },
+    } as unknown as Tool
+
+    expect(nativePluginMcpToolReport('plugin:demo:research', [tool])).toEqual({
+      serverName: 'plugin:demo:research',
+      tools: [{
+        name: 'search',
+        description: '',
+        inputSchema: { type: 'object', properties: { query: { type: 'string' } } },
+        searchHint: 'papers evidence',
+        alwaysLoad: true,
+        _meta: { 'anthropic/alwaysLoad': true },
+      }],
+    })
+    expect(nativePluginMcpToolReport('pubmed', [tool])).toBeNull()
   })
 
   test('uses the native loader and merges host dynamic servers with highest precedence', async () => {

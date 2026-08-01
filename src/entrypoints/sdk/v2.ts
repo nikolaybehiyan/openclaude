@@ -105,6 +105,7 @@ import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
   assembleSDKMcpAppState,
   connectSDKMcpServersIncrementally,
+  nativePluginMcpToolReport,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
 } from './mcpRuntime.js'
@@ -149,6 +150,8 @@ export type SDKSessionOptions = {
   canUseTool?: CanUseToolCallback
   /** MCP server configurations for this session. */
   mcpServers?: Record<string, unknown>
+  /** Observe schemas returned by native plugin MCP tools/list for durable host projection. */
+  mcpToolReporter?: (report: SDKMcpToolReport) => void | Promise<void>
   /** Local plugin roots loaded by OpenClaude's native plugin loader. */
   plugins?: SdkPluginConfig[]
   /**
@@ -207,6 +210,18 @@ export type SDKSessionOptions = {
   sessionSubagentEventReader?: SDKSessionEventReader
   /** In-memory session hooks backed by OpenClaude's native session hook runtime. */
   hooks?: SDKSessionFunctionHooks
+}
+
+export type SDKMcpToolReport = {
+  serverName: string
+  tools: Array<{
+    name: string
+    description: string
+    inputSchema: Record<string, unknown>
+    searchHint?: string
+    alwaysLoad?: boolean
+    _meta?: Record<string, unknown>
+  }>
 }
 
 export type SDKSessionFunctionHook = {
@@ -1021,6 +1036,56 @@ class SDKSessionImpl implements SDKSession {
     }
   }
 
+  private reportNativePluginMcpTools(
+    serverName: string,
+    settlement: { status: 'fulfilled'; value: { clients: MCPServerConnection[]; tools: Tool[] } } | { status: 'rejected'; reason: unknown },
+    generation: number,
+  ): void {
+    const reporter = this.options.mcpToolReporter
+    if (
+      !reporter ||
+      generation !== this.mcpConnectionGeneration ||
+      settlement.status !== 'fulfilled' ||
+      !serverName.startsWith('plugin:') ||
+      !settlement.value.clients.some(client => client.type === 'connected')
+    ) {
+      return
+    }
+    const report = nativePluginMcpToolReport(serverName, settlement.value.tools)
+    if (!report) {
+      return
+    }
+    // Reporting is an observability/persistence side effect of an already
+    // completed native tools/list. It must never delay or fail the model path.
+    const publish = async (): Promise<void> => {
+      const permissionContext = this.appStateStore.getState().toolPermissionContext
+      const describedTools = await Promise.all(report.tools.map(async definition => {
+        const native = settlement.value.tools.find(tool =>
+          tool.mcpInfo?.serverName === serverName && tool.mcpInfo.toolName === definition.name,
+        )
+        if (!native) {
+          return definition
+        }
+        try {
+          const description = await native.description({} as never, {
+            isNonInteractiveSession: true,
+            toolPermissionContext: permissionContext,
+            tools: settlement.value.tools,
+          })
+          return { ...definition, description }
+        } catch {
+          return definition
+        }
+      }))
+      await reporter({ ...report, tools: describedTools })
+    }
+    void publish().catch(error => {
+      if (bridgeDiagnosticsEnabled()) {
+        console.warn(`SDK: plugin MCP schema reporter failed for ${serverName}: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    })
+  }
+
   private async startPluginMcpServers(
     generation: number,
     dynamicServers: Record<string, unknown>,
@@ -1072,6 +1137,7 @@ class SDKSessionImpl implements SDKSession {
         (name, settlement) => {
           this.resolveNativeMcpWaiter(name, settlement, generation)
           this.publishMcpSettlement(name, settlement, generation)
+          this.reportNativePluginMcpTools(name, settlement, generation)
         },
       )
     } catch (err) {
