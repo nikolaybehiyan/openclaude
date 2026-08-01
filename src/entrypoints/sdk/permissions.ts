@@ -383,6 +383,15 @@ export async function connectSdkMcpServers(
           wsIdeCount: 0,
         })
 
+        // connectToServer represents transport failures as a failed client
+        // instead of rejecting. Surface the reason in SDK mode as well; the
+        // incremental session startup intentionally does not await remote MCP
+        // transports, so without this diagnostic a failed server otherwise
+        // looks indistinguishable from a connected server with zero tools.
+        if (client.type === 'failed') {
+          console.warn(`SDK: MCP server ${name} failed: ${client.error}`)
+        }
+
         // If connected, fetch tools
         if (client.type === 'connected') {
           const serverTools = await fetchToolsForClient(client)
