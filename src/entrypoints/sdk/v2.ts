@@ -97,9 +97,14 @@ import { addFunctionHook } from '../../utils/hooks/sessionHooks.js'
 import { clearCommandsCache, getCommands } from '../../commands.js'
 import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
+import type { MCPServerConnection } from '../../services/mcp/types.js'
 import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
-import { resolveSDKMcpServerConfigs } from './mcpRuntime.js'
+import {
+  connectSDKMcpServersIncrementally,
+  partitionSDKMcpServerConfigsForStartup,
+  resolveSDKMcpServerConfigs,
+} from './mcpRuntime.js'
 import { refreshActivePlugins } from '../../utils/plugins/refresh.js'
 import {
   OUTPUT_FILE_TAG,
@@ -380,6 +385,10 @@ class SDKSessionImpl implements SDKSession {
   private mcpServers?: Record<string, unknown>
   private mcpConnected = false
   private mcpTools: Tool[] = []
+  private mcpConnectionGeneration = 0
+  private mcpStartupPromise: Promise<void> | null = null
+  private mcpClientsByServer = new Map<string, MCPServerConnection[]>()
+  private mcpToolsByServer = new Map<string, Tool[]>()
   private commands: Command[] = []
   private skillsLoaded = false
   private pluginLifecycleLoaded = false
@@ -589,6 +598,10 @@ class SDKSessionImpl implements SDKSession {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
         await self.ensurePluginLifecycleLoaded()
+        // Start native MCP discovery/connection alongside cold skill and
+        // sandbox initialization. Only in-process SDK tools are awaited;
+        // transport servers continue independently in the background.
+        const mcpStartup = self.ensureMcpServersConnected()
         await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
@@ -604,7 +617,7 @@ class SDKSessionImpl implements SDKSession {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
 
-        await self.ensureMcpServersConnected()
+        await mcpStartup
         await self.ensureAgentsLoaded()
 
         // Switch session for transcript writes using session's own resolved dir
@@ -646,6 +659,7 @@ class SDKSessionImpl implements SDKSession {
         await init()
         const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
         await self.ensurePluginLifecycleLoaded()
+        const mcpStartup = self.ensureMcpServersConnected()
         await self.ensureSkillsLoaded()
         if (self.options.settings?.sandbox) {
           const unavailable = SandboxManager.getSandboxUnavailableReason()
@@ -660,7 +674,7 @@ class SDKSessionImpl implements SDKSession {
         ) {
           throw new Error('Sandbox runtime is required but did not initialize')
         }
-        await self.ensureMcpServersConnected()
+        await mcpStartup
         await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
         try {
@@ -718,6 +732,10 @@ class SDKSessionImpl implements SDKSession {
     this.skillsLoaded = false
     this.pluginLifecycleLoaded = false
     this.agentsLoaded = false
+    this.mcpConnectionGeneration += 1
+    this.mcpStartupPromise = null
+    this.mcpClientsByServer.clear()
+    this.mcpToolsByServer.clear()
     this.mcpConnected = false
     this.mcpTools = []
   }
@@ -841,29 +859,107 @@ class SDKSessionImpl implements SDKSession {
     if (this.mcpConnected) {
       return
     }
+    if (this.mcpStartupPromise) {
+      await this.mcpStartupPromise
+      return
+    }
+    const generation = ++this.mcpConnectionGeneration
+    const startup = this.startMcpServers(generation)
+    this.mcpStartupPromise = startup
+    try {
+      await startup
+    } finally {
+      if (this.mcpStartupPromise === startup) {
+        this.mcpStartupPromise = null
+      }
+    }
+  }
+
+  private async startMcpServers(generation: number): Promise<void> {
     try {
       const resolved = await resolveSDKMcpServerConfigs(this.mcpServers)
+      if (generation !== this.mcpConnectionGeneration) {
+        return
+      }
       if (resolved.errors.length > 0) {
         console.warn(
           `SDK: native MCP/plugin config loading reported ${resolved.errors.length} error(s): ${JSON.stringify(resolved.errors)}`,
         )
       }
-      if (Object.keys(resolved.servers).length === 0) {
-        this.mcpConnected = true
+      const { immediate, deferred } = partitionSDKMcpServerConfigsForStartup(resolved.servers)
+      await connectSDKMcpServersIncrementally(
+        immediate,
+        (name, config) => connectSdkMcpServers({ [name]: config }),
+        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+      )
+      if (generation !== this.mcpConnectionGeneration) {
         return
       }
-      const { clients: mcpClients, tools: mcpTools } = await connectSdkMcpServers(resolved.servers)
-      this.engine.setMcpClients(mcpClients)
-      this.mcpTools = mcpTools
-      this.applyPermissionContextFromOptions()
+      this.mcpConnected = true
+      for (const [name, config] of Object.entries(deferred)) {
+        if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+          continue
+        }
+        this.mcpClientsByServer.set(name, [{
+          type: 'pending',
+          name,
+          config: { ...(config as Record<string, unknown>), scope: 'session' },
+        } as unknown as MCPServerConnection])
+      }
+      this.refreshPublishedMcpRuntime()
+      // Native transports outlive this startup call. Each server publishes
+      // independently, so one 30-second timeout delays only that server.
+      void connectSDKMcpServersIncrementally(
+        deferred,
+        (name, config) => connectSdkMcpServers({ [name]: config }),
+        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+      )
     } catch (err) {
-      // MCP connection failed — continue without MCP tools
-      console.warn('SDK: MCP server connection failed:', err instanceof Error ? err.message : String(err))
+      console.warn('SDK: MCP server startup failed:', err instanceof Error ? err.message : String(err))
+      if (generation === this.mcpConnectionGeneration) {
+        this.mcpConnected = true
+      }
     }
-    this.mcpConnected = true
+  }
+
+  private publishMcpSettlement(
+    name: string,
+    settlement: { status: 'fulfilled'; value: { clients: MCPServerConnection[]; tools: Tool[] } } | { status: 'rejected'; reason: unknown },
+    generation: number,
+  ): void {
+    if (settlement.status === 'rejected') {
+      if (generation === this.mcpConnectionGeneration) {
+        console.warn(`SDK: MCP server ${name} failed:`, settlement.reason instanceof Error ? settlement.reason.message : String(settlement.reason))
+      }
+      return
+    }
+    if (generation !== this.mcpConnectionGeneration) {
+      for (const client of settlement.value.clients) {
+        if (client.type === 'connected' && client.cleanup) {
+          void client.cleanup().catch(() => {})
+        }
+      }
+      return
+    }
+    this.mcpClientsByServer.set(name, settlement.value.clients)
+    this.mcpToolsByServer.set(name, settlement.value.tools)
+    if (settlement.value.tools.length > 0) {
+      // Agent definitions validate their declared tools against the current
+      // pool. Re-evaluate them on the next turn after late MCP tools arrive.
+      this.agentsLoaded = false
+    }
+    this.refreshPublishedMcpRuntime()
+  }
+
+  private refreshPublishedMcpRuntime(): void {
+    this.engine.setMcpClients([...this.mcpClientsByServer.values()].flat())
+    this.mcpTools = [...this.mcpToolsByServer.values()].flat()
+    this.applyPermissionContextFromOptions()
   }
 
   private disconnectMcpClients(reason: string): void {
+    this.mcpConnectionGeneration += 1
+    this.mcpStartupPromise = null
     const mcpClients = this._engine?.getMcpClients?.() ?? []
     for (const client of mcpClients) {
       if (client.type === 'connected' && client.cleanup) {
@@ -873,10 +969,14 @@ class SDKSessionImpl implements SDKSession {
       }
     }
     this._engine?.setMcpClients?.([])
+    this.mcpClientsByServer.clear()
+    this.mcpToolsByServer.clear()
   }
 
   close(): void {
     this.interrupt()
+    this.mcpConnectionGeneration += 1
+    this.mcpStartupPromise = null
     // Abort the AbortController to cancel any in-flight HTTP requests or
     // async operations tied to the signal. Mirrors QueryImpl.close().
     this._abortController?.abort()
