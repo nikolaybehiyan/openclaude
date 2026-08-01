@@ -106,69 +106,6 @@ export type RewindFilesResult = {
   deletions?: number
 }
 
-export type SDKPluginPreparationResult = {
-  changed: boolean
-  revision?: string
-  enabledPluginCount: number
-  disabledPluginCount: number
-  errorCount: number
-  pluginProjection: SDKPluginProjection[]
-  pluginSkillProjection: SDKPluginSkillProjection[]
-}
-
-export type SDKPluginProjection = {
-  name: string
-  source: string
-  pluginRoot: string
-  skillRoots: string[]
-}
-
-/** @deprecated Use SDKPluginProjection. */
-export type SDKPluginSkillProjection = SDKPluginProjection
-
-export type SDKPluginMarketplaceSource =
-  | { source: 'url'; url: string; headers?: Record<string, string> }
-  | { source: 'github'; repo: string; ref?: string; path?: string; sparsePaths?: string[] }
-  | { source: 'git'; url: string; ref?: string; path?: string; sparsePaths?: string[] }
-  | { source: 'npm'; package: string }
-  | { source: 'file'; path: string }
-  | { source: 'directory'; path: string }
-  | {
-      source: 'settings'
-      name: string
-      plugins: Array<{
-        name: string
-        source: string | Record<string, unknown>
-        description?: string
-        version?: string
-        strict?: boolean
-      }>
-      owner?: { name: string; email?: string }
-    }
-
-export type SDKPluginMarketplaceIntent = {
-  source: SDKPluginMarketplaceSource
-  installLocation?: string
-  autoUpdate?: boolean
-  revision?: string
-}
-
-export type SDKPluginRuntimeIntent = {
-  revision?: string
-  enabledPlugins?: Record<string, boolean>
-  marketplaces?: Record<string, SDKPluginMarketplaceIntent>
-  inlinePluginPaths?: string[]
-  inlinePluginRevision?: string
-}
-
-/**
- * Apply declarative marketplace/plugin intent and let OpenClaude reconcile,
- * install, cache, and load all bundle capabilities between SDK turns.
- */
-export function unstable_preparePluginRuntime(
-  intent?: SDKPluginRuntimeIntent,
-): Promise<SDKPluginPreparationResult>
-
 export type SDKSkillRuntimeIntent = {
   revision?: string
   skillDirectories?: string[]

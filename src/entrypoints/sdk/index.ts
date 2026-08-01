@@ -115,15 +115,6 @@ export {
   unstable_v2_initializeRuntime,
 } from './v2.js'
 export type {
-  SDKPluginMarketplaceIntent,
-  SDKPluginMarketplaceSource,
-  SDKPluginPreparationResult,
-  SDKPluginProjection,
-  SDKPluginSkillProjection,
-  SDKPluginRuntimeIntent,
-} from './plugins.js'
-export { unstable_preparePluginRuntime } from './plugins.js'
-export type {
   SDKSkillPreparationResult,
   SDKSkillRuntimeIntent,
 } from './skills.js'
