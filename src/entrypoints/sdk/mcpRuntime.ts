@@ -13,6 +13,7 @@ import type { PluginError } from '../../types/plugin.js'
 export type SDKMcpServerConfigPartitions = {
   immediate: Record<string, unknown>
   deferred: Record<string, unknown>
+  pluginPersisted: Record<string, unknown>
 }
 
 export type SDKMcpIncrementalSettlement<T> =
@@ -47,7 +48,17 @@ export function partitionSDKMcpServerConfigsForStartup(
 ): SDKMcpServerConfigPartitions {
   const immediate: Record<string, unknown> = {}
   const deferred: Record<string, unknown> = {}
+  const pluginPersisted: Record<string, unknown> = {}
   for (const [name, config] of Object.entries(configs)) {
+    if (
+      config !== null &&
+      typeof config === 'object' &&
+      !Array.isArray(config) &&
+      (config as Record<string, unknown>).type === 'plugin_persisted'
+    ) {
+      pluginPersisted[name] = config
+      continue
+    }
     if (
       config !== null &&
       typeof config === 'object' &&
@@ -59,7 +70,7 @@ export function partitionSDKMcpServerConfigsForStartup(
       deferred[name] = config
     }
   }
-  return { immediate, deferred }
+  return { immediate, deferred, pluginPersisted }
 }
 
 /**

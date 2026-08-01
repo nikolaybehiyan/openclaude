@@ -39,14 +39,20 @@ describe('persistent SDK MCP runtime', () => {
     const sdkServer = { type: 'sdk', name: 'host-tools', tools: [] }
     const httpServer = { type: 'http', url: 'https://example.test/mcp' }
     const stdioServer = { type: 'stdio', command: 'node', args: ['server.js'] }
+    const pluginPersisted = {
+      type: 'plugin_persisted',
+      persistedTools: [{ name: 'search', inputSchema: { type: 'object' } }],
+    }
 
     expect(partitionSDKMcpServerConfigsForStartup({
       host: sdkServer,
       remote: httpServer,
       local: stdioServer,
+      'plugin:demo:search': pluginPersisted,
     })).toEqual({
       immediate: { host: sdkServer },
       deferred: { remote: httpServer, local: stdioServer },
+      pluginPersisted: { 'plugin:demo:search': pluginPersisted },
     })
   })
 

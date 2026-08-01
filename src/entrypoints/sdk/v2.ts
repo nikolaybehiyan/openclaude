@@ -940,12 +940,22 @@ class SDKSessionImpl implements SDKSession {
       // loader to discover unrelated MCP configs. Interactive OpenClaude also
       // keeps plugin MCP discovery off the turn-one model barrier.
       const dynamicServers = this.mcpServers ?? {}
-      const dynamicServerNames = new Set(Object.keys(dynamicServers))
       const partitions = partitionSDKMcpServerConfigsForStartup(dynamicServers)
+      // Persisted plugin schemas are a host projection of native plugin MCP,
+      // not a second transport configuration. Do not give them dynamic-name
+      // precedence or the native plugin loader would suppress the live server.
+      const liveDynamicServers = {
+        ...partitions.immediate,
+        ...partitions.deferred,
+      }
+      const dynamicServerNames = new Set(Object.keys(liveDynamicServers))
       const immediate = { ...partitions.immediate }
       const deferred = { ...partitions.deferred }
       const persistedSchemaServers: string[] = []
-      for (const [name, config] of Object.entries(deferred)) {
+      for (const [name, config] of Object.entries({
+        ...deferred,
+        ...partitions.pluginPersisted,
+      })) {
         const projection = this.buildPersistedMcpProjection(name, config, generation)
         if (projection) {
           immediate[name] = projection
@@ -1001,7 +1011,7 @@ class SDKSessionImpl implements SDKSession {
       // Run the native loader in the background and exclude dynamic names,
       // whose host-provided definitions have highest precedence and are
       // already live above.
-      void this.startPluginMcpServers(generation, dynamicServers, dynamicServerNames)
+      void this.startPluginMcpServers(generation, liveDynamicServers, dynamicServerNames)
     } catch (err) {
       console.warn('SDK: MCP server startup failed:', err instanceof Error ? err.message : String(err))
       if (generation === this.mcpConnectionGeneration) {
@@ -1059,7 +1069,10 @@ class SDKSessionImpl implements SDKSession {
       await connectSDKMcpServersIncrementally(
         pluginServers,
         (name, config) => connectSdkMcpServers({ [name]: config }),
-        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+        (name, settlement) => {
+          this.resolveNativeMcpWaiter(name, settlement, generation)
+          this.publishMcpSettlement(name, settlement, generation)
+        },
       )
     } catch (err) {
       if (generation === this.mcpConnectionGeneration) {
