@@ -89,8 +89,10 @@ import { stopTask } from '../../tasks/stopTask.js'
 import { hydrateToolProgressOutput } from './toolProgress.js'
 import { sleep } from '../../utils/sleep.js'
 import { dequeue } from '../../utils/messageQueueManager.js'
-import { generateSessionTitle as generateSourceSessionTitle } from '../../utils/sessionTitle.js'
-import { truncateToWidth } from '../../utils/format.js'
+import {
+  generateSessionTitle as generateSourceSessionTitle,
+  titleOrNullForPromptFallback,
+} from '../../utils/sessionTitle.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
@@ -894,8 +896,9 @@ class SDKSessionImpl implements SDKSession {
     const controller = this._abortController && !this._abortController.signal.aborted
       ? this._abortController
       : createAbortController()
-    const title = await generateSourceSessionTitle(description, controller.signal)
-    return title ?? truncateToWidth(description, 75)
+    return titleOrNullForPromptFallback(
+      await generateSourceSessionTitle(description, controller.signal),
+    )
   }
 
   async sideQuestion(question: string): Promise<SDKSideQuestionResult> {
@@ -2610,8 +2613,9 @@ export async function unstable_v2_generateSessionTitle(
   // initialize config/provider state before queryHaiku reads it.
   await init()
   const titleSignal = signal ?? createAbortController().signal
-  const title = await generateSourceSessionTitle(description, titleSignal)
-  return title ?? truncateToWidth(description, 75)
+  return titleOrNullForPromptFallback(
+    await generateSourceSessionTitle(description, titleSignal),
+  )
 }
 
 /**
