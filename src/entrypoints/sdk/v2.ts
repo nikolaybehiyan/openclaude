@@ -52,6 +52,7 @@ import type {
   SdkPluginConfig,
 } from './coreTypes.generated.js'
 import { applySDKLocalPlugins } from './plugins.js'
+import { initializeSDKLocalPlugins } from './pluginRuntime.js'
 import type {
   SDKMessage,
   SDKAgentLoadFailureMessage,
@@ -552,7 +553,7 @@ class SDKSessionImpl implements SDKSession {
     if (this.pluginLifecycleLoaded) {
       return
     }
-    await refreshActivePlugins(updater => this.appStateStore.setState(updater))
+    await initializeSDKLocalPlugins(updater => this.appStateStore.setState(updater))
     this.pluginLifecycleLoaded = true
   }
 
@@ -563,6 +564,22 @@ class SDKSessionImpl implements SDKSession {
     const commands = await getCommands(this.options.cwd)
     this.commands.splice(0, this.commands.length, ...commands)
     this.skillsLoaded = true
+  }
+
+  private async ensureSandboxReady(): Promise<void> {
+    if (this.options.settings?.sandbox) {
+      const unavailable = SandboxManager.getSandboxUnavailableReason()
+      if (unavailable) {
+        throw new Error(`Sandbox runtime is required but unavailable: ${unavailable}`)
+      }
+    }
+    await SandboxManager.initialize(async () => false)
+    if (
+      this.options.settings?.sandbox &&
+      !SandboxManager.isSandboxingEnabled()
+    ) {
+      throw new Error('Sandbox runtime is required but did not initialize')
+    }
   }
 
   private async ensureAgentsLoaded(): Promise<void> {
@@ -611,27 +628,14 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
-        await self.ensurePluginLifecycleLoaded()
+        const pluginLifecycle = self.ensurePluginLifecycleLoaded()
         // Start native MCP discovery/connection alongside cold skill and
         // sandbox initialization. Only in-process SDK tools are awaited;
         // transport servers continue independently in the background.
         const mcpStartup = self.ensureMcpServersConnected()
-        await self.ensureSkillsLoaded()
-        if (self.options.settings?.sandbox) {
-          const unavailable = SandboxManager.getSandboxUnavailableReason()
-          if (unavailable) {
-            throw new Error(`Sandbox runtime is required but unavailable: ${unavailable}`)
-          }
-        }
-        await SandboxManager.initialize(async () => false)
-        if (
-          self.options.settings?.sandbox &&
-          !SandboxManager.isSandboxingEnabled()
-        ) {
-          throw new Error('Sandbox runtime is required but did not initialize')
-        }
-
-        await mcpStartup
+        const skillsStartup = self.ensureSkillsLoaded()
+        const sandboxStartup = self.ensureSandboxReady()
+        await Promise.all([pluginLifecycle, mcpStartup, skillsStartup, sandboxStartup])
         await self.ensureAgentsLoaded()
 
         // Switch session for transcript writes using session's own resolved dir
@@ -672,23 +676,11 @@ class SDKSessionImpl implements SDKSession {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
         const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
-        await self.ensurePluginLifecycleLoaded()
+        const pluginLifecycle = self.ensurePluginLifecycleLoaded()
         const mcpStartup = self.ensureMcpServersConnected()
-        await self.ensureSkillsLoaded()
-        if (self.options.settings?.sandbox) {
-          const unavailable = SandboxManager.getSandboxUnavailableReason()
-          if (unavailable) {
-            throw new Error(`Sandbox runtime is required but unavailable: ${unavailable}`)
-          }
-        }
-        await SandboxManager.initialize(async () => false)
-        if (
-          self.options.settings?.sandbox &&
-          !SandboxManager.isSandboxingEnabled()
-        ) {
-          throw new Error('Sandbox runtime is required but did not initialize')
-        }
-        await mcpStartup
+        const skillsStartup = self.ensureSkillsLoaded()
+        const sandboxStartup = self.ensureSandboxReady()
+        await Promise.all([pluginLifecycle, mcpStartup, skillsStartup, sandboxStartup])
         await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
         try {
@@ -885,16 +877,13 @@ class SDKSessionImpl implements SDKSession {
 
   private async startMcpServers(generation: number): Promise<void> {
     try {
-      const resolved = await resolveSDKMcpServerConfigs(this.mcpServers)
-      if (generation !== this.mcpConnectionGeneration) {
-        return
-      }
-      if (resolved.errors.length > 0) {
-        console.warn(
-          `SDK: native MCP/plugin config loading reported ${resolved.errors.length} error(s): ${JSON.stringify(resolved.errors)}`,
-        )
-      }
-      const partitions = partitionSDKMcpServerConfigsForStartup(resolved.servers)
+      // Host-provided SDK tools and persisted schemas are already the exact
+      // turn-plan projection. Publish them before asking the filesystem plugin
+      // loader to discover unrelated MCP configs. Interactive OpenClaude also
+      // keeps plugin MCP discovery off the turn-one model barrier.
+      const dynamicServers = this.mcpServers ?? {}
+      const dynamicServerNames = new Set(Object.keys(dynamicServers))
+      const partitions = partitionSDKMcpServerConfigsForStartup(dynamicServers)
       const immediate = { ...partitions.immediate }
       const deferred = { ...partitions.deferred }
       const persistedSchemaServers: string[] = []
@@ -939,8 +928,9 @@ class SDKSessionImpl implements SDKSession {
         } as unknown as MCPServerConnection])
       }
       this.refreshPublishedMcpRuntime()
-      // Native transports outlive this startup call. Each server publishes
-      // independently, so one 30-second timeout delays only that server.
+      // Host native transports outlive this startup call. Each server
+      // publishes independently, so a slow connector delays only its actual
+      // invocation and never the first outbound model request.
       void connectSDKMcpServersIncrementally(
         deferred,
         (name, config) => connectSdkMcpServers({ [name]: config }),
@@ -949,11 +939,69 @@ class SDKSessionImpl implements SDKSession {
           this.publishMcpSettlement(name, settlement, generation)
         },
       )
+      // Plugin MCP discovery can scan many manifests and resolve user config.
+      // Run the native loader in the background and exclude dynamic names,
+      // whose host-provided definitions have highest precedence and are
+      // already live above.
+      void this.startPluginMcpServers(generation, dynamicServers, dynamicServerNames)
     } catch (err) {
       console.warn('SDK: MCP server startup failed:', err instanceof Error ? err.message : String(err))
       if (generation === this.mcpConnectionGeneration) {
         this.failNativeMcpWaiters(err instanceof Error ? err : new Error(String(err)), generation)
         this.mcpConnected = true
+      }
+    }
+  }
+
+  private async startPluginMcpServers(
+    generation: number,
+    dynamicServers: Record<string, unknown>,
+    dynamicServerNames: Set<string>,
+  ): Promise<void> {
+    try {
+      const resolved = await resolveSDKMcpServerConfigs(dynamicServers)
+      if (generation !== this.mcpConnectionGeneration) {
+        return
+      }
+      if (resolved.errors.length > 0) {
+        console.warn(
+          `SDK: native MCP/plugin config loading reported ${resolved.errors.length} error(s): ${JSON.stringify(resolved.errors)}`,
+        )
+      }
+      const pluginServers = Object.fromEntries(
+        Object.entries(resolved.servers).filter(([name]) => !dynamicServerNames.has(name)),
+      )
+      if (bridgeDiagnosticsEnabled()) {
+        console.warn(`SDK: plugin MCP startup configs ${JSON.stringify({
+          deferred: Object.entries(pluginServers)
+            .map(([name, config]) => ({
+              name,
+              type: config && typeof config === 'object' && !Array.isArray(config)
+                ? String((config as Record<string, unknown>).type ?? '')
+                : typeof config,
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        })}`)
+      }
+      for (const [name, config] of Object.entries(pluginServers)) {
+        if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+          continue
+        }
+        this.mcpClientsByServer.set(name, [{
+          type: 'pending',
+          name,
+          config: { ...(config as Record<string, unknown>), scope: 'session' },
+        } as unknown as MCPServerConnection])
+      }
+      this.refreshPublishedMcpRuntime()
+      await connectSDKMcpServersIncrementally(
+        pluginServers,
+        (name, config) => connectSdkMcpServers({ [name]: config }),
+        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+      )
+    } catch (err) {
+      if (generation === this.mcpConnectionGeneration) {
+        console.warn('SDK: plugin MCP startup failed:', err instanceof Error ? err.message : String(err))
       }
     }
   }
