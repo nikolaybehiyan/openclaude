@@ -887,6 +887,19 @@ class SDKSessionImpl implements SDKSession {
         )
       }
       const { immediate, deferred } = partitionSDKMcpServerConfigsForStartup(resolved.servers)
+      if (bridgeDiagnosticsEnabled()) {
+        console.warn(`SDK: MCP startup configs ${JSON.stringify({
+          immediate: Object.keys(immediate).sort(),
+          deferred: Object.entries(deferred)
+            .map(([name, config]) => ({
+              name,
+              type: config && typeof config === 'object' && !Array.isArray(config)
+                ? String((config as Record<string, unknown>).type ?? '')
+                : typeof config,
+            }))
+            .sort((left, right) => left.name.localeCompare(right.name)),
+        })}`)
+      }
       await connectSDKMcpServersIncrementally(
         immediate,
         (name, config) => connectSdkMcpServers({ [name]: config }),
@@ -943,6 +956,16 @@ class SDKSessionImpl implements SDKSession {
     }
     this.mcpClientsByServer.set(name, settlement.value.clients)
     this.mcpToolsByServer.set(name, settlement.value.tools)
+    if (bridgeDiagnosticsEnabled()) {
+      console.warn(`SDK: MCP server ${name} settled ${JSON.stringify({
+        clients: settlement.value.clients.map(client => ({
+          name: client.name,
+          type: client.type,
+          ...(client.type === 'failed' ? { error: client.error ?? '' } : {}),
+        })),
+        tools: settlement.value.tools.map(tool => tool.name).sort(),
+      })}`)
+    }
     if (settlement.value.tools.length > 0) {
       // Agent definitions validate their declared tools against the current
       // pool. Re-evaluate them on the next turn after late MCP tools arrive.
@@ -1813,6 +1836,8 @@ async function emitApiRequestMediaDiagnostic(
     media: summarizeApiMessages(messages),
   })
   emitBridgeDiagnostic('api_request_prompt_contract', {
+    url_kind: apiURLKind(url),
+    model: typeof body.model === 'string' ? body.model : '',
     system_prompt_chars: systemText.length,
     system_prompt_sha256: createHash('sha256').update(systemText).digest('hex'),
     skill_listing_sources: skillListing.sources,
