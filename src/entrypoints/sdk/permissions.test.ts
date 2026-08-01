@@ -67,6 +67,37 @@ test('SDK MCP tool can defer JSON schema validation to handler', async () => {
   expect(calls).toEqual([{ line_number: '1' }])
 })
 
+test('projected SDK MCP tool preserves native MCP identity and schema', async () => {
+  const { tools } = await connectSdkMcpServers({
+    pubmed: {
+      type: 'sdk',
+      name: 'persisted:PubMed',
+      tools: [{
+        name: 'mcp__PubMed__search_articles',
+        description: 'Search PubMed',
+        inputSchema: {
+          type: 'object',
+          required: ['query'],
+          properties: { query: { type: 'string' } },
+        },
+        annotations: { readOnlyHint: true },
+        mcpInfo: { serverName: 'PubMed', toolName: 'search_articles' },
+        handler: async () => ({ content: [{ type: 'text', text: 'ok' }] }),
+      }],
+    },
+  })
+
+  expect(tools).toHaveLength(1)
+  expect(tools[0]!.name).toBe('mcp__PubMed__search_articles')
+  expect(tools[0]!.mcpInfo).toEqual({ serverName: 'PubMed', toolName: 'search_articles' })
+  expect(tools[0]!.inputJSONSchema).toEqual({
+    type: 'object',
+    required: ['query'],
+    properties: { query: { type: 'string' } },
+  })
+  expect(tools[0]!.isReadOnly({})).toBe(true)
+})
+
 test('session MCP allowlist filters on upstream MCP tool names', () => {
   const tools = [
     { name: 'mcp__calendar__search', mcpInfo: { serverName: 'calendar', toolName: 'search' } },

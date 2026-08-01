@@ -98,6 +98,7 @@ import { clearCommandsCache, getCommands } from '../../commands.js'
 import { resetSentSkillNames } from '../../utils/attachments.js'
 import type { Tool, ToolPermissionContext } from '../../Tool.js'
 import type { MCPServerConnection } from '../../services/mcp/types.js'
+import { buildMcpToolName } from '../../services/mcp/mcpStringUtils.js'
 import type { Command } from '../../types/command.js'
 import type { QueuedCommand } from '../../types/textInputTypes.js'
 import {
@@ -357,6 +358,18 @@ export interface SdkMcpToolDefinition<Schema = any> {
   alwaysLoad?: boolean
   deferInputValidationToHandler?: boolean
   _meta?: Record<string, unknown>
+  /** Preserve native MCP identity when a schema is projected before transport startup. */
+  mcpInfo?: { serverName: string; toolName: string }
+}
+
+type NativeMcpReadyResult =
+  | { status: 'ready'; tools: Tool[] }
+  | { status: 'failed'; error: Error }
+
+type NativeMcpWaiter = {
+  generation: number
+  promise: Promise<NativeMcpReadyResult>
+  resolve: (result: NativeMcpReadyResult) => void
 }
 
 // ============================================================================
@@ -389,6 +402,7 @@ class SDKSessionImpl implements SDKSession {
   private mcpStartupPromise: Promise<void> | null = null
   private mcpClientsByServer = new Map<string, MCPServerConnection[]>()
   private mcpToolsByServer = new Map<string, Tool[]>()
+  private nativeMcpWaiters = new Map<string, NativeMcpWaiter>()
   private commands: Command[] = []
   private skillsLoaded = false
   private pluginLifecycleLoaded = false
@@ -712,14 +726,12 @@ class SDKSessionImpl implements SDKSession {
 
   private replaceEngineWithInitialMessages(messages: any[]): void {
     const signatureSafeMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(messages))
-    const oldMcpClients = this._engine?.getMcpClients?.() ?? []
-    for (const client of oldMcpClients) {
-      if (client.type === 'connected' && client.cleanup) {
-        void client.cleanup().catch(err => {
-          console.warn('SDK: MCP client cleanup error before session history replacement:', err instanceof Error ? err.message : String(err))
-        })
-      }
-    }
+    // Message synchronization, Retry, and Regenerate replace conversation
+    // history, not the session-owned MCP lifecycle. Preserve the exact native
+    // clients and already published tools just as the interactive InkUI engine
+    // does across turns; reconnecting here dropped tools and restarted every
+    // handshake before each warm request.
+    const preservedMcpClients = [...(this._engine?.getMcpClients?.() ?? [])]
     const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
       this.options,
       signatureSafeMessages,
@@ -732,12 +744,8 @@ class SDKSessionImpl implements SDKSession {
     this.skillsLoaded = false
     this.pluginLifecycleLoaded = false
     this.agentsLoaded = false
-    this.mcpConnectionGeneration += 1
-    this.mcpStartupPromise = null
-    this.mcpClientsByServer.clear()
-    this.mcpToolsByServer.clear()
-    this.mcpConnected = false
-    this.mcpTools = []
+    this.engine.setMcpClients(preservedMcpClients)
+    this.applyPermissionContextFromOptions()
   }
 
   private hasRunningBackgroundTasks(): boolean {
@@ -886,10 +894,21 @@ class SDKSessionImpl implements SDKSession {
           `SDK: native MCP/plugin config loading reported ${resolved.errors.length} error(s): ${JSON.stringify(resolved.errors)}`,
         )
       }
-      const { immediate, deferred } = partitionSDKMcpServerConfigsForStartup(resolved.servers)
+      const partitions = partitionSDKMcpServerConfigsForStartup(resolved.servers)
+      const immediate = { ...partitions.immediate }
+      const deferred = { ...partitions.deferred }
+      const persistedSchemaServers: string[] = []
+      for (const [name, config] of Object.entries(deferred)) {
+        const projection = this.buildPersistedMcpProjection(name, config, generation)
+        if (projection) {
+          immediate[name] = projection
+          persistedSchemaServers.push(name)
+        }
+      }
       if (bridgeDiagnosticsEnabled()) {
         console.warn(`SDK: MCP startup configs ${JSON.stringify({
           immediate: Object.keys(immediate).sort(),
+          persisted_schema_servers: persistedSchemaServers.sort(),
           deferred: Object.entries(deferred)
             .map(([name, config]) => ({
               name,
@@ -925,13 +944,171 @@ class SDKSessionImpl implements SDKSession {
       void connectSDKMcpServersIncrementally(
         deferred,
         (name, config) => connectSdkMcpServers({ [name]: config }),
-        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+        (name, settlement) => {
+          this.resolveNativeMcpWaiter(name, settlement, generation)
+          this.publishMcpSettlement(name, settlement, generation)
+        },
       )
     } catch (err) {
       console.warn('SDK: MCP server startup failed:', err instanceof Error ? err.message : String(err))
       if (generation === this.mcpConnectionGeneration) {
+        this.failNativeMcpWaiters(err instanceof Error ? err : new Error(String(err)), generation)
         this.mcpConnected = true
       }
+    }
+  }
+
+  private buildPersistedMcpProjection(
+    serverName: string,
+    config: unknown,
+    generation: number,
+  ): Record<string, unknown> | null {
+    if (config === null || typeof config !== 'object' || Array.isArray(config)) {
+      return null
+    }
+    const persistedTools = (config as Record<string, unknown>).persistedTools
+    if (persistedTools === undefined) {
+      return null
+    }
+    if (!Array.isArray(persistedTools)) {
+      throw new Error(`SDK: MCP server ${serverName} persistedTools must be an array`)
+    }
+    const waiter = this.createNativeMcpWaiter(serverName, generation)
+    const definitions: SdkMcpToolDefinition[] = persistedTools.map((raw, index) => {
+      if (raw === null || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new Error(`SDK: MCP server ${serverName} persistedTools[${index}] must be an object`)
+      }
+      const definition = raw as Record<string, unknown>
+      const upstreamName = typeof definition.name === 'string' ? definition.name.trim() : ''
+      if (!upstreamName) {
+        throw new Error(`SDK: MCP server ${serverName} persistedTools[${index}].name must be non-empty`)
+      }
+      const description = typeof definition.description === 'string' ? definition.description : ''
+      const inputSchema = definition.inputSchema
+      if (inputSchema === null || typeof inputSchema !== 'object' || Array.isArray(inputSchema)) {
+        throw new Error(`SDK: MCP server ${serverName} persistedTools[${index}].inputSchema must be an object`)
+      }
+      const qualifiedName = buildMcpToolName(serverName, upstreamName)
+      const annotations = definition.annotations !== null && typeof definition.annotations === 'object' && !Array.isArray(definition.annotations)
+        ? definition.annotations as ToolAnnotations
+        : undefined
+      const meta = definition._meta !== null && typeof definition._meta === 'object' && !Array.isArray(definition._meta)
+        ? definition._meta as Record<string, unknown>
+        : undefined
+      return {
+        name: qualifiedName,
+        description,
+        inputSchema: inputSchema as Record<string, unknown>,
+        handler: (args, extra) => this.callPersistedMcpTool(
+          serverName,
+          upstreamName,
+          qualifiedName,
+          generation,
+          waiter,
+          args,
+          extra,
+        ),
+        annotations,
+        searchHint: typeof definition.searchHint === 'string' ? definition.searchHint : undefined,
+        alwaysLoad: typeof definition.alwaysLoad === 'boolean' ? definition.alwaysLoad : undefined,
+        _meta: meta,
+        mcpInfo: { serverName, toolName: upstreamName },
+      }
+    })
+    if (definitions.length === 0) {
+      this.nativeMcpWaiters.delete(serverName)
+      return null
+    }
+    return {
+      type: 'sdk',
+      name: `persisted:${serverName}`,
+      tools: definitions,
+    }
+  }
+
+  private createNativeMcpWaiter(serverName: string, generation: number): NativeMcpWaiter {
+    let resolve!: (result: NativeMcpReadyResult) => void
+    const promise = new Promise<NativeMcpReadyResult>(next => {
+      resolve = next
+    })
+    const waiter = { generation, promise, resolve }
+    this.nativeMcpWaiters.set(serverName, waiter)
+    return waiter
+  }
+
+  private resolveNativeMcpWaiter(
+    serverName: string,
+    settlement: { status: 'fulfilled'; value: { clients: MCPServerConnection[]; tools: Tool[] } } | { status: 'rejected'; reason: unknown },
+    generation: number,
+  ): void {
+    const waiter = this.nativeMcpWaiters.get(serverName)
+    if (!waiter || waiter.generation !== generation) {
+      return
+    }
+    this.nativeMcpWaiters.delete(serverName)
+    if (settlement.status === 'rejected') {
+      waiter.resolve({
+        status: 'failed',
+        error: settlement.reason instanceof Error ? settlement.reason : new Error(String(settlement.reason)),
+      })
+      return
+    }
+    const connected = settlement.value.clients.some(client => client.type === 'connected')
+    if (!connected) {
+      const failed = settlement.value.clients.find(client => client.type === 'failed')
+      waiter.resolve({
+        status: 'failed',
+        error: new Error(failed?.error || `MCP server ${serverName} did not connect`),
+      })
+      return
+    }
+    waiter.resolve({ status: 'ready', tools: settlement.value.tools })
+  }
+
+  private async callPersistedMcpTool(
+    serverName: string,
+    upstreamName: string,
+    qualifiedName: string,
+    generation: number,
+    waiter: NativeMcpWaiter,
+    args: Record<string, unknown>,
+    extra: unknown,
+  ): Promise<CallToolResult> {
+    if (generation !== this.mcpConnectionGeneration || waiter.generation !== generation) {
+      throw new Error(`MCP server ${serverName} was reconfigured before ${upstreamName} could run`)
+    }
+    const invocation = extra && typeof extra === 'object'
+      ? extra as Record<string, any>
+      : {}
+    const ready = await waitForNativeMcpReady(
+      waiter.promise,
+      invocation.context?.abortController?.signal,
+      serverName,
+      upstreamName,
+    )
+    if (ready.status === 'failed') {
+      throw ready.error
+    }
+    const nativeTool = ready.tools.find(tool =>
+      tool.name === qualifiedName ||
+      (tool.mcpInfo?.serverName === serverName && tool.mcpInfo.toolName === upstreamName),
+    )
+    if (!nativeTool) {
+      throw new Error(`MCP server ${serverName} did not publish persisted tool ${upstreamName}`)
+    }
+    const result = await nativeTool.call(
+      args,
+      invocation.context,
+      undefined as never,
+      invocation.parentMessage,
+      invocation.onProgress,
+    )
+    return {
+      content: result.data as CallToolResult['content'],
+      ...(result.mcpMeta?._meta ? { _meta: result.mcpMeta._meta } : {}),
+      ...(result.mcpMeta?.structuredContent
+        ? { structuredContent: result.mcpMeta.structuredContent }
+        : {}),
     }
   }
 
@@ -981,8 +1158,10 @@ class SDKSessionImpl implements SDKSession {
   }
 
   private disconnectMcpClients(reason: string): void {
+    const disconnectedGeneration = this.mcpConnectionGeneration
     this.mcpConnectionGeneration += 1
     this.mcpStartupPromise = null
+    this.failNativeMcpWaiters(new Error(`MCP connections were reset during ${reason}`), disconnectedGeneration)
     const mcpClients = this._engine?.getMcpClients?.() ?? []
     for (const client of mcpClients) {
       if (client.type === 'connected' && client.cleanup) {
@@ -996,10 +1175,21 @@ class SDKSessionImpl implements SDKSession {
     this.mcpToolsByServer.clear()
   }
 
+  private failNativeMcpWaiters(error: Error, generation?: number): void {
+    for (const [serverName, waiter] of this.nativeMcpWaiters) {
+      if (generation !== undefined && waiter.generation !== generation) {
+        continue
+      }
+      this.nativeMcpWaiters.delete(serverName)
+      waiter.resolve({ status: 'failed', error })
+    }
+  }
+
   close(): void {
     this.interrupt()
     this.mcpConnectionGeneration += 1
     this.mcpStartupPromise = null
+    this.failNativeMcpWaiters(new Error('SDK session closed'))
     // Abort the AbortController to cancel any in-flight HTTP requests or
     // async operations tied to the signal. Mirrors QueryImpl.close().
     this._abortController?.abort()
@@ -1126,6 +1316,36 @@ function mergeRuntimeTools(builtinTools: Tool[], mcpTools: Tool[]): Tool[] {
     }
   }
   return merged
+}
+
+async function waitForNativeMcpReady(
+  promise: Promise<NativeMcpReadyResult>,
+  signal: AbortSignal | undefined,
+  serverName: string,
+  toolName: string,
+): Promise<NativeMcpReadyResult> {
+  if (!signal) {
+    return await promise
+  }
+  const abortError = () => {
+    const error = new Error(`MCP tool ${serverName}.${toolName} was interrupted before transport startup completed`)
+    error.name = 'AbortError'
+    return error
+  }
+  if (signal.aborted) {
+    throw abortError()
+  }
+  let rejectAbort!: (error: Error) => void
+  const aborted = new Promise<never>((_resolve, reject) => {
+    rejectAbort = reject
+  })
+  const onAbort = () => rejectAbort(abortError())
+  signal.addEventListener('abort', onAbort, { once: true })
+  try {
+    return await Promise.race([promise, aborted])
+  } finally {
+    signal.removeEventListener('abort', onAbort)
+  }
 }
 
 function retryPromptContent(content: string | any[]): string | any[] {

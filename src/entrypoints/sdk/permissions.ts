@@ -257,7 +257,11 @@ export async function connectSdkMcpServers(
       // Convert SDK config to internal format with session scope. SDK-only
       // projection fields must not leak into the transport configuration.
       // Note: 'session' is SDK-specific, not part of internal ConfigScope
-      const { toolAllowlist: _toolAllowlist, ...transportConfig } = sdkConfig
+      const {
+        toolAllowlist: _toolAllowlist,
+        persistedTools: _persistedTools,
+        ...transportConfig
+      } = sdkConfig
       const scopedConfig = {
         ...transportConfig,
         scope: 'session',
@@ -284,6 +288,7 @@ export async function connectSdkMcpServers(
           maxResultSizeChars?: number
           deferInputValidationToHandler?: boolean
           _meta?: Record<string, unknown>
+          mcpInfo?: { serverName: string; toolName: string }
         }
         const sdkConfig = config as { type: 'sdk'; name: string; tools?: SdkToolDef[] }
         const sdkToolDefs = sdkConfig.tools ?? []
@@ -291,6 +296,7 @@ export async function connectSdkMcpServers(
           ...MCPTool,
           name: toolDef.name,
           isMcp: true,
+          ...(toolDef.mcpInfo ? { mcpInfo: toolDef.mcpInfo } : {}),
           searchHint: toolDef.searchHint,
           alwaysLoad: toolDef.alwaysLoad,
           maxResultSizeChars: sdkMcpToolMaxResultSizeChars(toolDef.maxResultSizeChars),
