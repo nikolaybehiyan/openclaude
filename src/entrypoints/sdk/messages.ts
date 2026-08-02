@@ -69,8 +69,17 @@ export type SDKMessagesRuntimeOptions = {
   resolvedMcpServers?: SDKResolvedMcpServer[]
   signal?: AbortSignal
   cwd?: string
+  /** @internal Coarse runtime trace without prompts, tool inputs, or results. */
+  _trace?: (event: SDKMessagesTraceEvent) => void
   /** @internal Test seam; production always uses OpenClaude's QueryEngine session. */
   _sessionFactory?: SDKMessagesSessionFactory
+}
+
+export type SDKMessagesTraceEvent = {
+  phase: string
+  elapsedMs: number
+  toolName?: string
+  serverName?: string
 }
 
 export type SDKMessagesResponse = {
@@ -341,6 +350,14 @@ export async function unstable_messagesCreate(
   params: SDKMessagesCreateParams,
   options: SDKMessagesRuntimeOptions,
 ): Promise<SDKMessagesResponse> {
+	const traceStartedAt = Date.now()
+	const trace = (event: Omit<SDKMessagesTraceEvent, 'elapsedMs'>) => {
+	  try {
+		options._trace?.({ ...event, elapsedMs: Date.now() - traceStartedAt })
+	  } catch {
+		// Diagnostics are observational and must never affect a request.
+	  }
+	}
   if (!params || !Array.isArray(params.messages) || params.messages.length === 0) {
     throw new Error('artifact Messages request requires at least one message')
   }
@@ -408,6 +425,7 @@ export async function unstable_messagesCreate(
     canUseTool: async name => allowedToolSet.has(name)
       ? { behavior: 'allow' as const }
       : { behavior: 'deny' as const, message: `Tool ${name} is unavailable to this artifact.` },
+	_lifecycleReporter: report => trace({ phase: `sdk_${report.phase}` }),
   })
 
   const content: SDKMessagesContentBlock[] = []
@@ -436,6 +454,7 @@ export async function unstable_messagesCreate(
           const tool = mcp.toolsByQualifiedName.get(block.name)
           if (!tool) continue
           pendingMcp.set(block.id, tool)
+		  trace({ phase: 'assistant_mcp_tool_use', toolName: tool.toolName, serverName: tool.serverName })
           content.push({
             type: 'mcp_tool_use',
             id: block.id,
@@ -451,6 +470,7 @@ export async function unstable_messagesCreate(
           if (block.type !== 'tool_result' || typeof block.tool_use_id !== 'string') continue
           const tool = pendingMcp.get(block.tool_use_id)
           if (!tool) continue
+		  trace({ phase: 'mcp_tool_result', toolName: tool.toolName, serverName: tool.serverName })
           content.push({
             type: 'mcp_tool_result',
             tool_use_id: block.tool_use_id,
@@ -462,6 +482,7 @@ export async function unstable_messagesCreate(
         continue
       }
       if (sdkMessage.type === 'result') {
+		trace({ phase: 'result' })
         resultSeen = true
         if (sdkMessage.subtype !== 'success' || sdkMessage.is_error === true) {
           const failure = sdkMessage as Record<string, unknown>

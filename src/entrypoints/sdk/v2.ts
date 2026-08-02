@@ -154,6 +154,8 @@ export type SDKSessionOptions = {
   mcpServers?: Record<string, unknown>
   /** Observe schemas returned by native plugin MCP tools/list for durable host projection. */
   mcpToolReporter?: (report: SDKMcpToolReport) => void | Promise<void>
+  /** @internal Observe coarse SDK lifecycle milestones without message content. */
+  _lifecycleReporter?: (report: SDKSessionLifecycleReport) => void
   /** Local plugin roots loaded by OpenClaude's native plugin loader. */
   plugins?: SdkPluginConfig[]
   /**
@@ -212,6 +214,11 @@ export type SDKSessionOptions = {
   sessionSubagentEventReader?: SDKSessionEventReader
   /** In-memory session hooks backed by OpenClaude's native session hook runtime. */
   hooks?: SDKSessionFunctionHooks
+}
+
+export type SDKSessionLifecycleReport = {
+  phase: 'send_started' | 'init_ready' | 'runtime_ready' | 'agents_ready' | 'model_handoff'
+  elapsedMs: number
 }
 
 export type SDKMcpToolReport = {
@@ -692,6 +699,15 @@ class SDKSessionImpl implements SDKSession {
   }
 
   async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
+	const lifecycleStartedAt = Date.now()
+	const reportLifecycle = (phase: SDKSessionLifecycleReport['phase']) => {
+	  try {
+		this.options._lifecycleReporter?.({ phase, elapsedMs: Date.now() - lifecycleStartedAt })
+	  } catch {
+		// Diagnostics are observational and must never affect a turn.
+	  }
+	}
+	reportLifecycle('send_started')
     const sdkContext = {
       sessionId: this._sessionId as SessionId,
       sessionProjectDir: this._sessionProjectDir,
@@ -703,6 +719,7 @@ class SDKSessionImpl implements SDKSession {
     const inner = runSdkContextIterable(sdkContext, () => {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
+		reportLifecycle('init_ready')
         const pluginLifecycle = self.ensurePluginLifecycleLoaded()
         // Start native MCP discovery/connection alongside cold skill and
         // sandbox initialization. Only in-process SDK tools are awaited;
@@ -711,12 +728,15 @@ class SDKSessionImpl implements SDKSession {
         const skillsStartup = self.ensureSkillsLoaded()
         const sandboxStartup = self.ensureSandboxReady()
         await Promise.all([pluginLifecycle, mcpStartup, skillsStartup, sandboxStartup])
+		reportLifecycle('runtime_ready')
         await self.ensureAgentsLoaded()
+		reportLifecycle('agents_ready')
 
         // Switch session for transcript writes using session's own resolved dir
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
 
         try {
+		  reportLifecycle('model_handoff')
           yield* self.runEngineTurn(content, options)
         } finally {
           self.agentFailureQueue.length = 0
