@@ -1,5 +1,8 @@
 import { afterEach, describe, expect, test } from 'bun:test'
-import { getOauthConfig } from './oauth.js'
+import {
+  getOauthConfig,
+  isHostManagedExternalInference,
+} from './oauth.js'
 
 const ORIGINAL_ENV = {
   ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
@@ -22,7 +25,7 @@ afterEach(() => {
   }
 })
 
-describe('getOauthConfig host-managed API routing', () => {
+describe('host-managed Code control and inference routing', () => {
   test('keeps third-party inference gateways away from Code account APIs', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://model-gateway.example.test'
     delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
@@ -31,10 +34,10 @@ describe('getOauthConfig host-managed API routing', () => {
     expect(getOauthConfig().BASE_API_URL).toBe('https://api.anthropic.com')
   })
 
-  test('routes all API-hosted Code contracts through the trusted host endpoint', () => {
-    process.env.ANTHROPIC_BASE_URL = 'https://ai.claudia.ru/'
+  test('keeps Code account APIs on the trusted control plane while inference is external', () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic'
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
-    delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
+    process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.claudia.ru'
 
     const config = getOauthConfig()
     expect(config.BASE_API_URL).toBe('https://ai.claudia.ru')
@@ -45,17 +48,16 @@ describe('getOauthConfig host-managed API routing', () => {
       'https://ai.claudia.ru/api/oauth/claude_cli/roles',
     )
     expect(config.CLAUDE_AI_AUTHORIZE_URL).toBe(
-      'https://claude.com/cai/oauth/authorize',
+      'https://ai.claudia.ru/oauth/authorize',
     )
+    expect(isHostManagedExternalInference()).toBe(true)
   })
 
-  test('rejects an invalid trusted host endpoint', () => {
-    process.env.ANTHROPIC_BASE_URL = 'file:///tmp/claude.sock'
+  test('does not classify a shared control and inference origin as split routing', () => {
+    process.env.ANTHROPIC_BASE_URL = 'https://ai.claudia.ru/v1'
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
-    delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
+    process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.claudia.ru'
 
-    expect(() => getOauthConfig()).toThrow(
-      'Host-managed ANTHROPIC_BASE_URL must be an absolute HTTP(S) URL',
-    )
+    expect(isHostManagedExternalInference()).toBe(false)
   })
 })

@@ -27,7 +27,10 @@ import {
   getIsNonInteractiveSession,
   getSessionId,
 } from '../../bootstrap/state.js'
-import { getOauthConfig } from '../../constants/oauth.js'
+import {
+  getOauthConfig,
+  isHostManagedExternalInference,
+} from '../../constants/oauth.js'
 import { isDebugToStdErr, logForDebugging } from '../../utils/debug.js'
 import {
   getAWSRegion,
@@ -216,8 +219,10 @@ export async function getAnthropicClient({
     defaultHeaders['x-anthropic-additional-protection'] = 'true'
   }
 
+  const hostManagedExternalInference = isHostManagedExternalInference()
   const shouldUseFirstPartyAuth =
-    shouldUseFirstPartyAnthropicAuth(providerOverride)
+    shouldUseFirstPartyAnthropicAuth(providerOverride) &&
+    !hostManagedExternalInference
 
   if (shouldUseFirstPartyAuth) {
     logForDebugging('[API:auth] OAuth token check starting')
@@ -229,6 +234,15 @@ export async function getAnthropicClient({
     shouldUseFirstPartyAuth && isClaudeAISubscriber()
 
   if (shouldUseFirstPartyAuth && !isClaudeAiSubscriber) {
+    await configureApiKeyHeaders(defaultHeaders, getIsNonInteractiveSession())
+  }
+
+  // Desktop keeps Claudia OAuth for first-party control APIs while inference
+  // can be routed through Ion's gateway mapper. The mapper delegates its
+  // short-lived bearer credential through the native apiKeyHelper contract,
+  // so warm that helper before constructing the Anthropic client. Never pass
+  // the Claudia OAuth token or duplicate the gateway token as x-api-key.
+  if (hostManagedExternalInference) {
     await configureApiKeyHeaders(defaultHeaders, getIsNonInteractiveSession())
   }
 
@@ -465,7 +479,10 @@ export async function getAnthropicClient({
 
   // Determine authentication method based on available tokens
   const clientConfig: ConstructorParameters<typeof Anthropic>[0] = {
-    apiKey: isClaudeAiSubscriber ? null : apiKey || getAnthropicApiKey(),
+    apiKey:
+      isClaudeAiSubscriber || hostManagedExternalInference
+        ? null
+        : apiKey || getAnthropicApiKey(),
     authToken: isClaudeAiSubscriber
       ? getClaudeAIOAuthTokens()?.accessToken
       : undefined,

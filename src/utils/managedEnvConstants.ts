@@ -26,6 +26,12 @@ const PROVIDER_MANAGED_ENV_VARS = new Set([
   'ANTHROPIC_FOUNDRY_BASE_URL',
   'ANTHROPIC_FOUNDRY_RESOURCE',
   'ANTHROPIC_VERTEX_PROJECT_ID',
+  'ANTHROPIC_CUSTOM_HEADERS',
+  // Host-owned control/inference split and credential-helper lifecycle
+  'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+  'CLAUDIA_CODE_INFERENCE_CREDENTIAL_URL',
+  'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
+  'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
   // Region routing (per-model VERTEX_REGION_CLAUDE_* handled by prefix below)
   'CLOUD_ML_REGION',
   // Auth

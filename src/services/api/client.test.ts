@@ -39,6 +39,9 @@ const originalEnv = {
   ANTHROPIC_AUTH_TOKEN: process.env.ANTHROPIC_AUTH_TOKEN,
   ANTHROPIC_BASE_URL: process.env.ANTHROPIC_BASE_URL,
   ANTHROPIC_CUSTOM_HEADERS: process.env.ANTHROPIC_CUSTOM_HEADERS,
+  CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST:
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
+  CLAUDE_CODE_CUSTOM_OAUTH_URL: process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL,
 }
 
 function restoreEnv(key: string, value: string | undefined): void {
@@ -76,6 +79,8 @@ beforeEach(() => {
   delete process.env.ANTHROPIC_API_KEY
   delete process.env.ANTHROPIC_AUTH_TOKEN
   delete process.env.ANTHROPIC_CUSTOM_HEADERS
+  delete process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST
+  delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
 })
 
 afterEach(() => {
@@ -105,7 +110,74 @@ afterEach(() => {
   restoreEnv('ANTHROPIC_AUTH_TOKEN', originalEnv.ANTHROPIC_AUTH_TOKEN)
   restoreEnv('ANTHROPIC_BASE_URL', originalEnv.ANTHROPIC_BASE_URL)
   restoreEnv('ANTHROPIC_CUSTOM_HEADERS', originalEnv.ANTHROPIC_CUSTOM_HEADERS)
+  restoreEnv(
+    'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+    originalEnv.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
+  )
+  restoreEnv(
+    'CLAUDE_CODE_CUSTOM_OAUTH_URL',
+    originalEnv.CLAUDE_CODE_CUSTOM_OAUTH_URL,
+  )
   globalThis.fetch = originalFetch
+})
+
+test('host-managed external inference uses gateway bearer auth without Claudia OAuth leakage', async () => {
+  let capturedUrl: string | undefined
+  let capturedHeaders: Headers | undefined
+
+  delete process.env.CLAUDE_CODE_USE_GEMINI
+  delete process.env.GEMINI_API_KEY
+  delete process.env.GEMINI_MODEL
+  delete process.env.GEMINI_BASE_URL
+  delete process.env.GEMINI_AUTH_MODE
+  process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic'
+  process.env.ANTHROPIC_AUTH_TOKEN = 'short-lived-zai-token'
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = 'claudia-control-oauth'
+  process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+  process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.claudia.ru'
+
+  const fetchOverride = (async (input, init) => {
+    capturedUrl =
+      typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url
+    capturedHeaders = new Headers(init?.headers)
+    return new Response(
+      JSON.stringify({
+        id: 'msg_zai_gateway',
+        type: 'message',
+        role: 'assistant',
+        model: 'glm-5-turbo',
+        content: [{ type: 'text', text: 'ok' }],
+        stop_reason: 'end_turn',
+        stop_sequence: null,
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }),
+      { headers: { 'Content-Type': 'application/json' } },
+    )
+  }) as FetchType
+
+  const client = await getAnthropicClient({
+    maxRetries: 0,
+    model: 'glm-5-turbo',
+    fetchOverride,
+  })
+  await client.messages.create({
+    model: 'glm-5-turbo',
+    messages: [{ role: 'user', content: 'hello' }],
+    max_tokens: 64,
+  })
+
+  expect(capturedUrl).toBe('https://api.z.ai/api/anthropic/v1/messages')
+  expect(capturedHeaders?.get('authorization')).toBe(
+    'Bearer short-lived-zai-token',
+  )
+  expect(capturedHeaders?.get('x-api-key')).toBeNull()
+  expect(capturedHeaders?.get('authorization')).not.toContain(
+    'claudia-control-oauth',
+  )
 })
 
 test('first-party Anthropic requests execute the configured fetch wrapper without runtime symbol errors', async () => {
