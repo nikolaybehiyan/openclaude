@@ -866,6 +866,13 @@ export function deleteProfileFile(options?: ProfileFileLocation): string {
 export function hasExplicitProviderSelection(
   processEnv: NodeJS.ProcessEnv = process.env,
 ): boolean {
+  // Embedding hosts such as Claude Desktop own the provider choice. Their
+  // Anthropic endpoint and OAuth token must win over every OpenClaude profile
+  // and auto-detected provider.
+  if (isEnvTruthy(processEnv.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return true
+  }
+
   // If env was already applied from a provider profile, preserve it.
   if (processEnv.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED === '1') {
     return true
@@ -900,6 +907,9 @@ export async function buildLaunchEnv(options: {
   readGeminiAccessToken?: () => string | undefined
 }): Promise<NodeJS.ProcessEnv> {
   const processEnv = options.processEnv ?? process.env
+  if (isEnvTruthy(processEnv.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return buildHostManagedAnthropicEnv(processEnv)
+  }
   const persistedEnv =
     options.persisted?.profile === options.profile
       ? options.persisted.env ?? {}
@@ -1326,6 +1336,32 @@ export async function buildLaunchEnv(options: {
   })
 }
 
+function buildHostManagedAnthropicEnv(
+  processEnv: NodeJS.ProcessEnv,
+): NodeJS.ProcessEnv {
+  const profileEnv: ProfileEnv = {}
+  const baseUrl = sanitizeProviderConfigValue(processEnv.ANTHROPIC_BASE_URL)
+  const model = normalizeProfileModel(
+    sanitizeProviderConfigValue(processEnv.ANTHROPIC_MODEL),
+  )
+  const apiKey = sanitizeApiKey(processEnv.ANTHROPIC_API_KEY)
+  const customHeaders = processEnv.ANTHROPIC_CUSTOM_HEADERS?.trim()
+
+  if (baseUrl) profileEnv.ANTHROPIC_BASE_URL = baseUrl
+  if (model) profileEnv.ANTHROPIC_MODEL = model
+  if (apiKey) profileEnv.ANTHROPIC_API_KEY = apiKey
+  if (customHeaders) profileEnv.ANTHROPIC_CUSTOM_HEADERS = customHeaders
+
+  const env = buildCompatibilityProcessEnv({
+    processEnv,
+    compatibilityMode: 'anthropic',
+    profileEnv,
+  })
+  delete env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED
+  delete env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID
+  return env
+}
+
 export async function buildStartupEnvFromProfile(options?: {
   persisted?: ProfileFile | null
   goal?: RecommendationGoal
@@ -1336,6 +1372,10 @@ export async function buildStartupEnvFromProfile(options?: {
 }): Promise<NodeJS.ProcessEnv> {
   const processEnv = options?.processEnv ?? process.env
   const persisted = options?.persisted ?? loadProfileFile()
+
+  if (isEnvTruthy(processEnv.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return buildHostManagedAnthropicEnv(processEnv)
+  }
 
   const profileManagedEnv = processEnv.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED === '1'
 

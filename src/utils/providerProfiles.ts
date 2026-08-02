@@ -38,6 +38,7 @@ import {
   type ProviderPreset,
 } from '../integrations/index.js'
 import { logForDebugging } from './debug.js'
+import { isEnvTruthy } from './envUtils.js'
 import {
   sanitizeProfileCustomHeaders,
   serializeProfileCustomHeaders,
@@ -547,6 +548,9 @@ export function clearProviderProfileEnvFromProcessEnv(
 }
 
 export function applyProviderProfileToProcessEnv(profile: ProviderProfile): void {
+  if (isEnvTruthy(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return
+  }
   const { route, compatibilityMode } = resolveProfileCompatibility(profile.provider)
   const primaryModel = getPrimaryModel(profile.model)
   let profileEnv: ProfileEnv
@@ -667,6 +671,9 @@ export function applyActiveProviderProfileFromConfig(
   },
 ): ProviderProfile | undefined {
   const processEnv = options?.processEnv ?? process.env
+  if (isEnvTruthy(processEnv.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return undefined
+  }
   const activeProfile = getActiveProviderProfile(config)
   if (!activeProfile) {
     return undefined

@@ -859,6 +859,44 @@ test('buildStartupEnvFromProfile applies persisted gemini settings when no provi
   assert.equal(env.GEMINI_MODEL, 'gemini-2.5-flash')
 })
 
+test('host-managed Desktop routing overrides saved and auto-detected OpenClaude providers', async () => {
+  const processEnv: NodeJS.ProcessEnv = {
+    CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST: '1',
+    CLAUDE_CODE_OAUTH_TOKEN: 'oauth-from-desktop',
+    ANTHROPIC_BASE_URL: 'https://ai.claudia.ru',
+    ANTHROPIC_API_KEY: '',
+    CLAUDE_CODE_USE_OPENAI: '1',
+    OPENAI_BASE_URL: DEFAULT_CODEX_BASE_URL,
+    OPENAI_MODEL: 'codexplan',
+    CODEX_CREDENTIAL_SOURCE: 'oauth',
+    CHATGPT_ACCOUNT_ID: 'acct-local-codex',
+    CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED: '1',
+    CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID: 'saved_codex',
+  }
+
+  const env = await buildStartupEnvFromProfile({
+    persisted: profile('codex', {
+      OPENAI_BASE_URL: DEFAULT_CODEX_BASE_URL,
+      OPENAI_MODEL: 'codexplan',
+      CODEX_CREDENTIAL_SOURCE: 'oauth',
+      CHATGPT_ACCOUNT_ID: 'acct-persisted-codex',
+    }),
+    processEnv,
+  })
+
+  assert.equal(env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST, '1')
+  assert.equal(env.CLAUDE_CODE_OAUTH_TOKEN, 'oauth-from-desktop')
+  assert.equal(env.ANTHROPIC_BASE_URL, 'https://ai.claudia.ru')
+  assert.equal(env.ANTHROPIC_API_KEY, undefined)
+  assert.equal(env.CLAUDE_CODE_USE_OPENAI, undefined)
+  assert.equal(env.OPENAI_BASE_URL, undefined)
+  assert.equal(env.OPENAI_MODEL, undefined)
+  assert.equal(env.CODEX_CREDENTIAL_SOURCE, undefined)
+  assert.equal(env.CHATGPT_ACCOUNT_ID, undefined)
+  assert.equal(env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED, undefined)
+  assert.equal(env.CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID, undefined)
+})
+
 test('buildStartupEnvFromProfile rehydrates stored Gemini access token for access-token profile mode', async () => {
   const env = await buildStartupEnvFromProfile({
     persisted: profile('gemini', {

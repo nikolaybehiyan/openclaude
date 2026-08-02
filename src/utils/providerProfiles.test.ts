@@ -4,6 +4,7 @@ import { join } from 'node:path'
 
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 
+import { DEFAULT_CODEX_BASE_URL } from '../services/api/providerConfig.js'
 import type { ProviderProfile } from './config.js'
 
 async function importFreshProvidersModule() {
@@ -16,6 +17,8 @@ const originalCwd = process.cwd()
 const RESTORED_KEYS = [
   'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED',
   'CLAUDE_CODE_PROVIDER_PROFILE_ENV_APPLIED_ID',
+  'CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST',
+  'CLAUDE_CODE_OAUTH_TOKEN',
   'CLAUDE_CONFIG_DIR',
   'CLAUDE_CODE_USE_OPENAI',
   'CLAUDE_CODE_USE_GEMINI',
@@ -633,6 +636,30 @@ describe('getProviderProfiles', () => {
 })
 
 describe('applyActiveProviderProfileFromConfig', () => {
+  test('does not apply a saved profile when the embedding host owns routing', async () => {
+    const { applyActiveProviderProfileFromConfig } =
+      await importFreshProviderProfileModules()
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+    process.env.CLAUDE_CODE_OAUTH_TOKEN = 'oauth-from-desktop'
+    process.env.ANTHROPIC_BASE_URL = 'https://ai.claudia.ru'
+
+    const applied = applyActiveProviderProfileFromConfig({
+      providerProfiles: [
+        buildProfile({
+          id: 'saved_codex',
+          baseUrl: DEFAULT_CODEX_BASE_URL,
+          model: 'codexplan',
+        }),
+      ],
+      activeProviderProfileId: 'saved_codex',
+    } as any)
+
+    expect(applied).toBeUndefined()
+    expect(process.env.ANTHROPIC_BASE_URL).toBe('https://ai.claudia.ru')
+    expect(process.env.CLAUDE_CODE_USE_OPENAI).toBeUndefined()
+    expect(process.env.OPENAI_BASE_URL).toBeUndefined()
+  })
+
   test('does not override explicit startup provider selection', async () => {
     const { applyActiveProviderProfileFromConfig } =
       await importFreshProviderProfileModules()
