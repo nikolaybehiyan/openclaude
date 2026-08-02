@@ -9,7 +9,7 @@ test('messages adapter delegates the only model/tool loop to an isolated OpenCla
 
   const response = await unstable_messagesCreate({
     model: 'claude-sonnet-4-6',
-    max_tokens: 1000,
+    max_tokens: 1200,
     system: 'Answer briefly.',
     messages: [
       { role: 'user', content: 'Remember the prior turn.' },
@@ -32,6 +32,12 @@ test('messages adapter delegates the only model/tool loop to an isolated OpenCla
       sourceUrl: 'https://ai.todoist.net/mcp',
       url: 'http://mcp-service.default.svc.cluster.local/v1/toolbox/shttp/mcp/1',
       allowedTools: ['find_tasks'],
+      persistedTools: [{
+        name: 'find_tasks',
+        description: 'Find viewer tasks',
+        inputSchema: { type: 'object', properties: { due: { type: 'string' } } },
+        annotations: { readOnlyHint: true },
+      }],
       headers: { Authorization: 'Bearer short-lived-delegation' },
     }],
     _sessionFactory: options => {
@@ -99,7 +105,7 @@ test('messages adapter delegates the only model/tool loop to an isolated OpenCla
     model: 'GLM-5.1',
     persistSession: false,
     maxTurns: 32,
-    maxOutputTokens: 1000,
+    maxOutputTokens: 1200,
     tools: ['WebSearch'],
     allowedTools: ['WebSearch', 'mcp__artifact0__find_tasks'],
     providerOverride: {
@@ -113,6 +119,12 @@ test('messages adapter delegates the only model/tool loop to an isolated OpenCla
         url: 'http://mcp-service.default.svc.cluster.local/v1/toolbox/shttp/mcp/1',
         headers: { Authorization: 'Bearer short-lived-delegation' },
         toolAllowlist: ['find_tasks'],
+        persistedTools: [{
+          name: 'find_tasks',
+          description: 'Find viewer tasks',
+          inputSchema: { type: 'object', properties: { due: { type: 'string' } } },
+          annotations: { readOnlyHint: true },
+        }],
       },
     },
   })
@@ -180,9 +192,9 @@ test('messages adapter rejects capability expansion before creating an OpenClaud
 
   await expect(unstable_messagesCreate({
     model: 'claude-sonnet-4-6',
-    max_tokens: 1001,
-    messages: [{ role: 'user', content: 'too much' }],
-  }, options)).rejects.toThrow('between 1 and 1000')
+    max_tokens: 0,
+    messages: [{ role: 'user', content: 'invalid token limit' }],
+  }, options)).rejects.toThrow('must be a positive integer')
 
   await expect(unstable_messagesCreate({
     model: 'claude-sonnet-4-6',

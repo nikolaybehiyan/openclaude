@@ -997,11 +997,16 @@ class SDKSessionImpl implements SDKSession {
       await connectSDKMcpServersIncrementally(
         immediate,
         (name, config) => connectSdkMcpServers({ [name]: config }),
-        (name, settlement) => this.publishMcpSettlement(name, settlement, generation),
+        (name, settlement) => this.publishMcpSettlement(name, settlement, generation, false),
       )
       if (generation !== this.mcpConnectionGeneration) {
         return
       }
+      // Immediate SDK tools and persisted schemas are already local data.
+      // Publish the complete turn-one tool pool once instead of rebuilding the
+      // QueryEngine/AppState tool projection after every individual server.
+      // Remote transports below still settle and publish independently.
+      this.refreshPublishedMcpRuntime()
       this.mcpConnected = true
       for (const [name, config] of Object.entries(deferred)) {
         if (config === null || typeof config !== 'object' || Array.isArray(config)) {
@@ -1308,6 +1313,7 @@ class SDKSessionImpl implements SDKSession {
     name: string,
     settlement: { status: 'fulfilled'; value: { clients: MCPServerConnection[]; tools: Tool[] } } | { status: 'rejected'; reason: unknown },
     generation: number,
+    refreshRuntime = true,
   ): void {
     if (settlement.status === 'rejected') {
       if (generation === this.mcpConnectionGeneration) {
@@ -1340,7 +1346,9 @@ class SDKSessionImpl implements SDKSession {
       // pool. Re-evaluate them on the next turn after late MCP tools arrive.
       this.agentsLoaded = false
     }
-    this.refreshPublishedMcpRuntime()
+    if (refreshRuntime) {
+      this.refreshPublishedMcpRuntime()
+    }
   }
 
   private refreshPublishedMcpRuntime(): void {

@@ -35,6 +35,16 @@ export type SDKResolvedMcpServer = {
   sourceUrl?: string
   transportType?: 'streamable-http' | 'sse'
   allowedTools?: string[]
+  persistedTools?: Array<{
+    name: string
+    description: string
+    inputSchema: Record<string, unknown>
+    title?: string
+    outputSchema?: Record<string, unknown>
+    annotations?: Record<string, unknown>
+    icons?: unknown[]
+    _meta?: Record<string, unknown>
+  }>
   headers?: Record<string, string>
 }
 
@@ -177,6 +187,7 @@ function projectMcpServers(servers: SDKResolvedMcpServer[]): RuntimeMcpProjectio
       url: server.url,
       ...(server.headers ? { headers: server.headers } : {}),
       toolAllowlist: server.allowedTools,
+      persistedTools: server.persistedTools ?? [],
     }
     for (const toolName of server.allowedTools ?? []) {
       const qualifiedName = buildMcpToolName(runtimeName, toolName)
@@ -333,8 +344,8 @@ export async function unstable_messagesCreate(
   if (!params || !Array.isArray(params.messages) || params.messages.length === 0) {
     throw new Error('artifact Messages request requires at least one message')
   }
-  if (!Number.isInteger(params.max_tokens) || params.max_tokens < 1 || params.max_tokens > 1000) {
-    throw new Error('artifact Messages max_tokens must be between 1 and 1000')
+  if (!Number.isInteger(params.max_tokens) || params.max_tokens < 1) {
+    throw new Error('artifact Messages max_tokens must be a positive integer')
   }
   if (params.stream === true) {
     throw new Error('artifact Messages SDK entrypoint currently accepts non-streaming requests only')
