@@ -16,6 +16,7 @@ import {
   getAPIProvider,
   isFirstPartyAnthropicBaseUrl,
 } from '../../utils/model/providers.js'
+import { isEnvTruthy } from '../../utils/envUtils.js'
 
 import {
   resetSyncCache as resetLeafCache,
@@ -49,13 +50,21 @@ export function resetSyncCache(): void {
 export function isRemoteManagedSettingsEligible(): boolean {
   if (cached !== undefined) return cached
 
+  // Claude Desktop and hosted supervisors mark endpoints they own with this
+  // flag. Those endpoints are first-party control planes for their embedded
+  // OpenClaude process even when the hostname is not api.anthropic.com.
+  // Ordinary user-configured model gateways remain ineligible below.
+  const providerManagedByHost = isEnvTruthy(
+    process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST,
+  )
+
   // 3p provider users should not hit the settings endpoint
-  if (getAPIProvider() !== 'firstParty') {
+  if (!providerManagedByHost && getAPIProvider() !== 'firstParty') {
     return (cached = setEligibility(false))
   }
 
   // Custom base URL users should not hit the settings endpoint
-  if (!isFirstPartyAnthropicBaseUrl()) {
+  if (!providerManagedByHost && !isFirstPartyAnthropicBaseUrl()) {
     return (cached = setEligibility(false))
   }
 
