@@ -182,6 +182,48 @@ const ALLOWED_OAUTH_BASE_URLS = [
   'https://claude-staging.fedstart.com',
 ]
 
+/**
+ * Claude Desktop owns the provider endpoint for local/SSH Code sessions and
+ * marks that spawn environment with CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST.
+ * Hosted workers use the same contract. In that trusted mode the inference
+ * endpoint is also the first-party Code API gateway, so auxiliary requests
+ * (managed settings, bootstrap, sessions, usage, etc.) must follow it.
+ *
+ * Do not honor ANTHROPIC_BASE_URL here for ordinary CLI launches: users may
+ * point inference at a third-party model gateway which does not own Claude
+ * Code account/session APIs and must never receive the user's OAuth token.
+ */
+function getHostManagedApiBaseUrl(): string | undefined {
+  if (!isEnvTruthy(process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST)) {
+    return undefined
+  }
+
+  const rawBaseUrl = process.env.ANTHROPIC_BASE_URL?.trim()
+  if (!rawBaseUrl) return undefined
+
+  let parsed: URL
+  try {
+    parsed = new URL(rawBaseUrl)
+  } catch {
+    throw new Error(
+      'Host-managed ANTHROPIC_BASE_URL must be an absolute HTTP(S) URL.',
+    )
+  }
+  if (
+    (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash
+  ) {
+    throw new Error(
+      'Host-managed ANTHROPIC_BASE_URL must be an absolute HTTP(S) URL without credentials, query, or fragment.',
+    )
+  }
+
+  return rawBaseUrl.replace(/\/+$/, '')
+}
+
 // Default to prod config, override with test/staging if enabled
 export function getOauthConfig(): OauthConfig {
   let config: OauthConfig = (() => {
@@ -218,6 +260,20 @@ export function getOauthConfig(): OauthConfig {
       CLAUDEAI_SUCCESS_URL: `${base}/oauth/code/success?app=claude-code`,
       MANUAL_REDIRECT_URL: `${base}/oauth/code/callback`,
       OAUTH_FILE_SUFFIX: '-custom-oauth',
+    }
+  }
+
+  // The official desktop host passes ANTHROPIC_BASE_URL together with
+  // CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST. Follow that trusted endpoint for
+  // every API-hosted Code contract while leaving interactive OAuth browser
+  // URLs under the dedicated OAuth configuration above.
+  const hostManagedApiBaseUrl = getHostManagedApiBaseUrl()
+  if (hostManagedApiBaseUrl) {
+    config = {
+      ...config,
+      BASE_API_URL: hostManagedApiBaseUrl,
+      API_KEY_URL: `${hostManagedApiBaseUrl}/api/oauth/claude_cli/create_api_key`,
+      ROLES_URL: `${hostManagedApiBaseUrl}/api/oauth/claude_cli/roles`,
     }
   }
 
