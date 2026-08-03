@@ -6,13 +6,11 @@ import { getOriginalCwd, getSessionId } from 'src/bootstrap/state.js';
 import { checkGate_CACHED_OR_BLOCKING } from 'src/services/analytics/growthbook.js';
 import { type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS, logEvent } from 'src/services/analytics/index.js';
 import { isPolicyAllowed } from 'src/services/policyLimits/index.js';
-import { z } from 'zod/v4';
 import { getTeleportErrors, TeleportError, type TeleportLocalErrorType } from '../components/TeleportError.js';
 import { getOauthConfig } from '../constants/oauth.js';
 import type { SDKMessage } from '../entrypoints/agentSdkTypes.js';
 import type { Root } from '../ink.js';
 import { KeybindingSetup } from '../keybindings/KeybindingProviderSetup.js';
-import { queryHaiku } from '../services/api/claude.js';
 import { getSessionLogsViaOAuth, getTeleportEvents } from '../services/api/sessionIngress.js';
 import { getOrganizationUUID } from '../services/oauth/client.js';
 import { AppStateProvider } from '../state/AppState.js';
@@ -27,16 +25,14 @@ import { detectCurrentRepositoryWithHost, parseGitHubRepository, parseGitRemote 
 import { isEnvTruthy } from './envUtils.js';
 import { TeleportOperationError, toError } from './errors.js';
 import { execFileNoThrow } from './execFileNoThrow.js';
-import { truncateToWidth } from './format.js';
 import { findGitRoot, getDefaultBranch, getIsClean, gitExe } from './git.js';
-import { safeParseJSON } from './json.js';
 import { logError } from './log.js';
 import { createSystemMessage, createUserMessage } from './messages.js';
 import { getMainLoopModel } from './model/model.js';
 import { isTranscriptMessage } from './sessionStorage.js';
 import { getSettings_DEPRECATED } from './settings/settings.js';
 import { jsonStringify } from './slowOperations.js';
-import { asSystemPrompt } from './systemPromptType.js';
+import { generateTitleAndBranch } from './sessionTitleAndBranch.js';
 import { fetchSession, type GitRepositoryOutcome, type GitSource, getBranchFromSession, getOAuthHeaders, type SessionResource } from './teleport/api.js';
 import { fetchEnvironments } from './teleport/environments.js';
 import { createAndUploadGitBundle } from './teleport/gitBundle.js';
@@ -73,98 +69,6 @@ type TeleportToRemoteResponse = {
   id: string;
   title: string;
 };
-const SESSION_TITLE_AND_BRANCH_PROMPT = `You are coming up with a succinct title and git branch name for a coding session based on the provided description. The title should be clear, concise, and accurately reflect the content of the coding task.
-You should keep it short and simple, ideally no more than 6 words. Avoid using jargon or overly technical terms unless absolutely necessary. The title should be easy to understand for anyone reading it.
-Use sentence case for the title (capitalize only the first word and proper nouns), not Title Case.
-
-The branch name should be clear, concise, and accurately reflect the content of the coding task.
-You should keep it short and simple, ideally no more than 4 words. The branch should always start with "claude/" and should be all lower case, with words separated by dashes.
-
-Return a JSON object with "title" and "branch" fields.
-
-Example 1: {"title": "Fix login button not working on mobile", "branch": "claude/fix-mobile-login-button"}
-Example 2: {"title": "Update README with installation instructions", "branch": "claude/update-readme"}
-Example 3: {"title": "Improve performance of data processing script", "branch": "claude/improve-data-processing"}
-
-Here is the session description:
-<description>{description}</description>
-Please generate a title and branch name for this session.`;
-type TitleAndBranch = {
-  title: string;
-  branchName: string;
-};
-
-/**
- * Generates a title and branch name for a coding session using Claude Haiku
- * @param description The description/prompt for the session
- * @returns Promise<TitleAndBranch> The generated title and branch name
- */
-async function generateTitleAndBranch(description: string, signal: AbortSignal): Promise<TitleAndBranch> {
-  const fallbackTitle = truncateToWidth(description, 75);
-  const fallbackBranch = 'claude/task';
-  try {
-    const userPrompt = SESSION_TITLE_AND_BRANCH_PROMPT.replace('{description}', description);
-    const response = await queryHaiku({
-      systemPrompt: asSystemPrompt([]),
-      userPrompt,
-      outputFormat: {
-        type: 'json_schema',
-        schema: {
-          type: 'object',
-          properties: {
-            title: {
-              type: 'string'
-            },
-            branch: {
-              type: 'string'
-            }
-          },
-          required: ['title', 'branch'],
-          additionalProperties: false
-        }
-      },
-      signal,
-      options: {
-        querySource: 'teleport_generate_title',
-        agents: [],
-        isNonInteractiveSession: false,
-        hasAppendSystemPrompt: false,
-        mcpTools: []
-      }
-    });
-
-    // Extract text from the response
-    const firstBlock = response.message.content[0];
-    if (firstBlock?.type !== 'text') {
-      return {
-        title: fallbackTitle,
-        branchName: fallbackBranch
-      };
-    }
-    const parsed = safeParseJSON(firstBlock.text.trim());
-    const parseResult = z.object({
-      title: z.string(),
-      branch: z.string()
-    }).safeParse(parsed);
-    if (parseResult.success) {
-      return {
-        title: parseResult.data.title || fallbackTitle,
-        branchName: parseResult.data.branch || fallbackBranch
-      };
-    }
-    return {
-      title: fallbackTitle,
-      branchName: fallbackBranch
-    };
-  } catch (error) {
-    logError(new Error(`Error generating title and branch: ${error}`));
-    return {
-      title: fallbackTitle,
-      branchName: fallbackBranch
-    };
-  }
-}
-
 /**
  * Validates that the git working directory is clean (ignoring untracked files)
  * Untracked files are ignored because they won't be lost during branch switching

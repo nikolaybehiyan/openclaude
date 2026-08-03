@@ -694,6 +694,16 @@ export function unstable_v2_generateSessionTitle(
   signal?: AbortSignal,
 ): Promise<string | null>
 
+export type SDKTitleAndBranchResult = {
+  title: string
+  branchName: string
+}
+
+export function unstable_v2_generateTitleAndBranch(
+  description: string,
+  signal?: AbortSignal,
+): Promise<SDKTitleAndBranchResult>
+
 /**
  * Initialize the SDK runtime without creating a session or sending a message.
  */

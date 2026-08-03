@@ -93,6 +93,10 @@ import {
   generateSessionTitle as generateSourceSessionTitle,
   titleOrNullForPromptFallback,
 } from '../../utils/sessionTitle.js'
+import {
+  generateTitleAndBranch as generateSourceTitleAndBranch,
+  type SessionTitleAndBranch,
+} from '../../utils/sessionTitleAndBranch.js'
 import { getLastCacheSafeParams } from '../../utils/forkedAgent.js'
 import { runSideQuestion as runSourceSideQuestion } from '../../utils/sideQuestion.js'
 import { createAbortController } from '../../utils/abortController.js'
@@ -2643,6 +2647,19 @@ export async function unstable_v2_generateSessionTitle(
   const titleSignal = signal ?? createAbortController().signal
   return titleOrNullForPromptFallback(
     await generateSourceSessionTitle(description, titleSignal),
+  )
+}
+
+export type SDKTitleAndBranchResult = SessionTitleAndBranch
+
+export async function unstable_v2_generateTitleAndBranch(
+  description: string,
+  signal?: AbortSignal,
+): Promise<SDKTitleAndBranchResult> {
+  await init()
+  return await generateSourceTitleAndBranch(
+    description,
+    signal ?? createAbortController().signal,
   )
 }
 

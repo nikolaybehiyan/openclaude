@@ -104,6 +104,7 @@ export type {
   SDKSessionFunctionHooks,
   SDKSessionUpdateOptions,
   SDKMcpToolReport,
+  SDKTitleAndBranchResult,
   ThinkingConfig,
 } from './v2.js'
 export type { SDKSession } from './v2.js'
@@ -113,6 +114,7 @@ export {
   unstable_v2_resumeSession,
   unstable_v2_prompt,
   unstable_v2_generateSessionTitle,
+  unstable_v2_generateTitleAndBranch,
   unstable_v2_initializeRuntime,
 } from './v2.js'
 export type {
