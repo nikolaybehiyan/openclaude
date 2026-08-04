@@ -1,140 +1,153 @@
-import { isAbsolute } from 'node:path'
-import { setTimeout as delay } from 'node:timers/promises'
+import { readFile } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import {
-  addSkillDirectories,
-  clearDynamicSkills,
-  getDynamicSkills,
-  onDynamicSkillsLoaded,
+  getSkillToolCommands,
+  getSlashCommandToolSkills,
+} from '../../commands.js'
+import {
+  createSkillCommand,
+  parseSkillFrontmatterFields,
 } from '../../skills/loadSkillsDir.js'
-import { clearCommandMemoizationCaches } from '../../commands.js'
-import { isSettingSourceEnabled } from '../../utils/settings/constants.js'
-import { resetSentSkillNames } from '../../utils/attachments.js'
+import type { Command } from '../../types/command.js'
+import type { LoadedPlugin, PluginManifest } from '../../types/plugin.js'
+import { parseFrontmatter } from '../../utils/frontmatterParser.js'
+import { getPluginCommands, getPluginSkills } from '../../utils/plugins/loadPluginCommands.js'
+import { loadAllPluginsCacheOnly } from '../../utils/plugins/pluginLoader.js'
+import {
+  loadPluginOptions,
+  substitutePluginVariables,
+  substituteUserConfigInContent,
+} from '../../utils/plugins/pluginOptionsStorage.js'
+import type { HooksSettings } from '../../schemas/hooks.js'
 
-export type SDKSkillRuntimeIntent = {
-  revision?: string
-  skillDirectories?: string[]
-  enabledSkillNames?: string[]
+export type SDKRuntimeCommandProjection = {
+  name: string
+  metadataMarkdown: string
+  filePath?: string
+  content?: string
+  kind: 'skill' | 'command'
+  source: 'standalone' | 'plugin'
+  pluginName?: string
 }
 
-export type SDKSkillPreparationResult = {
-  changed: boolean
-  revision?: string
-  discoveredSkillCount: number
-  enabledSkillCount: number
-  enabledSkillNames: string[]
+export type SDKRuntimePluginProjection = {
+  name: string
+  path: string
+  source: string
+  manifest: PluginManifest
+  hooksConfig?: HooksSettings
 }
 
-let currentIntentFingerprint = ''
-let enabledSkillNames = new Set<string>()
-let listenerInstalled = false
-const skillDiscoveryRetryDelaysMs = [0, 50, 100, 200, 400, 800, 1600]
-
-function applyAllowlist(): void {
-  for (const skill of getDynamicSkills()) {
-    const name = skill.name
-    skill.isEnabled = () => enabledSkillNames.has(name)
-  }
+export type SDKRuntimeExtensionsProjection = {
+  commands: SDKRuntimeCommandProjection[]
+  plugins: SDKRuntimePluginProjection[]
 }
 
-function refreshSkillPresentation(): void {
-  applyAllowlist()
-  clearCommandMemoizationCaches()
-  resetSentSkillNames()
-}
-
-function ensureListener(): void {
-  if (listenerInstalled) return
-  onDynamicSkillsLoaded(() => {
-    refreshSkillPresentation()
-  })
-  listenerInstalled = true
-}
-
-function discoveredEnabledSkillNames(): string[] {
-  return getDynamicSkills()
-    .filter(skill => enabledSkillNames.has(skill.name))
-    .map(skill => skill.name)
-    .sort()
-}
-
-function missingEnabledSkillNames(names: string[]): string[] {
-  const discovered = new Set(discoveredEnabledSkillNames())
-  return names.filter(name => !discovered.has(name))
-}
-
-async function loadSkillDirectoriesUntilReady(
-  skillDirectories: string[],
-  names: string[],
-): Promise<void> {
-  let missing = names
-  for (const retryDelayMs of skillDiscoveryRetryDelaysMs) {
-    if (retryDelayMs > 0) {
-      await delay(retryDelayMs)
-    }
-    clearDynamicSkills()
-    await addSkillDirectories(skillDirectories)
-    refreshSkillPresentation()
-    missing = missingEnabledSkillNames(names)
-    if (missing.length === 0) {
-      return
-    }
-  }
-  throw new Error(
-    `skill runtime could not discover enabled skills: ${missing.join(', ')}`,
-  )
-}
-
-export async function unstable_prepareSkillRuntime(
-  intent: SDKSkillRuntimeIntent = {},
-): Promise<SDKSkillPreparationResult> {
-  const revision = intent.revision?.trim()
-  const skillDirectories = [
-    ...new Set((intent.skillDirectories ?? []).map(value => value.trim())),
-  ]
-  const names = [
-    ...new Set((intent.enabledSkillNames ?? []).map(value => value.trim())),
-  ].sort()
-  if (
-    (intent.revision !== undefined && !revision) ||
-    skillDirectories.some(value => !value || !isAbsolute(value)) ||
-    names.some(value => !value || value.includes('/') || value.includes('\\'))
-  ) {
-    throw new Error('invalid standalone skill runtime intent')
-  }
-  const fingerprint = JSON.stringify([revision, skillDirectories, names])
-  let changed = fingerprint !== currentIntentFingerprint
-
-  ensureListener()
-  enabledSkillNames = new Set(names)
-
-  if (changed) {
-    if (
-      skillDirectories.length > 0 &&
-      !isSettingSourceEnabled('projectSettings')
-    ) {
-      throw new Error(
-        'skill runtime requires SDK settingSources to include "project"',
+function nativeCommand(
+  definition: SDKRuntimeCommandProjection,
+  markdown: string,
+  plugin?: SDKRuntimePluginProjection,
+): Command {
+  const expanded = plugin
+    ? substitutePluginVariables(markdown, { path: plugin.path, source: plugin.source })
+    : markdown
+  const parsedMarkdown = parseFrontmatter(expanded, definition.filePath ?? definition.name)
+  const content = plugin?.manifest.userConfig
+    ? substituteUserConfigInContent(
+        parsedMarkdown.content,
+        loadPluginOptions(plugin.source),
+        plugin.manifest.userConfig,
       )
-    }
-    await loadSkillDirectoriesUntilReady(skillDirectories, names)
-    currentIntentFingerprint = fingerprint
-  } else {
-    applyAllowlist()
-    if (missingEnabledSkillNames(names).length > 0) {
-      await loadSkillDirectoriesUntilReady(skillDirectories, names)
-      changed = true
+    : parsedMarkdown.content
+  const command = createSkillCommand({
+    ...parseSkillFrontmatterFields(
+      parsedMarkdown.frontmatter,
+      content,
+      definition.name,
+      definition.kind === 'command' ? 'Custom command' : 'Skill',
+    ),
+    skillName: definition.name,
+    markdownContent: content,
+    source: plugin ? 'plugin' : 'project',
+    baseDir: definition.kind === 'skill'
+      ? dirname(definition.filePath ?? plugin!.path)
+      : undefined,
+    loadedFrom: plugin
+      ? 'plugin'
+      : definition.kind === 'command'
+        ? 'commands_DEPRECATED'
+        : 'skills',
+    paths: undefined,
+  })
+  if (plugin && command.type === 'prompt') {
+    command.pluginInfo = {
+      pluginManifest: plugin.manifest,
+      repository: plugin.source,
     }
   }
+  return command
+}
 
-  const discoveredSkills = getDynamicSkills()
-  const actualEnabledSkillNames = discoveredEnabledSkillNames()
+function lazyCommand(
+  definition: SDKRuntimeCommandProjection,
+  plugin?: SDKRuntimePluginProjection,
+): Command {
+  const metadata = nativeCommand(definition, definition.metadataMarkdown, plugin)
+  if (metadata.type !== 'prompt') throw new Error(`${definition.name} is not prompt based`)
+  let loaded: Command | undefined
   return {
-    changed,
-    revision,
-    discoveredSkillCount: discoveredSkills.length,
-    enabledSkillCount: discoveredSkills.filter(skill =>
-      enabledSkillNames.has(skill.name),
-    ).length,
-    enabledSkillNames: actualEnabledSkillNames,
+    ...metadata,
+    contentLength: 0,
+    async getPromptForCommand(args, context) {
+      loaded ??= nativeCommand(
+        definition,
+        definition.content ?? await readFile(definition.filePath!, 'utf8'),
+        plugin,
+      )
+      if (loaded.type !== 'prompt') throw new Error(`${definition.name} is not prompt based`)
+      return loaded.getPromptForCommand(args, context)
+    },
   }
+}
+
+function loadedPlugin(plugin: SDKRuntimePluginProjection): LoadedPlugin {
+  return {
+    ...plugin,
+    repository: plugin.source,
+    enabled: true,
+    hooksConfig: plugin.hooksConfig,
+  }
+}
+
+/** Register the backend-owned snapshot in OpenClaude's native registries. */
+export function installSDKRuntimeProjection(
+  cwd: string,
+  projection: SDKRuntimeExtensionsProjection,
+): Command[] {
+  const plugins = new Map(projection.plugins.map(plugin => [plugin.name, plugin]))
+  const commands = projection.commands.map(definition =>
+    lazyCommand(definition, definition.pluginName
+      ? plugins.get(definition.pluginName)
+      : undefined))
+  const pluginCommands = commands.filter((_, index) =>
+    projection.commands[index]?.source === 'plugin' && projection.commands[index]?.kind === 'command')
+  const pluginSkills = commands.filter((_, index) =>
+    projection.commands[index]?.source === 'plugin' && projection.commands[index]?.kind === 'skill')
+  const modelCommands = commands.filter(command =>
+    !command.disableModelInvocation &&
+    (command.loadedFrom !== 'plugin' || command.hasUserSpecifiedDescription || command.whenToUse))
+  const slashSkills = commands.filter(command =>
+    (command.hasUserSpecifiedDescription || command.whenToUse) &&
+    (command.loadedFrom === 'skills' || command.loadedFrom === 'plugin' || command.disableModelInvocation))
+
+  getPluginCommands.cache?.set(undefined, Promise.resolve(pluginCommands))
+  getPluginSkills.cache?.set(undefined, Promise.resolve(pluginSkills))
+  getSkillToolCommands.cache?.set(cwd, Promise.resolve(modelCommands))
+  getSlashCommandToolSkills.cache?.set(cwd, Promise.resolve(slashSkills))
+  loadAllPluginsCacheOnly.cache?.set(undefined, Promise.resolve({
+    enabled: projection.plugins.map(loadedPlugin),
+    disabled: [],
+    errors: [],
+  }))
+  return commands
 }

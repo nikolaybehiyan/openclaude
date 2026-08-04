@@ -2,113 +2,54 @@ import { afterAll, describe, expect, test } from 'bun:test'
 import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
-import { setAllowedSettingSources } from '../../bootstrap/state.js'
 import {
-  clearDynamicSkills,
-  getDynamicSkills,
-} from '../../skills/loadSkillsDir.js'
-import { isCommandEnabled } from '../../types/command.js'
-import { unstable_prepareSkillRuntime } from './skills.js'
+  getSkillToolCommands,
+  getSlashCommandToolSkills,
+} from '../../commands.js'
+import { installSDKRuntimeProjection } from './skills.js'
 
 const roots: string[] = []
 
-async function writeSkill(
-  groupRoot: string,
-  name: string,
-  description: string,
-): Promise<void> {
-  const skillRoot = join(groupRoot, name)
-  await mkdir(skillRoot, { recursive: true })
-  await writeFile(
-    join(skillRoot, 'SKILL.md'),
-    `---\nname: ${name}\ndescription: ${description}\n---\n\n# ${name}\n`,
-  )
-}
-
 afterAll(async () => {
-  clearDynamicSkills()
-  setAllowedSettingSources(['userSettings'])
+  getSkillToolCommands.cache?.clear?.()
+  getSlashCommandToolSkills.cache?.clear?.()
   await Promise.all(roots.map(root => rm(root, { recursive: true, force: true })))
 })
 
-describe('SDK standalone skill runtime', () => {
-  test('uses native discovery with an exact host allowlist', async () => {
+describe('SDK authoritative skill runtime', () => {
+  test('installs native listings and reads only the invoked exact file', async () => {
     const root = await mkdtemp(join(tmpdir(), 'openclaude-sdk-skills-'))
     roots.push(root)
-    const publicRoot = join(root, 'public')
-    const examplesRoot = join(root, 'examples')
-    await writeSkill(publicRoot, 'docx', 'Create Word documents')
-    await writeSkill(examplesRoot, 'skill-creator', 'Create skills')
-    await writeSkill(examplesRoot, 'theme-factory', 'Create themes')
-    setAllowedSettingSources(['userSettings', 'projectSettings'])
-
-    const result = await unstable_prepareSkillRuntime({
-      revision: 'revision-1',
-      skillDirectories: [publicRoot, examplesRoot],
-      enabledSkillNames: ['docx', 'skill-creator'],
-    })
-
-    expect(result).toEqual({
-      changed: true,
-      revision: 'revision-1',
-      discoveredSkillCount: 3,
-      enabledSkillCount: 2,
-      enabledSkillNames: ['docx', 'skill-creator'],
-    })
-    const skills = new Map(getDynamicSkills().map(skill => [skill.name, skill]))
-    expect(isCommandEnabled(skills.get('docx'))).toBe(true)
-    expect(isCommandEnabled(skills.get('skill-creator'))).toBe(true)
-    expect(isCommandEnabled(skills.get('theme-factory'))).toBe(false)
-    expect(
-      skills.get('docx')?.type === 'prompt'
-        ? skills.get('docx')?.skillRoot
-        : undefined,
-    ).toBe(join(publicRoot, 'docx'))
-  })
-
-  test('reloads unchanged names when the host content revision changes', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'openclaude-sdk-skills-'))
-    roots.push(root)
-    const userRoot = join(root, 'user')
-    await writeSkill(userRoot, 'custom-skill', 'Version one')
-    setAllowedSettingSources(['userSettings', 'projectSettings'])
-
-    const first = await unstable_prepareSkillRuntime({
-      revision: 'revision-2',
-      skillDirectories: [userRoot],
-      enabledSkillNames: ['custom-skill'],
-    })
-    const unchanged = await unstable_prepareSkillRuntime({
-      revision: 'revision-2',
-      skillDirectories: [userRoot],
-      enabledSkillNames: ['custom-skill'],
-    })
-    const reloaded = await unstable_prepareSkillRuntime({
-      revision: 'revision-3',
-      skillDirectories: [userRoot],
-      enabledSkillNames: ['custom-skill'],
-    })
-
-    expect(first.changed).toBe(true)
-    expect(unchanged.changed).toBe(false)
-    expect(reloaded.changed).toBe(true)
-  })
-
-  test('fails preparation instead of reporting an enabled skill that was not discovered', async () => {
-    const root = await mkdtemp(join(tmpdir(), 'openclaude-sdk-skills-'))
-    roots.push(root)
-    const userRoot = join(root, 'user')
-    await mkdir(userRoot, { recursive: true })
-    setAllowedSettingSources(['userSettings', 'projectSettings'])
-
-    await expect(
-      unstable_prepareSkillRuntime({
-        revision: 'revision-missing',
-        skillDirectories: [userRoot],
-        enabledSkillNames: ['missing-skill'],
-      }),
-    ).rejects.toThrow(
-      'skill runtime could not discover enabled skills: missing-skill',
+    const skillRoot = join(root, 'direct')
+    await mkdir(skillRoot, { recursive: true })
+    await writeFile(
+      join(skillRoot, 'SKILL.md'),
+      '---\nname: direct\ndescription: Disk content\n---\n\nDo the exact task.\n',
     )
+    const definitions = [{
+      name: 'direct',
+      metadataMarkdown: '---\nname: direct\ndescription: DB description\nallowed-tools: Read\nmodel: haiku\ncontext: fork\nagent: general-purpose\neffort: low\n---\n',
+      filePath: join(skillRoot, 'SKILL.md'),
+      kind: 'skill' as const,
+      source: 'standalone' as const,
+    }]
+
+    const commands = installSDKRuntimeProjection(root, {
+      commands: definitions,
+      plugins: [],
+    })
+    expect((await getSkillToolCommands(root)).map(command => command.name)).toEqual(['direct'])
+    expect((await getSlashCommandToolSkills(root)).map(command => command.name)).toEqual(['direct'])
+    expect(commands[0]?.description).toBe('DB description')
+    expect(commands[0]?.allowedTools).toEqual(['Read'])
+    expect(commands[0]?.model).toBeDefined()
+    expect(commands[0]?.context).toBe('fork')
+    expect(commands[0]?.agent).toBe('general-purpose')
+    expect(commands[0]?.effort).toBe('low')
+    const prompt = commands[0]?.type === 'prompt'
+      ? await commands[0].getPromptForCommand('', {} as never)
+      : []
+    expect(JSON.stringify(prompt)).toContain('Do the exact task.')
   })
+
 })

@@ -116,6 +116,11 @@ import {
   resolveSDKMcpServerConfigs,
 } from './mcpRuntime.js'
 import { refreshActivePlugins } from '../../utils/plugins/refresh.js'
+import { clearPluginHookCache } from '../../utils/plugins/loadPluginHooks.js'
+import {
+  installSDKRuntimeProjection,
+  type SDKRuntimeExtensionsProjection,
+} from './skills.js'
 import {
   OUTPUT_FILE_TAG,
   STATUS_TAG,
@@ -162,6 +167,8 @@ export type SDKSessionOptions = {
   _lifecycleReporter?: (report: SDKSessionLifecycleReport) => void
   /** Local plugin roots loaded by OpenClaude's native plugin loader. */
   plugins?: SdkPluginConfig[]
+  /** @internal Exact host-owned enabled skills and plugins for managed Chat. */
+  _runtimeExtensions?: SDKRuntimeExtensionsProjection
   /**
    * Built-in tools to make available to Claude. When set, unlisted built-ins
    * are removed from context. SDK MCP/custom tools are unaffected.
@@ -258,6 +265,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'allowedTools'
   | 'disallowedTools'
   | 'thinkingConfig'
+  | '_runtimeExtensions'
 >
 
 /**
@@ -491,9 +499,12 @@ class SDKSessionImpl implements SDKSession {
     }
     void runWithSdkContext(sdkContext, async () => {
       await init()
-      const pluginStartup = this.ensurePluginLifecycleLoaded()
       const mcpStartup = this.ensureMcpServersConnected()
-      await Promise.all([pluginStartup, mcpStartup])
+      if (this.options._runtimeExtensions) {
+        await Promise.all([this.ensureSkillsLoaded(), mcpStartup])
+      } else {
+        await Promise.all([this.ensurePluginLifecycleLoaded(), mcpStartup])
+      }
     }).catch(error => {
       console.warn(
         'SDK: background plugin/MCP startup failed:',
@@ -582,6 +593,13 @@ class SDKSessionImpl implements SDKSession {
       }
     }
 
+    if (hasOwn(options, '_runtimeExtensions')) {
+      nextOptions._runtimeExtensions = options._runtimeExtensions
+      this.invalidatePluginLifecycle()
+      clearPluginHookCache()
+      this.reloadSkills()
+    }
+
     this.options = nextOptions
     if (permissionContextChanged || mcpServersChanged) {
       this.applyPermissionContextFromOptions()
@@ -645,11 +663,19 @@ class SDKSessionImpl implements SDKSession {
 
   private async ensureSkillsLoaded(): Promise<void> {
     if (this.skillsLoaded) {
+      if (this.options._runtimeExtensions) {
+        await this.ensurePluginLifecycleLoaded()
+      }
       return
     }
-    const commands = await getCommands(this.options.cwd)
+    const commands = this.options._runtimeExtensions
+      ? installSDKRuntimeProjection(this.options.cwd, this.options._runtimeExtensions)
+      : await getCommands(this.options.cwd)
     this.commands.splice(0, this.commands.length, ...commands)
     this.skillsLoaded = true
+    if (this.options._runtimeExtensions) {
+      await this.ensurePluginLifecycleLoaded()
+    }
   }
 
   private async ensureSandboxReady(): Promise<void> {
@@ -672,6 +698,18 @@ class SDKSessionImpl implements SDKSession {
     if (this.agentsLoaded) {
       return
     }
+    const visibleTools = mergeRuntimeTools(
+      getTools(sdkVisiblePermissionContext(this.options)),
+      this.mcpTools,
+    )
+    if (!visibleTools.some(tool => tool.name === AGENT_TOOL_NAME)) {
+      this.appStateStore.setState(prev => ({
+        ...prev,
+        agentDefinitions: { activeAgents: [], allAgents: [] },
+      }))
+      this.agentsLoaded = true
+      return
+    }
     try {
       const agentDefs = await getAgentDefinitionsWithOverrides(this.options.cwd)
       this.appStateStore.setState(prev => ({
@@ -683,13 +721,7 @@ class SDKSessionImpl implements SDKSession {
       // filtered main-thread tool pool would make native validation reject
       // legitimate plugin-agent tools such as Read. Code/Cowork expose Agent
       // and receive the full native definitions after MCP tools are connected.
-      const visibleTools = mergeRuntimeTools(
-        getTools(sdkVisiblePermissionContext(this.options)),
-        this.mcpTools,
-      )
-      if (visibleTools.some(tool => tool.name === AGENT_TOOL_NAME)) {
-        this.engine.injectAgents(agentDefs.activeAgents)
-      }
+      this.engine.injectAgents(agentDefs.activeAgents)
     } catch (err) {
       const errorMessage = err instanceof Error ? err.message : String(err)
       console.warn('SDK: agent loading failed:', errorMessage)
@@ -724,7 +756,9 @@ class SDKSessionImpl implements SDKSession {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
 		reportLifecycle('init_ready')
-        const pluginLifecycle = self.ensurePluginLifecycleLoaded()
+        const pluginLifecycle = self.options._runtimeExtensions
+          ? Promise.resolve()
+          : self.ensurePluginLifecycleLoaded()
         // Start native MCP discovery/connection alongside cold skill and
         // sandbox initialization. Only in-process SDK tools are awaited;
         // transport servers continue independently in the background.
@@ -775,7 +809,9 @@ class SDKSessionImpl implements SDKSession {
       return (async function* (): AsyncGenerator<SDKMessage> {
         await init()
         const retryPrompt = self.recreateEngineAtUserMessage(parentUserMessageUuid)
-        const pluginLifecycle = self.ensurePluginLifecycleLoaded()
+        const pluginLifecycle = self.options._runtimeExtensions
+          ? Promise.resolve()
+          : self.ensurePluginLifecycleLoaded()
         const mcpStartup = self.ensureMcpServersConnected()
         const skillsStartup = self.ensureSkillsLoaded()
         const sandboxStartup = self.ensureSandboxReady()
@@ -994,14 +1030,21 @@ class SDKSessionImpl implements SDKSession {
       const immediate = { ...partitions.immediate }
       const deferred = { ...partitions.deferred }
       const persistedSchemaServers: string[] = []
-      for (const [name, config] of Object.entries({
-        ...deferred,
-        ...partitions.pluginPersisted,
-      })) {
+      for (const [name, config] of Object.entries(partitions.pluginPersisted)) {
         const projection = this.buildPersistedMcpProjection(name, config, generation)
         if (projection) {
           immediate[name] = projection
           persistedSchemaServers.push(name)
+        }
+        if (config && typeof config === 'object' && !Array.isArray(config)) {
+          const liveConfig = (config as Record<string, unknown>).liveConfig
+          if (liveConfig && typeof liveConfig === 'object' && !Array.isArray(liveConfig)) {
+            deferred[name] = liveConfig
+            liveDynamicServers[name] = liveConfig
+            dynamicServerNames.add(name)
+          } else if (this.options._runtimeExtensions) {
+            throw new Error(`SDK: authoritative plugin MCP ${name} is missing liveConfig`)
+          }
         }
       }
       if (bridgeDiagnosticsEnabled()) {
@@ -1054,11 +1097,12 @@ class SDKSessionImpl implements SDKSession {
           this.publishMcpSettlement(name, settlement, generation)
         },
       )
-      // Plugin MCP discovery can scan many manifests and resolve user config.
-      // Run the native loader in the background and exclude dynamic names,
-      // whose host-provided definitions have highest precedence and are
-      // already live above.
-      void this.startPluginMcpServers(generation, liveDynamicServers, dynamicServerNames)
+      if (!this.options._runtimeExtensions) {
+        // Generic SDK callers may still opt into native local-plugin discovery.
+        // Managed Chat sets an authoritative host projection and never enters
+        // this branch, so no plugin directory/config scan occurs.
+        void this.startPluginMcpServers(generation, liveDynamicServers, dynamicServerNames)
+      }
     } catch (err) {
       console.warn('SDK: MCP server startup failed:', err instanceof Error ? err.message : String(err))
       if (generation === this.mcpConnectionGeneration) {

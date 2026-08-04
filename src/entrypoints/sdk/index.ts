@@ -118,11 +118,6 @@ export {
   unstable_v2_initializeRuntime,
 } from './v2.js'
 export type {
-  SDKSkillPreparationResult,
-  SDKSkillRuntimeIntent,
-} from './skills.js'
-export { unstable_prepareSkillRuntime } from './skills.js'
-export type {
   AutoMemoryProjection,
   AutoMemoryProjectionEntry,
   AutoMemoryRuntimeState,
