@@ -39,6 +39,11 @@ describe('persistent SDK MCP runtime', () => {
   test('keeps in-process SDK tools on turn one and defers transport connections', () => {
     const sdkServer = { type: 'sdk', name: 'host-tools', tools: [] }
     const httpServer = { type: 'http', url: 'https://example.test/mcp' }
+    const persistedHttpServer = {
+      type: 'http',
+      url: 'https://persisted.example.test/mcp',
+      persistedTools: [{ name: 'lookup', inputSchema: { type: 'object' } }],
+    }
     const stdioServer = { type: 'stdio', command: 'node', args: ['server.js'] }
     const pluginPersisted = {
       type: 'plugin_persisted',
@@ -48,12 +53,20 @@ describe('persistent SDK MCP runtime', () => {
     expect(partitionSDKMcpServerConfigsForStartup({
       host: sdkServer,
       remote: httpServer,
+      persistedRemote: persistedHttpServer,
       local: stdioServer,
       'plugin:demo:search': pluginPersisted,
     })).toEqual({
       immediate: { host: sdkServer },
-      deferred: { remote: httpServer, local: stdioServer },
-      pluginPersisted: { 'plugin:demo:search': pluginPersisted },
+      deferred: {
+        remote: httpServer,
+        persistedRemote: persistedHttpServer,
+        local: stdioServer,
+      },
+      persisted: {
+        persistedRemote: persistedHttpServer,
+        'plugin:demo:search': pluginPersisted,
+      },
     })
   })
 

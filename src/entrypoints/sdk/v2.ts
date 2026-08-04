@@ -1030,13 +1030,18 @@ class SDKSessionImpl implements SDKSession {
       const immediate = { ...partitions.immediate }
       const deferred = { ...partitions.deferred }
       const persistedSchemaServers: string[] = []
-      for (const [name, config] of Object.entries(partitions.pluginPersisted)) {
+      for (const [name, config] of Object.entries(partitions.persisted)) {
         const projection = this.buildPersistedMcpProjection(name, config, generation)
         if (projection) {
           immediate[name] = projection
           persistedSchemaServers.push(name)
         }
-        if (config && typeof config === 'object' && !Array.isArray(config)) {
+        if (
+          config &&
+          typeof config === 'object' &&
+          !Array.isArray(config) &&
+          (config as Record<string, unknown>).type === 'plugin_persisted'
+        ) {
           const liveConfig = (config as Record<string, unknown>).liveConfig
           if (liveConfig && typeof liveConfig === 'object' && !Array.isArray(liveConfig)) {
             deferred[name] = liveConfig
