@@ -32,6 +32,7 @@ import {
   substituteUserConfigInContent,
 } from './pluginOptionsStorage.js'
 import type { CommandMetadata, PluginManifest } from './schemas.js'
+import { normalizePluginArgumentHint } from './pluginCommandFrontmatter.js'
 import { walkPluginMarkdown } from './walkPluginMarkdown.js'
 
 // Similar to MarkdownFile but for plugin sources
@@ -260,7 +261,9 @@ function createPluginCommand(
       substitutedAllowedTools,
     )
 
-    const argumentHint = frontmatter['argument-hint'] as string | undefined
+    const argumentHint = normalizePluginArgumentHint(
+      frontmatter['argument-hint'],
+    )
     const argumentNames = parseArgumentNames(
       frontmatter.arguments as string | string[] | undefined,
     )
