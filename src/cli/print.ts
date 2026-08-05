@@ -149,6 +149,10 @@ import {
 import { createAbortController } from 'src/utils/abortController.js'
 import { createCombinedAbortSignal } from 'src/utils/combinedAbortSignal.js'
 import { generateSessionTitle } from 'src/utils/sessionTitle.js'
+import {
+  buildUltrareviewOutcomeMessages,
+  runUltrareviewHeadless,
+} from 'src/commands/review/reviewRemote.js'
 import { buildSideQuestionFallbackParams } from 'src/utils/queryContext.js'
 import { runSideQuestion } from 'src/utils/sideQuestion.js'
 import {
@@ -3595,6 +3599,44 @@ function runHeadlessStreaming(
           } catch (error) {
             sendControlResponseError(message, errorMessage(error))
           }
+        } else if (message.request.subtype === 'ultrareview_launch') {
+          const request = message.request as {
+            subtype: 'ultrareview_launch'
+            args?: string
+            confirm?: boolean
+          }
+          const args = request.args ?? ''
+          // Match Claude Code's native stream-json handler: do not block the
+          // stdin loop while preflight / remote launch performs network I/O.
+          void (async () => {
+            try {
+              const result = await runUltrareviewHeadless(args, {
+                confirm: request.confirm ?? false,
+                context: {
+                  abortController: createAbortController(),
+                  getAppState,
+                  setAppState,
+                },
+              })
+              const outcome = buildUltrareviewOutcomeMessages(args, result)
+              mutableMessages.push(...outcome)
+              for (const item of outcome) {
+                output.enqueue({
+                  type: 'user',
+                  message: item.message,
+                  session_id: getSessionId(),
+                  parent_tool_use_id: null,
+                  uuid: item.uuid,
+                  timestamp: item.timestamp,
+                  isReplay: true,
+                  isSynthetic: item.isMeta === true,
+                } satisfies SDKUserMessageReplay)
+              }
+              sendControlResponseSuccess(message, result)
+            } catch (error) {
+              sendControlResponseError(message, errorMessage(error))
+            }
+          })()
         } else if (
           message.request.subtype === 'claude_oauth_callback' ||
           message.request.subtype === 'claude_oauth_wait_for_completion'

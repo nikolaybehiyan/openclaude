@@ -17,7 +17,7 @@ import {
 } from '../../services/analytics/index.js'
 import { fetchUltrareviewQuota } from '../../services/api/ultrareviewQuota.js'
 import { fetchUtilization } from '../../services/api/usage.js'
-import type { ToolUseContext } from '../../Tool.js'
+import type { TaskContext } from '../../Task.js'
 import {
   checkRemoteAgentEligibility,
   formatPreconditionError,
@@ -29,6 +29,14 @@ import { detectCurrentRepositoryWithHost } from '../../utils/detectRepository.js
 import { execFileNoThrow } from '../../utils/execFileNoThrow.js'
 import { getDefaultBranch, gitExe } from '../../utils/git.js'
 import { teleportToRemote } from '../../utils/teleport.js'
+import { createUserMessage } from '../../utils/messages.js'
+import {
+  COMMAND_NAME_TAG,
+  LOCAL_COMMAND_STDERR_TAG,
+  LOCAL_COMMAND_STDOUT_TAG,
+} from '../../constants/xml.js'
+import { escapeXml } from '../../utils/xml.js'
+import { isUltrareviewEnabled } from './ultrareviewEnabled.js'
 
 // One-time session flag: once the user confirms overage billing via the
 // dialog, all subsequent /ultrareview invocations in this session proceed
@@ -44,6 +52,80 @@ export type OverageGate =
   | { kind: 'not-enabled' }
   | { kind: 'low-balance'; available: number }
   | { kind: 'needs-confirm' }
+
+export type UltrareviewLaunchResult =
+  | { status: 'error'; message: string }
+  | { status: 'blocked'; message: string; actionUrl: string | null }
+  | { status: 'needs-confirm'; body: string; billingNote: string }
+  | {
+      status: 'launched'
+      sessionId: string
+      sessionUrl: string
+      message: string
+      billingNote: string
+      taskId?: string
+      title?: string
+    }
+
+type PreparedRemoteReview =
+  | {
+      kind: 'ready'
+      mode: 'pr'
+      prNumber: string
+      repository: string
+      target: string
+      scope: string
+    }
+  | {
+      kind: 'ready'
+      mode: 'branch'
+      baseBranch: string
+      mergeBaseSha: string
+      target: string
+      scope: string
+    }
+  | { kind: 'blocked'; blocks: ContentBlockParam[] | null }
+
+type RemoteReviewLaunchAttempt =
+  | { launched: false; blocks: ContentBlockParam[] | null }
+  | {
+      launched: true
+      blocks: ContentBlockParam[]
+      sessionId: string
+      sessionUrl: string
+      taskId: string
+      title: string
+      message: string
+    }
+
+const BILLING_SETTINGS_URL = 'https://claude.ai/settings/billing'
+
+function getReviewConfig(): Record<string, unknown> | null {
+  return getFeatureValue_CACHED_MAY_BE_STALE<Record<string, unknown> | null>(
+    'tengu_review_bughunter_config',
+    null,
+  )
+}
+
+export function getReviewCostNote(): string {
+  const value = getReviewConfig()?.cost_note
+  return typeof value === 'string' && value.length > 0 ? value : '$10-$20'
+}
+
+export function getReviewDurationNote(): string {
+  const value = getReviewConfig()?.duration_note
+  return typeof value === 'string' && value.length > 0
+    ? value
+    : '~10–20 min'
+}
+
+function blocksToText(blocks: ContentBlockParam[] | null): string {
+  if (!blocks) return 'Failed to launch cloud review session.'
+  return blocks
+    .map(block => (block.type === 'text' ? block.text : ''))
+    .filter(Boolean)
+    .join('\n')
+}
 
 /**
  * Determine whether the user can launch an ultrareview and under what
@@ -112,24 +194,9 @@ export async function checkOverageGate(): Promise<OverageGate> {
   }
 }
 
-/**
- * Launch a teleported review session. Returns ContentBlockParam[] describing
- * the launch outcome for injection into the local conversation (model is then
- * queried with this content, so it can narrate the launch to the user).
- *
- * Returns ContentBlockParam[] with user-facing error messages on recoverable
- * failures (missing merge-base, empty diff, bundle too large), or null on
- * other failures so the caller falls through to the local-review prompt.
- * Reason is captured in analytics.
- *
- * Caller must run checkOverageGate() BEFORE calling this function
- * (ultrareviewCommand.tsx handles the dialog).
- */
-export async function launchRemoteReview(
+async function prepareRemoteReview(
   args: string,
-  context: ToolUseContext,
-  billingNote?: string,
-): Promise<ContentBlockParam[] | null> {
+): Promise<PreparedRemoteReview> {
   const eligibility = await checkRemoteAgentEligibility()
   // Synthetic DEFAULT_CODE_REVIEW_ENVIRONMENT_ID works without per-org CCR
   // setup, so no_remote_environment isn't a blocker. Server-side quota
@@ -148,19 +215,90 @@ export async function launchRemoteReview(
           ) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       })
       const reasons = blockers.map(formatPreconditionError).join('\n')
-      return [
-        {
-          type: 'text',
-          text: `Ultrareview cannot launch:\n${reasons}`,
-        },
-      ]
+      return {
+        kind: 'blocked',
+        blocks: [
+          {
+            type: 'text',
+            text: `Ultrareview cannot launch:\n${reasons}`,
+          },
+        ],
+      }
     }
   }
 
-  const resolvedBillingNote = billingNote ?? ''
-
   const prNumber = args.trim()
   const isPrNumber = /^\d+$/.test(prNumber)
+  if (isPrNumber) {
+    const repo = await detectCurrentRepositoryWithHost()
+    if (!repo || repo.host !== 'github.com') {
+      logEvent('tengu_review_remote_precondition_failed', {})
+      return { kind: 'blocked', blocks: null }
+    }
+    const repository = `${repo.owner}/${repo.name}`
+    return {
+      kind: 'ready',
+      mode: 'pr',
+      prNumber,
+      repository,
+      target: `${repository}#${prNumber}`,
+      scope: `Reviewing PR ${repository}#${prNumber}`,
+    }
+  }
+
+  const baseBranch = (await getDefaultBranch()) || 'main'
+  const { stdout: mbOut, code: mbCode } = await execFileNoThrow(
+    gitExe(),
+    ['merge-base', baseBranch, 'HEAD'],
+    { preserveOutputOnError: false },
+  )
+  const mergeBaseSha = mbOut.trim()
+  if (mbCode !== 0 || !mergeBaseSha) {
+    logEvent('tengu_review_remote_precondition_failed', {})
+    return {
+      kind: 'blocked',
+      blocks: [
+        {
+          type: 'text',
+          text: `Could not find merge-base with ${baseBranch}. Make sure you're in a git repo with a ${baseBranch} branch.`,
+        },
+      ],
+    }
+  }
+
+  const { stdout: diffStat, code: diffCode } = await execFileNoThrow(
+    gitExe(),
+    ['diff', '--shortstat', mergeBaseSha],
+    { preserveOutputOnError: false },
+  )
+  if (diffCode === 0 && !diffStat.trim()) {
+    logEvent('tengu_review_remote_precondition_failed', {})
+    return {
+      kind: 'blocked',
+      blocks: [
+        {
+          type: 'text',
+          text: `No changes against the ${baseBranch} fork point. Make some commits or stage files first.`,
+        },
+      ],
+    }
+  }
+
+  return {
+    kind: 'ready',
+    mode: 'branch',
+    baseBranch,
+    mergeBaseSha,
+    target: baseBranch,
+    scope: `Reviewing current branch against ${baseBranch}`,
+  }
+}
+
+async function launchPreparedRemoteReview(
+  prepared: Extract<PreparedRemoteReview, { kind: 'ready' }>,
+  context: TaskContext,
+  billingNote = '',
+): Promise<RemoteReviewLaunchAttempt> {
   // Synthetic code_review env. Go taggedid.FromUUID(TagEnvironment,
   // UUID{...,0x02}) encodes with version prefix '01' — NOT Python's
   // legacy tagged_id() format. Verified in prod.
@@ -174,10 +312,7 @@ export async function launchRemoteReview(
   // total_wallclock must stay below RemoteAgentTask's 30min poll timeout
   // with headroom for finalization (~3min synthesis). Per-field guards
   // match autoDream.ts — GB cache can return stale wrong-type values.
-  const raw = getFeatureValue_CACHED_MAY_BE_STALE<Record<
-    string,
-    unknown
-  > | null>('tengu_review_bughunter_config', null)
+  const raw = getReviewConfig()
   const posInt = (v: unknown, fallback: number, max?: number): number => {
     if (typeof v !== 'number' || !Number.isFinite(v)) return fallback
     const n = Math.floor(v)
@@ -204,98 +339,55 @@ export async function launchRemoteReview(
 
   let session
   let command
-  let target
-  if (isPrNumber) {
+  if (prepared.mode === 'pr') {
     // PR mode: refs/pull/N/head via github.com. Orchestrator --pr N.
-    const repo = await detectCurrentRepositoryWithHost()
-    if (!repo || repo.host !== 'github.com') {
-      logEvent('tengu_review_remote_precondition_failed', {})
-      return null
-    }
     session = await teleportToRemote({
       initialMessage: null,
-      description: `ultrareview: ${repo.owner}/${repo.name}#${prNumber}`,
+      description: `ultrareview: ${prepared.target}`,
       signal: context.abortController.signal,
-      branchName: `refs/pull/${prNumber}/head`,
+      branchName: `refs/pull/${prepared.prNumber}/head`,
       environmentId: CODE_REVIEW_ENV_ID,
       environmentVariables: {
-        BUGHUNTER_PR_NUMBER: prNumber,
-        BUGHUNTER_REPOSITORY: `${repo.owner}/${repo.name}`,
+        BUGHUNTER_PR_NUMBER: prepared.prNumber,
+        BUGHUNTER_REPOSITORY: prepared.repository,
         ...commonEnvVars,
       },
     })
-    command = `/ultrareview ${prNumber}`
-    target = `${repo.owner}/${repo.name}#${prNumber}`
+    command = `/ultrareview ${prepared.prNumber}`
   } else {
     // Branch mode: bundle the working tree, orchestrator diffs against
     // the fork point. No PR, no existing comments, no dedup.
-    const baseBranch = (await getDefaultBranch()) || 'main'
-    // Env-manager's `git remote remove origin` after bundle-clone
-    // deletes refs/remotes/origin/* — the base branch name won't resolve
-    // in the container. Pass the merge-base SHA instead: it's reachable
-    // from HEAD's history so `git diff <sha>` works without a named ref.
-    const { stdout: mbOut, code: mbCode } = await execFileNoThrow(
-      gitExe(),
-      ['merge-base', baseBranch, 'HEAD'],
-      { preserveOutputOnError: false },
-    )
-    const mergeBaseSha = mbOut.trim()
-    if (mbCode !== 0 || !mergeBaseSha) {
-      logEvent('tengu_review_remote_precondition_failed', {})
-      return [
-        {
-          type: 'text',
-          text: `Could not find merge-base with ${baseBranch}. Make sure you're in a git repo with a ${baseBranch} branch.`,
-        },
-      ]
-    }
-
-    // Bail early on empty diffs instead of launching a container that
-    // will just echo "no changes".
-    const { stdout: diffStat, code: diffCode } = await execFileNoThrow(
-      gitExe(),
-      ['diff', '--shortstat', mergeBaseSha],
-      { preserveOutputOnError: false },
-    )
-    if (diffCode === 0 && !diffStat.trim()) {
-      logEvent('tengu_review_remote_precondition_failed', {})
-      return [
-        {
-          type: 'text',
-          text: `No changes against the ${baseBranch} fork point. Make some commits or stage files first.`,
-        },
-      ]
-    }
-
     session = await teleportToRemote({
       initialMessage: null,
-      description: `ultrareview: ${baseBranch}`,
+      description: `ultrareview: ${prepared.baseBranch}`,
       signal: context.abortController.signal,
       useBundle: true,
       environmentId: CODE_REVIEW_ENV_ID,
       environmentVariables: {
-        BUGHUNTER_BASE_BRANCH: mergeBaseSha,
+        BUGHUNTER_BASE_BRANCH: prepared.mergeBaseSha,
         ...commonEnvVars,
       },
     })
     if (!session) {
       logEvent('tengu_review_remote_teleport_failed', {})
-      return [
-        {
-          type: 'text',
-          text: 'Repo is too large. Push a PR and use `/ultrareview <PR#>` instead.',
-        },
-      ]
+      return {
+        launched: false,
+        blocks: [
+          {
+            type: 'text',
+            text: 'Repo is too large. Push a PR and use `/ultrareview <PR#>` instead.',
+          },
+        ],
+      }
     }
     command = '/ultrareview'
-    target = baseBranch
   }
 
   if (!session) {
     logEvent('tengu_review_remote_teleport_failed', {})
-    return null
+    return { launched: false, blocks: null }
   }
-  registerRemoteAgentTask({
+  const { taskId, sessionId } = registerRemoteAgentTask({
     remoteTaskType: 'ultrareview',
     session,
     command,
@@ -303,14 +395,139 @@ export async function launchRemoteReview(
     isRemoteReview: true,
   })
   logEvent('tengu_review_remote_launched', {})
-  const sessionUrl = getRemoteTaskSessionUrl(session.id)
+  const sessionUrl = getRemoteTaskSessionUrl(sessionId)
+  const message = `Ultrareview launched for ${prepared.target} (${getReviewDurationNote()}, runs in the cloud). Track: ${sessionUrl}${billingNote}`
   // Concise — the tool-output block is visible to the user, so the model
   // shouldn't echo the same info. Just enough for Claude to acknowledge the
   // launch without restating the target/URL (both already printed above).
-  return [
+  const blocks: ContentBlockParam[] = [
     {
       type: 'text',
-      text: `Ultrareview launched for ${target} (~10–20 min, runs in the cloud). Track: ${sessionUrl}${resolvedBillingNote} Findings arrive via task-notification. Briefly acknowledge the launch to the user without repeating the target or URL — both are already visible in the tool output above.`,
+      text: `${message} Findings arrive via task-notification. Briefly acknowledge the launch to the user without repeating the target or URL — both are already visible in the tool output above.`,
     },
+  ]
+  return {
+    launched: true,
+    blocks,
+    sessionId,
+    sessionUrl,
+    taskId,
+    title: session.title,
+    message,
+  }
+}
+
+/**
+ * Interactive command adapter. Keeps the pre-existing command contract while
+ * sharing the exact launch path with the SDK control request.
+ */
+export async function launchRemoteReview(
+  args: string,
+  context: TaskContext,
+  billingNote?: string,
+): Promise<ContentBlockParam[] | null> {
+  const prepared = await prepareRemoteReview(args)
+  if (prepared.kind === 'blocked') return prepared.blocks
+  const attempt = await launchPreparedRemoteReview(
+    prepared,
+    context,
+    billingNote,
+  )
+  return attempt.blocks
+}
+
+/** Native SDK control adapter used by Electron Local Code. */
+export async function runUltrareviewHeadless(
+  args: string,
+  options: { confirm: boolean; context: TaskContext },
+): Promise<UltrareviewLaunchResult> {
+  if (!isUltrareviewEnabled()) {
+    return { status: 'error', message: 'Ultrareview is currently unavailable.' }
+  }
+
+  const prepared = await prepareRemoteReview(args)
+  if (prepared.kind === 'blocked') {
+    return { status: 'error', message: blocksToText(prepared.blocks) }
+  }
+
+  const gate = await checkOverageGate()
+  if (gate.kind === 'not-enabled') {
+    return {
+      status: 'blocked',
+      message: 'Free ultrareviews used. Enable Extra Usage to continue.',
+      actionUrl: BILLING_SETTINGS_URL,
+    }
+  }
+  if (gate.kind === 'low-balance') {
+    return {
+      status: 'blocked',
+      message: `Balance too low to launch ultrareview ($${gate.available.toFixed(2)} available, $10 minimum).`,
+      actionUrl: BILLING_SETTINGS_URL,
+    }
+  }
+
+  const billingNote =
+    gate.kind === 'needs-confirm'
+      ? `This review bills as usage credits (${getReviewCostNote()}).`
+      : gate.billingNote.trim()
+
+  if (!options.confirm) {
+    return {
+      status: 'needs-confirm',
+      body: `${prepared.scope}\nEstimated duration: ${getReviewDurationNote()}. Estimated cost: ${getReviewCostNote()}.`,
+      billingNote,
+    }
+  }
+
+  if (gate.kind === 'needs-confirm') confirmOverage()
+  const attempt = await launchPreparedRemoteReview(
+    prepared,
+    options.context,
+    billingNote ? ` ${billingNote}` : '',
+  )
+  if (!attempt.launched) {
+    return { status: 'error', message: blocksToText(attempt.blocks) }
+  }
+  return {
+    status: 'launched',
+    sessionId: attempt.sessionId,
+    sessionUrl: attempt.sessionUrl,
+    taskId: attempt.taskId,
+    title: attempt.title,
+    message: attempt.message,
+    billingNote,
+  }
+}
+
+/** Exact transcript mapping used by Claude Code's stream-json handler. */
+export function buildUltrareviewOutcomeMessages(
+  args: string,
+  result: UltrareviewLaunchResult,
+) {
+  if (result.status === 'needs-confirm') return []
+  const suffix = args ? ` ${escapeXml(args)}` : ''
+  const command = createUserMessage({
+    content: `<${COMMAND_NAME_TAG}>/ultrareview${suffix}</${COMMAND_NAME_TAG}>`,
+    isMeta: true,
+  })
+  if (result.status === 'launched') {
+    return [
+      command,
+      createUserMessage({
+        content: `<${LOCAL_COMMAND_STDOUT_TAG}>${escapeXml(result.message)}</${LOCAL_COMMAND_STDOUT_TAG}>`,
+        isMeta: true,
+      }),
+    ]
+  }
+  const detail =
+    result.status === 'blocked' && result.actionUrl
+      ? `${result.message}\nMore: ${result.actionUrl}`
+      : result.message
+  return [
+    command,
+    createUserMessage({
+      content: `<${LOCAL_COMMAND_STDERR_TAG}>Ultrareview did not launch: ${escapeXml(detail)}</${LOCAL_COMMAND_STDERR_TAG}>`,
+      isMeta: true,
+    }),
   ]
 }

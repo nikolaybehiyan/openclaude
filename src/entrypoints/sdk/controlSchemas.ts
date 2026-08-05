@@ -519,6 +519,41 @@ export const SDKControlGetSettingsResponseSchema = lazySchema(() =>
     ),
 )
 
+export const SDKControlUltrareviewLaunchRequestSchema = lazySchema(() =>
+  z
+    .object({
+      subtype: z.literal('ultrareview_launch'),
+      args: z.string().optional(),
+      confirm: z.boolean().optional(),
+    })
+    .describe('Preflights or launches an Ultrareview cloud review session.'),
+)
+
+export const SDKControlUltrareviewLaunchResponseSchema = lazySchema(() =>
+  z.discriminatedUnion('status', [
+    z.object({ status: z.literal('error'), message: z.string() }),
+    z.object({
+      status: z.literal('blocked'),
+      message: z.string(),
+      actionUrl: z.string().nullable(),
+    }),
+    z.object({
+      status: z.literal('needs-confirm'),
+      body: z.string(),
+      billingNote: z.string(),
+    }),
+    z.object({
+      status: z.literal('launched'),
+      sessionId: z.string(),
+      sessionUrl: z.string(),
+      message: z.string(),
+      billingNote: z.string(),
+      taskId: z.string().optional(),
+      title: z.string().optional(),
+    }),
+  ]),
+)
+
 export const SDKControlElicitationRequestSchema = lazySchema(() =>
   z
     .object({
@@ -571,6 +606,7 @@ export const SDKControlRequestInnerSchema = lazySchema(() =>
     SDKControlStopTaskRequestSchema(),
     SDKControlApplyFlagSettingsRequestSchema(),
     SDKControlGetSettingsRequestSchema(),
+    SDKControlUltrareviewLaunchRequestSchema(),
     SDKControlElicitationRequestSchema(),
   ]),
 )
