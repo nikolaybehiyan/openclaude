@@ -10,7 +10,6 @@
  */
 
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
   logEvent,
@@ -36,7 +35,10 @@ import {
   LOCAL_COMMAND_STDOUT_TAG,
 } from '../../constants/xml.js'
 import { escapeXml } from '../../utils/xml.js'
-import { isUltrareviewEnabled } from './ultrareviewEnabled.js'
+import {
+  getUltrareviewConfig,
+  isUltrareviewEnabled,
+} from './ultrareviewEnabled.js'
 import { getOauthConfig } from '../../constants/oauth.js'
 
 // One-time session flag: once the user confirms overage billing via the
@@ -104,10 +106,7 @@ export function getBillingSettingsUrl(): string {
 }
 
 function getReviewConfig(): Record<string, unknown> | null {
-  return getFeatureValue_CACHED_MAY_BE_STALE<Record<string, unknown> | null>(
-    'tengu_review_bughunter_config',
-    null,
-  )
+  return getUltrareviewConfig()
 }
 
 export function getReviewCostNote(): string {

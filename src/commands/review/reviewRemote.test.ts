@@ -4,8 +4,21 @@ import {
   buildUltrareviewOutcomeMessages,
   getBillingSettingsUrl,
 } from './reviewRemote.js'
+import {
+  DEFAULT_ULTRAREVIEW_CONFIG,
+  isUltrareviewConfigEnabled,
+} from './ultrareviewEnabled.js'
 
 describe('ultrareview SDK control parity', () => {
+  test('defaults the missing GrowthBook entitlement to enabled', () => {
+    expect(DEFAULT_ULTRAREVIEW_CONFIG).toEqual({ enabled: true })
+    expect(isUltrareviewConfigEnabled(DEFAULT_ULTRAREVIEW_CONFIG)).toBe(true)
+  })
+
+  test('still honors an explicit GrowthBook disable', () => {
+    expect(isUltrareviewConfigEnabled({ enabled: false })).toBe(false)
+  })
+
   test('derives billing from the centralized Claude web origin', () => {
     const previous = process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
     try {
