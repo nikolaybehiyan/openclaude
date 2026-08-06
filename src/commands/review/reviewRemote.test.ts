@@ -1,8 +1,27 @@
 import { describe, expect, test } from 'bun:test'
 import { SDKControlUltrareviewLaunchRequestSchema } from '../../entrypoints/sdk/controlSchemas.js'
-import { buildUltrareviewOutcomeMessages } from './reviewRemote.js'
+import {
+  buildUltrareviewOutcomeMessages,
+  getBillingSettingsUrl,
+} from './reviewRemote.js'
 
 describe('ultrareview SDK control parity', () => {
+  test('derives billing from the centralized Claude web origin', () => {
+    const previous = process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
+    try {
+      process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.claudia.ru'
+      expect(getBillingSettingsUrl()).toBe(
+        'https://ai.claudia.ru/settings/billing',
+      )
+    } finally {
+      if (previous === undefined) {
+        delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
+      } else {
+        process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = previous
+      }
+    }
+  })
+
   test('accepts the native Electron request shape', () => {
     expect(
       SDKControlUltrareviewLaunchRequestSchema().parse({

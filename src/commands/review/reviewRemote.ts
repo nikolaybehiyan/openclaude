@@ -37,6 +37,7 @@ import {
 } from '../../constants/xml.js'
 import { escapeXml } from '../../utils/xml.js'
 import { isUltrareviewEnabled } from './ultrareviewEnabled.js'
+import { getOauthConfig } from '../../constants/oauth.js'
 
 // One-time session flag: once the user confirms overage billing via the
 // dialog, all subsequent /ultrareview invocations in this session proceed
@@ -98,7 +99,9 @@ type RemoteReviewLaunchAttempt =
       message: string
     }
 
-const BILLING_SETTINGS_URL = 'https://claude.ai/settings/billing'
+export function getBillingSettingsUrl(): string {
+  return `${getOauthConfig().CLAUDE_AI_ORIGIN}/settings/billing`
+}
 
 function getReviewConfig(): Record<string, unknown> | null {
   return getFeatureValue_CACHED_MAY_BE_STALE<Record<string, unknown> | null>(
@@ -455,14 +458,14 @@ export async function runUltrareviewHeadless(
     return {
       status: 'blocked',
       message: 'Free ultrareviews used. Enable Extra Usage to continue.',
-      actionUrl: BILLING_SETTINGS_URL,
+      actionUrl: getBillingSettingsUrl(),
     }
   }
   if (gate.kind === 'low-balance') {
     return {
       status: 'blocked',
       message: `Balance too low to launch ultrareview ($${gate.available.toFixed(2)} available, $10 minimum).`,
-      actionUrl: BILLING_SETTINGS_URL,
+      actionUrl: getBillingSettingsUrl(),
     }
   }
 

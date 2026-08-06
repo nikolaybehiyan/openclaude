@@ -1,7 +1,8 @@
+import { getOauthConfig } from './oauth.js'
+
 export const PRODUCT_URL = 'https://claude.com/claude-code'
 
 // Claude Code Remote session URLs
-export const CLAUDE_AI_BASE_URL = 'https://claude.ai'
 export const CLAUDE_AI_STAGING_BASE_URL = 'https://claude-ai.staging.ant.dev'
 export const CLAUDE_AI_LOCAL_BASE_URL = 'http://localhost:4000'
 
@@ -46,7 +47,7 @@ export function getClaudeAiBaseUrl(
   if (isRemoteSessionStaging(sessionId, ingressUrl)) {
     return CLAUDE_AI_STAGING_BASE_URL
   }
-  return CLAUDE_AI_BASE_URL
+  return getOauthConfig().CLAUDE_AI_ORIGIN
 }
 
 /**
