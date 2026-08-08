@@ -9,6 +9,7 @@ import {
   nativePluginMcpToolReport,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
+  settledSDKMcpTools,
 } from './mcpRuntime.js'
 
 describe('persistent SDK MCP runtime', () => {
@@ -34,6 +35,40 @@ describe('persistent SDK MCP runtime', () => {
     expect(published.commands).toBe(current.commands)
     expect(published.resources).toBe(current.resources)
     expect(published.pluginReconnectKey).toBe(7)
+  })
+
+  test('keeps all 26 persisted plugin schemas on a 116-tool warm turn when live settlement is empty', () => {
+    const stableTools = Array.from({ length: 90 }, (_, index) => ({
+      name: `stable-${index}`,
+    } as Tool))
+    const persistedPluginTools = Array.from({ length: 26 }, (_, index) => ({
+      name: `mcp__plugin_research__tool_${index}`,
+    } as Tool))
+    const failedClient = {
+      name: 'plugin:bio-research:pubmed',
+      type: 'failed',
+      error: 'connection closed',
+    } as MCPServerConnection
+
+    const publishedPluginTools = settledSDKMcpTools(
+      persistedPluginTools,
+      [failedClient],
+      [],
+    )
+
+    expect(publishedPluginTools).toBe(persistedPluginTools)
+    expect([...stableTools, ...publishedPluginTools]).toHaveLength(116)
+  })
+
+  test('replaces persisted schemas after a connected live server publishes a non-empty set', () => {
+    const persisted = [{ name: 'mcp__demo__persisted' } as Tool]
+    const live = [{ name: 'mcp__demo__live' } as Tool]
+    const connectedClient = {
+      name: 'demo',
+      type: 'connected',
+    } as MCPServerConnection
+
+    expect(settledSDKMcpTools(persisted, [connectedClient], live)).toBe(live)
   })
 
   test('keeps in-process SDK tools on turn one and defers transport connections', () => {

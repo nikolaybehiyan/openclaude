@@ -20,6 +20,26 @@ export type SDKMcpIncrementalSettlement<T> =
   | { status: 'fulfilled'; value: T }
   | { status: 'rejected'; reason: unknown }
 
+/**
+ * Keep the persisted first-turn projection until a live MCP transport has
+ * actually connected and published a replacement tool set. Some transport
+ * failures resolve successfully with failed clients and zero tools; treating
+ * that as authoritative would erase the persisted schemas on a warm turn.
+ */
+export function settledSDKMcpTools(
+  currentTools: Tool[] | undefined,
+  clients: readonly MCPServerConnection[],
+  settledTools: Tool[],
+): Tool[] {
+  if (
+    currentTools !== undefined &&
+    (settledTools.length === 0 || !clients.some(client => client.type === 'connected'))
+  ) {
+    return currentTools
+  }
+  return settledTools
+}
+
 export function nativePluginMcpToolReport(
   serverName: string,
   tools: readonly Tool[],

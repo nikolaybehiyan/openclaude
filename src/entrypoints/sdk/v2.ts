@@ -114,6 +114,7 @@ import {
   nativePluginMcpToolReport,
   partitionSDKMcpServerConfigsForStartup,
   resolveSDKMcpServerConfigs,
+  settledSDKMcpTools,
 } from './mcpRuntime.js'
 import { refreshActivePlugins } from '../../utils/plugins/refresh.js'
 import { clearPluginHookCache } from '../../utils/plugins/loadPluginHooks.js'
@@ -1403,7 +1404,12 @@ class SDKSessionImpl implements SDKSession {
       return
     }
     this.mcpClientsByServer.set(name, settlement.value.clients)
-    this.mcpToolsByServer.set(name, settlement.value.tools)
+    const publishedTools = settledSDKMcpTools(
+      this.mcpToolsByServer.get(name),
+      settlement.value.clients,
+      settlement.value.tools,
+    )
+    this.mcpToolsByServer.set(name, publishedTools)
     if (bridgeDiagnosticsEnabled()) {
       console.warn(`SDK: MCP server ${name} settled ${JSON.stringify({
         clients: settlement.value.clients.map(client => ({
@@ -1412,6 +1418,7 @@ class SDKSessionImpl implements SDKSession {
           ...(client.type === 'failed' ? { error: client.error ?? '' } : {}),
         })),
         tools: settlement.value.tools.map(tool => tool.name).sort(),
+        published_tools: publishedTools.map(tool => tool.name).sort(),
       })}`)
     }
     if (settlement.value.tools.length > 0) {
