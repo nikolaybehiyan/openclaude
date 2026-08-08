@@ -30,10 +30,10 @@ import { which } from '../which.js'
 import { getUserBinDir, getXDGDataHome } from '../xdg.js'
 import { DEEP_LINK_PROTOCOL } from './parseDeepLink.js'
 
-export const MACOS_BUNDLE_ID = 'com.anthropic.claude-code-url-handler'
-const APP_NAME = 'Claude Code URL Handler'
-const DESKTOP_FILE_NAME = 'claude-code-url-handler.desktop'
-const MACOS_APP_NAME = 'Claude Code URL Handler.app'
+export const MACOS_BUNDLE_ID = MACRO.CODE_HANDLER_BUNDLE_IDENTIFIER
+const APP_NAME = `${MACRO.PRODUCT_NAME} Code URL Handler`
+const DESKTOP_FILE_NAME = `${DEEP_LINK_PROTOCOL}-url-handler.desktop`
+const MACOS_APP_NAME = `${APP_NAME}.app`
 
 // Shared between register* (writes these paths/values) and
 // isProtocolHandlerCurrent (reads them back). Keep the writer and reader
@@ -108,7 +108,7 @@ async function registerMacos(claudePath: string): Promise<void> {
   <array>
     <dict>
       <key>CFBundleURLName</key>
-      <string>Claude Code Deep Link</string>
+      <string>${MACRO.PRODUCT_NAME} Code Deep Link</string>
       <key>CFBundleURLSchemes</key>
       <array>
         <string>${DEEP_LINK_PROTOCOL}</string>
@@ -328,7 +328,9 @@ export async function ensureDeepLinkProtocolRegistered(): Promise<void> {
   try {
     await registerProtocolHandler(claudePath)
     logEvent('tengu_deep_link_registered', { success: true })
-    logForDebugging('Auto-registered claude-cli:// deep link protocol handler')
+    logForDebugging(
+      `Auto-registered ${DEEP_LINK_PROTOCOL}:// deep link protocol handler`,
+    )
     await fs.rm(failureMarkerPath, { force: true }).catch(() => {})
   } catch (error) {
     const code = getErrnoCode(error)

@@ -13,4 +13,8 @@ declare const MACRO: {
   ISSUES_EXPLAINER: string
   PACKAGE_URL: string
   NATIVE_PACKAGE_URL: string | undefined
+  PRODUCT_NAME: string
+  DESKTOP_DEEP_LINK_SCHEME: string
+  CODE_DEEP_LINK_SCHEME: string
+  CODE_HANDLER_BUNDLE_IDENTIFIER: string
 }

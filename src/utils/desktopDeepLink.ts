@@ -9,6 +9,9 @@ import { pathExists } from './file.js'
 import { gte as semverGte } from './semver.js'
 
 const MIN_DESKTOP_VERSION = '1.1.2396'
+const DESKTOP_PRODUCT_NAME = MACRO.PRODUCT_NAME
+const DESKTOP_DEEP_LINK_SCHEME = MACRO.DESKTOP_DEEP_LINK_SCHEME
+const DESKTOP_APP_PATH = `/Applications/${DESKTOP_PRODUCT_NAME}.app`
 
 function isDevMode(): boolean {
   if ((process.env.NODE_ENV as string) === 'development') {
@@ -29,11 +32,12 @@ function isDevMode(): boolean {
 
 /**
  * Builds a deep link URL for Claude Desktop to resume a CLI session.
- * Format: claude://resume?session={sessionId}&cwd={cwd}
- * In dev mode: claude-dev://resume?session={sessionId}&cwd={cwd}
+ * Format is controlled by the selected release profile.
  */
 function buildDesktopDeepLink(sessionId: string): string {
-  const protocol = isDevMode() ? 'claude-dev' : 'claude'
+  const protocol = isDevMode()
+    ? `${DESKTOP_DEEP_LINK_SCHEME}-dev`
+    : DESKTOP_DEEP_LINK_SCHEME
   const url = new URL(`${protocol}://resume`)
   url.searchParams.set('session', sessionId)
   url.searchParams.set('cwd', getCwd())
@@ -42,8 +46,8 @@ function buildDesktopDeepLink(sessionId: string): string {
 
 /**
  * Check if Claude Desktop app is installed.
- * On macOS, checks for /Applications/Claude.app.
- * On Linux, checks if xdg-open can handle claude:// protocol.
+ * On macOS, checks for the profiled Desktop application.
+ * On Linux, checks if xdg-open can handle the profiled protocol.
  * On Windows, checks if the protocol handler exists.
  * In dev mode, always returns true (assumes dev Desktop is running).
  */
@@ -56,22 +60,21 @@ async function isDesktopInstalled(): Promise<boolean> {
   const platform = process.platform
 
   if (platform === 'darwin') {
-    // Check for Claude.app in /Applications
-    return pathExists('/Applications/Claude.app')
+    return pathExists(DESKTOP_APP_PATH)
   } else if (platform === 'linux') {
     // Check if xdg-mime can find a handler for claude://
     // Note: xdg-mime returns exit code 0 even with no handler, so check stdout too
     const { code, stdout } = await execFileNoThrow('xdg-mime', [
       'query',
       'default',
-      'x-scheme-handler/claude',
+      `x-scheme-handler/${DESKTOP_DEEP_LINK_SCHEME}`,
     ])
     return code === 0 && stdout.trim().length > 0
   } else if (platform === 'win32') {
     // On Windows, try to query the registry for the protocol handler
     const { code } = await execFileNoThrow('reg', [
       'query',
-      'HKEY_CLASSES_ROOT\\claude',
+      `HKEY_CLASSES_ROOT\\${DESKTOP_DEEP_LINK_SCHEME}`,
       '/ve',
     ])
     return code === 0
@@ -92,7 +95,7 @@ async function getDesktopVersion(): Promise<string | null> {
   if (platform === 'darwin') {
     const { code, stdout } = await execFileNoThrow('defaults', [
       'read',
-      '/Applications/Claude.app/Contents/Info.plist',
+      `${DESKTOP_APP_PATH}/Contents/Info.plist`,
       'CFBundleShortVersionString',
     ])
     if (code !== 0) {
@@ -105,7 +108,7 @@ async function getDesktopVersion(): Promise<string | null> {
     if (!localAppData) {
       return null
     }
-    const installDir = join(localAppData, 'AnthropicClaude')
+    const installDir = join(localAppData, DESKTOP_PRODUCT_NAME)
     try {
       const entries = await readdir(installDir)
       const versions = entries
@@ -216,7 +219,7 @@ export async function openCurrentSessionInDesktop(): Promise<{
     return {
       success: false,
       error:
-        'Claude Desktop is not installed. Install it from https://claude.ai/download',
+        `${DESKTOP_PRODUCT_NAME} Desktop is not installed.`,
     }
   }
 

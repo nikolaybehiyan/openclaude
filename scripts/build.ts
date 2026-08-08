@@ -16,6 +16,49 @@ import { CLI_EXTERNALS, SDK_EXTERNALS } from './externals.js'
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const version = pkg.version
 
+function requiredBuildIdentity(name: string, pattern: RegExp): string {
+  const value = process.env[name]?.trim()
+  if (!value || !pattern.test(value)) {
+    throw new Error(`${name} is required and does not satisfy ${pattern}`)
+  }
+  return value
+}
+
+// Product identity is deliberately supplied by the release owner. There is
+// no hidden default here: an unprofiled OpenClaude bundle must not enter a
+// branded Desktop release by accident.
+const productIdentity = Object.freeze({
+  productName: requiredBuildIdentity(
+    'OPENCLAUDE_PRODUCT_NAME',
+    /^[A-Za-z][A-Za-z0-9 -]{0,63}$/,
+  ),
+  desktopDeepLinkScheme: requiredBuildIdentity(
+    'OPENCLAUDE_DESKTOP_DEEP_LINK_SCHEME',
+    /^[a-z][a-z0-9+.-]*$/,
+  ),
+  codeDeepLinkScheme: requiredBuildIdentity(
+    'OPENCLAUDE_CODE_DEEP_LINK_SCHEME',
+    /^[a-z][a-z0-9+.-]*$/,
+  ),
+  codeHandlerBundleIdentifier: requiredBuildIdentity(
+    'OPENCLAUDE_CODE_HANDLER_BUNDLE_IDENTIFIER',
+    /^[A-Za-z][A-Za-z0-9-]*(?:\.[A-Za-z][A-Za-z0-9-]*){2,}$/,
+  ),
+})
+
+if (productIdentity.desktopDeepLinkScheme === productIdentity.codeDeepLinkScheme) {
+  throw new Error('Desktop and Code deep-link schemes must be distinct')
+}
+
+const productIdentityDefines = Object.freeze({
+  'MACRO.PRODUCT_NAME': JSON.stringify(productIdentity.productName),
+  'MACRO.DESKTOP_DEEP_LINK_SCHEME': JSON.stringify(productIdentity.desktopDeepLinkScheme),
+  'MACRO.CODE_DEEP_LINK_SCHEME': JSON.stringify(productIdentity.codeDeepLinkScheme),
+  'MACRO.CODE_HANDLER_BUNDLE_IDENTIFIER': JSON.stringify(
+    productIdentity.codeHandlerBundleIdentifier,
+  ),
+})
+
 // Feature flags for the open build.
 // Most Anthropic-internal features stay off; open-build features can be
 // selectively enabled here when their full source exists in the mirror.
@@ -135,6 +178,7 @@ result = await Bun.build({
   minify: false,
   naming: 'cli.mjs',
   define: {
+    ...productIdentityDefines,
     // MACRO.* build-time constants
     // Keep the internal compatibility version high enough to pass
     // first-party minimum-version guards, but expose the real package
@@ -476,6 +520,7 @@ sdkResult = await Bun.build({
   minify: false,
   naming: 'sdk.mjs',
   define: {
+    ...productIdentityDefines,
     'MACRO.VERSION': JSON.stringify(version),
     'MACRO.DISPLAY_VERSION': JSON.stringify(version),
     'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
