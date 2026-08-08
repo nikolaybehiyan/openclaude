@@ -3,16 +3,19 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 import { tmpdir } from 'node:os'
 import {
+  clearCommandsCache,
+  getCommands,
   getSkillToolCommands,
   getSlashCommandToolSkills,
 } from '../../commands.js'
+import { setProjectRoot } from '../../bootstrap/state.js'
+import { SkillTool } from '../../tools/SkillTool/SkillTool.js'
 import { installSDKRuntimeProjection } from './skills.js'
 
 const roots: string[] = []
 
 afterAll(async () => {
-  getSkillToolCommands.cache?.clear?.()
-  getSlashCommandToolSkills.cache?.clear?.()
+  clearCommandsCache()
   await Promise.all(roots.map(root => rm(root, { recursive: true, force: true })))
 })
 
@@ -50,6 +53,60 @@ describe('SDK authoritative skill runtime', () => {
       ? await commands[0].getPromptForCommand('', {} as never)
       : []
     expect(JSON.stringify(prompt)).toContain('Do the exact task.')
+  })
+
+  test('registers the authoritative projection for native Skill dispatch without discovering disabled disk entries', async () => {
+    clearCommandsCache()
+    const root = await mkdtemp(join(tmpdir(), 'openclaude-sdk-native-skill-'))
+    roots.push(root)
+    const enabledRoot = join(root, 'translit')
+    const disabledRoot = join(root, 'disabled-on-disk')
+    await Promise.all([
+      mkdir(enabledRoot, { recursive: true }),
+      mkdir(disabledRoot, { recursive: true }),
+    ])
+    await Promise.all([
+      writeFile(
+        join(enabledRoot, 'SKILL.md'),
+        '---\nname: translit\ndescription: Transliterate text\n---\n\nReturn TRANSLIT_NATIVE_OK.\n',
+      ),
+      writeFile(
+        join(disabledRoot, 'SKILL.md'),
+        '---\nname: disabled-on-disk\ndescription: Must stay disabled\n---\n\nDISABLED.\n',
+      ),
+    ])
+
+    setProjectRoot(root)
+    installSDKRuntimeProjection(root, {
+      commands: [{
+        name: 'translit',
+        metadataMarkdown: '---\nname: translit\ndescription: Transliterate text\n---\n',
+        filePath: join(enabledRoot, 'SKILL.md'),
+        kind: 'skill',
+        source: 'standalone',
+      }],
+      plugins: [],
+    })
+
+    const promptListing = await getSkillToolCommands(root)
+    const nativeCommands = await getCommands(root)
+    expect(promptListing.map(command => command.name)).toContain('translit')
+    expect(nativeCommands.map(command => command.name)).toContain('translit')
+    expect(nativeCommands.map(command => command.name)).not.toContain('disabled-on-disk')
+
+    const validation = await SkillTool.validateInput?.(
+      { skill: 'translit' },
+      {
+        getAppState: () => ({ mcp: { commands: [] } }),
+      } as never,
+    )
+    expect(validation).toEqual({ result: true })
+
+    const native = nativeCommands.find(command => command.name === 'translit')
+    const expanded = native?.type === 'prompt'
+      ? await native.getPromptForCommand('', {} as never)
+      : []
+    expect(JSON.stringify(expanded)).toContain('TRANSLIT_NATIVE_OK')
   })
 
 })

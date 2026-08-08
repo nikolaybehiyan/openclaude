@@ -6,6 +6,7 @@ import {
 } from '../../commands.js'
 import {
   createSkillCommand,
+  getSkillDirCommands,
   parseSkillFrontmatterFields,
 } from '../../skills/loadSkillsDir.js'
 import type { Command } from '../../types/command.js'
@@ -133,6 +134,8 @@ export function installSDKRuntimeProjection(
     projection.commands[index]?.source === 'plugin' && projection.commands[index]?.kind === 'command')
   const pluginSkills = commands.filter((_, index) =>
     projection.commands[index]?.source === 'plugin' && projection.commands[index]?.kind === 'skill')
+  const standaloneCommands = commands.filter((_, index) =>
+    projection.commands[index]?.source === 'standalone')
   const modelCommands = commands.filter(command =>
     !command.disableModelInvocation &&
     (command.loadedFrom !== 'plugin' || command.hasUserSpecifiedDescription || command.whenToUse))
@@ -142,6 +145,7 @@ export function installSDKRuntimeProjection(
 
   getPluginCommands.cache?.set(undefined, Promise.resolve(pluginCommands))
   getPluginSkills.cache?.set(undefined, Promise.resolve(pluginSkills))
+  getSkillDirCommands.cache?.set(cwd, Promise.resolve(standaloneCommands))
   getSkillToolCommands.cache?.set(cwd, Promise.resolve(modelCommands))
   getSlashCommandToolSkills.cache?.set(cwd, Promise.resolve(slashSkills))
   loadAllPluginsCacheOnly.cache?.set(undefined, Promise.resolve({
