@@ -181,6 +181,7 @@ const ALLOWED_OAUTH_BASE_URLS = [
   'https://claude.fedstart.com',
   'https://claude-staging.fedstart.com',
   'https://ai.claudia.ru',
+  'https://ai.darbmind.ru',
 ]
 
 export function isHostManagedExternalInference(): boolean {

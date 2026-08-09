@@ -37,18 +37,18 @@ describe('host-managed Code control and inference routing', () => {
   test('keeps Code account APIs on the trusted control plane while inference is external', () => {
     process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic'
     process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
-    process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.claudia.ru'
+    process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.darbmind.ru'
 
     const config = getOauthConfig()
-    expect(config.BASE_API_URL).toBe('https://ai.claudia.ru')
+    expect(config.BASE_API_URL).toBe('https://ai.darbmind.ru')
     expect(config.API_KEY_URL).toBe(
-      'https://ai.claudia.ru/api/oauth/claude_cli/create_api_key',
+      'https://ai.darbmind.ru/api/oauth/claude_cli/create_api_key',
     )
     expect(config.ROLES_URL).toBe(
-      'https://ai.claudia.ru/api/oauth/claude_cli/roles',
+      'https://ai.darbmind.ru/api/oauth/claude_cli/roles',
     )
     expect(config.CLAUDE_AI_AUTHORIZE_URL).toBe(
-      'https://ai.claudia.ru/oauth/authorize',
+      'https://ai.darbmind.ru/oauth/authorize',
     )
     expect(isHostManagedExternalInference()).toBe(true)
   })
