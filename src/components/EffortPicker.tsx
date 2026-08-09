@@ -78,9 +78,8 @@ export function EffortPicker({ onSelect, onCancel }: Props) {
       }))
       onSelect(undefined)
     } else {
-      // Normalize OpenAI-shaped 'xhigh' to the standard EffortLevel ('max')
-      // so AppState + settings.json always hold a persistable value. The shim
-      // converts back to 'xhigh' at the request boundary.
+      // Keep Claude's persisted xhigh label intact. Provider adapters translate
+      // only when their wire protocol uses a different name.
       const effortLevel = isOpenAIEffortLevel(value)
         ? openAIEffortToStandard(value)
         : (value as EffortLevel)

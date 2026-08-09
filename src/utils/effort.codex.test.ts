@@ -94,21 +94,21 @@ test('gpt-5.3-codex-spark stays without effort controls', async () => {
   expect(getAvailableEffortLevels('gpt-5.3-codex-spark')).toEqual([])
 })
 
-test('toPersistableEffort normalizes xhigh to max so it survives settings write', async () => {
+test('toPersistableEffort persists xhigh and keeps max session-only', async () => {
   const { toPersistableEffort } = await importFreshEffortModule({
     provider: 'openai',
     supportsCodexReasoningEffort: true,
   })
 
-  expect(toPersistableEffort('xhigh')).toBe('max')
-  expect(toPersistableEffort('max')).toBe('max')
+  expect(toPersistableEffort('xhigh')).toBe('xhigh')
+  expect(toPersistableEffort('max')).toBeUndefined()
   expect(toPersistableEffort('high')).toBe('high')
   expect(toPersistableEffort('medium')).toBe('medium')
   expect(toPersistableEffort('low')).toBe('low')
   expect(toPersistableEffort(undefined)).toBeUndefined()
 })
 
-test('standardEffortToOpenAI maps max to xhigh for shim payload', async () => {
+test('OpenAI effort aliases preserve xhigh and map session max to xhigh on wire', async () => {
   const { standardEffortToOpenAI, openAIEffortToStandard } =
     await importFreshEffortModule({
       provider: 'openai',
@@ -117,11 +117,11 @@ test('standardEffortToOpenAI maps max to xhigh for shim payload', async () => {
 
   expect(standardEffortToOpenAI('max')).toBe('xhigh')
   expect(standardEffortToOpenAI('high')).toBe('high')
-  expect(openAIEffortToStandard('xhigh')).toBe('max')
+  expect(openAIEffortToStandard('xhigh')).toBe('xhigh')
   expect(openAIEffortToStandard('high')).toBe('high')
 })
 
-test('e2e: xhigh → persisted max → resolveAppliedEffort → wire xhigh on OpenAI/Codex (no high clamp)', async () => {
+test('e2e: xhigh persists and reaches OpenAI/Codex wire without clamping', async () => {
   const {
     toPersistableEffort,
     resolveAppliedEffort,
@@ -133,23 +133,21 @@ test('e2e: xhigh → persisted max → resolveAppliedEffort → wire xhigh on Op
 
   // Picker writes the OpenAI-shaped value; toPersistableEffort normalizes.
   const persisted = toPersistableEffort('xhigh')
-  expect(persisted).toBe('max')
+  expect(persisted).toBe('xhigh')
 
-  // App state holds 'max'. Non-Opus 'max' must NOT be downgraded to 'high'
-  // when the model uses the OpenAI effort scheme — the shim converts back
-  // to 'xhigh' on the wire.
+  // Non-Anthropic xhigh must not be downgraded to high.
   const applied = resolveAppliedEffort('gpt-5.4', persisted)
-  expect(applied).toBe('max')
+  expect(applied).toBe('xhigh')
 
   // Final wire value the client shim emits.
-  expect(standardEffortToOpenAI(applied as 'max')).toBe('xhigh')
+  expect(standardEffortToOpenAI(applied as 'xhigh')).toBe('xhigh')
 })
 
-test('e2e: max on non-Opus Anthropic model still clamps to high', async () => {
+test('Claude Sonnet 4.6 accepts max effort', async () => {
   const { resolveAppliedEffort } = await importFreshEffortModule({
     provider: 'firstParty' as unknown as 'openai',
     supportsCodexReasoningEffort: false,
   })
 
-  expect(resolveAppliedEffort('claude-sonnet-4-6', 'max')).toBe('high')
+  expect(resolveAppliedEffort('claude-sonnet-4-6', 'max')).toBe('max')
 })

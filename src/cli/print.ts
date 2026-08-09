@@ -276,9 +276,8 @@ import {
 } from 'src/utils/model/model.js'
 import { getModelOptions } from 'src/utils/model/modelOptions.js'
 import {
+  getAvailableEffortLevels,
   modelSupportsEffort,
-  modelSupportsMaxEffort,
-  EFFORT_LEVELS,
   resolveAppliedEffort,
 } from 'src/utils/effort.js'
 import { modelSupportsAdaptiveThinking } from 'src/utils/thinking.js'
@@ -1206,9 +1205,12 @@ function runHeadlessStreaming(
       description: option.description,
       ...(hasEffort && {
         supportsEffort: true,
-        supportedEffortLevels: modelSupportsMaxEffort(resolvedModel)
-          ? [...EFFORT_LEVELS]
-          : EFFORT_LEVELS.filter(l => l !== 'max'),
+        // The generated SDK type printer currently omits parentheses around
+        // enum unions inside arrays. The runtime schema and this value are both
+        // the full array of supported levels.
+        supportedEffortLevels: getAvailableEffortLevels(
+          resolvedModel,
+        ) as unknown as ModelInfo['supportedEffortLevels'],
       }),
       ...(hasAdaptiveThinking && { supportsAdaptiveThinking: true }),
       ...(hasFastMode && { supportsFastMode: true }),

@@ -15,6 +15,7 @@ export const EFFORT_LEVELS = [
   'low',
   'medium',
   'high',
+  'xhigh',
   'max',
 ] as const satisfies readonly EffortLevel[]
 
@@ -27,6 +28,7 @@ export const OPENAI_EFFORT_LEVELS = [
 
 export type OpenAIEffortLevel = typeof OPENAI_EFFORT_LEVELS[number]
 export type EffortValue = EffortLevel | number
+export type PersistedEffortLevel = Exclude<EffortLevel, 'max'>
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
@@ -42,7 +44,15 @@ export function modelSupportsEffort(model: string): boolean {
     return true
   }
   // Supported by a subset of Claude 4 models
-  if (m.includes('opus-4-6') || m.includes('sonnet-4-6')) {
+  if (
+    m.includes('opus-4-6') ||
+    m.includes('sonnet-4-6') ||
+    m.includes('opus-4-7') ||
+    m.includes('opus-4-8') ||
+    m.includes('sonnet-5') ||
+    m.includes('opus-5') ||
+    m.includes('fable-5')
+  ) {
     return true
   }
   // Exclude any other known legacy models (haiku, older opus/sonnet variants)
@@ -67,13 +77,40 @@ export function modelSupportsMaxEffort(model: string): boolean {
   if (supported3P !== undefined) {
     return supported3P
   }
-  if (model.toLowerCase().includes('opus-4-6')) {
+  const m = model.toLowerCase()
+  if (
+    m.includes('opus-4-6') ||
+    m.includes('sonnet-4-6') ||
+    m.includes('opus-4-7') ||
+    m.includes('opus-4-8') ||
+    m.includes('sonnet-5') ||
+    m.includes('opus-5') ||
+    m.includes('fable-5')
+  ) {
     return true
   }
   if (process.env.USER_TYPE === 'ant' && resolveAntModel(model)) {
     return true
   }
   return false
+}
+
+// @[MODEL LAUNCH]: Add models that support the xhigh tier. Third-party model
+// aliases (including Desktop's pinned provider models) carry the authoritative
+// xhigh_effort capability in their environment projection.
+export function modelSupportsXHighEffort(model: string): boolean {
+  const supported3P = get3PModelCapabilityOverride(model, 'xhigh_effort')
+  if (supported3P !== undefined) {
+    return supported3P
+  }
+  const m = model.toLowerCase()
+  return (
+    m.includes('opus-4-7') ||
+    m.includes('opus-4-8') ||
+    m.includes('sonnet-5') ||
+    m.includes('opus-5') ||
+    m.includes('fable-5')
+  )
 }
 
 export function isEffortLevel(value: string): value is EffortLevel {
@@ -97,6 +134,9 @@ export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIE
     return [...OPENAI_EFFORT_LEVELS] as OpenAIEffortLevel[]
   }
   const levels: EffortLevel[] = ['low', 'medium', 'high']
+  if (modelSupportsXHighEffort(model)) {
+    levels.push('xhigh')
+  }
   if (modelSupportsMaxEffort(model)) {
     levels.push('max')
   }
@@ -110,7 +150,6 @@ export function getEffortLevelLabel(level: EffortLevel | OpenAIEffortLevel): str
 }
 
 export function openAIEffortToStandard(level: OpenAIEffortLevel): EffortLevel {
-  if (level === 'xhigh') return 'max'
   return level
 }
 
@@ -142,30 +181,27 @@ export function parseEffortValue(value: unknown): EffortValue | undefined {
 }
 
 /**
- * Numeric values are model-default only and not persisted.
- * 'max' can now be persisted by all users.
- * OpenAI-shaped 'xhigh' is normalized to its EffortLevel equivalent ('max')
- * so any code path that leaks the OpenAI label still persists correctly.
+ * Numeric values and 'max' are session-only and are not persisted.
+ * Claude Code 2.1.221 persists low/medium/high/xhigh in settings.json.
  * Write sites call this before saving to settings so the Zod schema
  * (which only accepts string levels) never rejects a write.
  */
 export function toPersistableEffort(
   value: EffortValue | undefined,
-): EffortLevel | undefined {
-  if (value === 'low' || value === 'medium' || value === 'high') {
+): PersistedEffortLevel | undefined {
+  if (
+    value === 'low' ||
+    value === 'medium' ||
+    value === 'high' ||
+    value === 'xhigh'
+  ) {
     return value
-  }
-  if (value === 'max') {
-    return value
-  }
-  if (value === 'xhigh') {
-    return 'max'
   }
   return undefined
 }
 
-export function getInitialEffortSetting(): EffortLevel | undefined {
-  // toPersistableEffort validates 'max' on read, so a manually
+export function getInitialEffortSetting(): PersistedEffortLevel | undefined {
+  // toPersistableEffort validates persisted levels on read, so a manually
   // edited settings.json with an invalid level doesn't leak into a fresh session.
   return toPersistableEffort(getInitialSettings().effortLevel)
 }
@@ -219,15 +255,21 @@ export function resolveAppliedEffort(
   }
   const resolved =
     envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
-  // API rejects 'max' on non-Opus-4.6 Anthropic models — downgrade to 'high'.
-  // OpenAI/Codex models use 'max' as the standard form of 'xhigh'; the client
-  // shim converts it back to 'xhigh' on the wire, so don't clamp it here.
+  // Unsupported requested levels fall back to the highest supported level at
+  // or below the request, matching Claude Code 2.1.221.
+  if (
+    resolved === 'xhigh' &&
+    !modelSupportsXHighEffort(model) &&
+    !modelUsesOpenAIEffort(model)
+  ) {
+    return 'high'
+  }
   if (
     resolved === 'max' &&
     !modelSupportsMaxEffort(model) &&
     !modelUsesOpenAIEffort(model)
   ) {
-    return 'high'
+    return modelSupportsXHighEffort(model) ? 'xhigh' : 'high'
   }
   return resolved
 }
@@ -296,9 +338,9 @@ export function getEffortLevelDescription(level: EffortLevel | OpenAIEffortLevel
     case 'high':
       return 'Comprehensive implementation with extensive testing and documentation'
     case 'max':
-      return 'Maximum capability with deepest reasoning (Opus 4.6 only)'
+      return 'Maximum capability with deepest reasoning (this session only)'
     case 'xhigh':
-      return 'Extra high reasoning effort for complex tasks (OpenAI/Codex)'
+      return 'Extra high reasoning effort for complex coding and agentic tasks'
   }
 }
 
@@ -371,6 +413,12 @@ export function getDefaultEffortForModel(
   // IMPORTANT: Do not change the default effort level without notifying
   // the model launch DRI and research. Default effort is a sensitive setting
   // that can greatly affect model quality and bashing.
+
+  // Claude Code 2.1.221 defaults Opus 4.7 to xhigh. Newer model defaults are
+  // projected by Desktop or remain the API default when no level is supplied.
+  if (model.toLowerCase().includes('opus-4-7')) {
+    return 'xhigh'
+  }
 
   // Default effort on Opus 4.6 to medium for Pro.
   // Max/Team also get medium when the tengu_grey_step2 config is enabled.
