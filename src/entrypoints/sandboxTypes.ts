@@ -15,6 +15,7 @@ export const SandboxNetworkConfigSchema = lazySchema(() =>
   z
     .object({
       allowedDomains: z.array(z.string()).optional(),
+      deniedDomains: z.array(z.string()).optional(),
       allowManagedDomainsOnly: z
         .boolean()
         .optional()
@@ -35,6 +36,7 @@ export const SandboxNetworkConfigSchema = lazySchema(() =>
           'If true, allow all Unix sockets (disables blocking on both platforms).',
         ),
       allowLocalBinding: z.boolean().optional(),
+      strictAllowlist: z.boolean().optional(),
       httpProxyPort: z.number().optional(),
       socksProxyPort: z.number().optional(),
     })
@@ -81,6 +83,7 @@ export const SandboxFilesystemConfigSchema = lazySchema(() =>
         .describe(
           'When true (set in managed settings), only allowRead paths from policySettings are used.',
         ),
+      disabled: z.boolean().optional(),
     })
     .optional(),
 )

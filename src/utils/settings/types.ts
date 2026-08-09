@@ -642,9 +642,22 @@ export const SettingsSchema = lazySchema(() =>
         ),
       // Organization UUID to use for OAuth login (will be added as URL param to authorization URL)
       forceLoginOrgUUID: z
-        .string()
+        .union([z.string(), z.array(z.string())])
         .optional()
-        .describe('Organization UUID to use for OAuth login'),
+        .describe(
+          'Organization UUID (or UUID allowlist) required for OAuth login',
+        ),
+      parentSettingsBehavior: z
+        .enum(['firstWins', 'merge'])
+        .optional()
+        .describe(
+          'Whether restrictive policy supplied by an SDK parent may merge with this administrator policy. Defaults to firstWins.',
+        ),
+      enforceAvailableModels: z
+        .boolean()
+        .optional()
+        .describe('Enforce availableModels as a managed model allowlist'),
+      forceRemoteSettingsRefresh: z.boolean().optional(),
       otelHeadersHelper: z
         .string()
         .optional()

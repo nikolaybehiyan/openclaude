@@ -9,6 +9,12 @@ import {
   getUseCoworkPlugins,
 } from '../../bootstrap/state.js'
 import { getRemoteManagedSettingsSyncFromCache } from '../../services/remoteManagedSettings/syncCacheState.js'
+import {
+  buildParentManagedSettingsGuard,
+  restrictParentManagedSettings,
+  shouldMergeParentManagedSettings,
+  validateParentManagedSettings,
+} from '../../entrypoints/sdk/parentManagedSettings.js'
 import { uniq } from '../array.js'
 import { logForDebugging } from '../debug.js'
 import { logForDiagnosticsNoPII } from '../diagLogs.js'
@@ -319,29 +325,8 @@ export function getSettingsForSource(
 function getSettingsForSourceUncached(
   source: SettingSource,
 ): SettingsJson | null {
-  // For policySettings: first source wins (remote > HKLM/plist > file > HKCU)
   if (source === 'policySettings') {
-    const remoteSettings = getRemoteManagedSettingsSyncFromCache()
-    if (remoteSettings && Object.keys(remoteSettings).length > 0) {
-      return remoteSettings
-    }
-
-    const mdmResult = getMdmSettings()
-    if (Object.keys(mdmResult.settings).length > 0) {
-      return mdmResult.settings
-    }
-
-    const { settings: fileSettings } = loadManagedFileSettings()
-    if (fileSettings) {
-      return fileSettings
-    }
-
-    const hkcu = getHkcuSettings()
-    if (Object.keys(hkcu.settings).length > 0) {
-      return hkcu.settings
-    }
-
-    return null
+    return resolvePolicySettings().settings
   }
 
   const settingsFilePath = getSettingsFilePathForSource(source)
@@ -377,33 +362,113 @@ export function getPolicySettingsOrigin():
   | 'plist'
   | 'hklm'
   | 'file'
+  | 'parent'
   | 'hkcu'
   | null {
-  // 1. Remote (highest)
+  return resolvePolicySettings().origin
+}
+
+type PolicySettingsOrigin =
+  | 'remote'
+  | 'plist'
+  | 'hklm'
+  | 'file'
+  | 'parent'
+  | 'hkcu'
+
+type PolicySettingsResolution = {
+  settings: SettingsJson | null
+  errors: ValidationError[]
+  origin: PolicySettingsOrigin | null
+}
+
+/**
+ * Resolve policy tiers using Claude Code 2.1.221 precedence:
+ * remote > MDM > managed file. A parent SDK tier is separate and restrictive;
+ * an administrator wins by default and may explicitly opt into merging it.
+ * HKCU is consulted only when neither an administrator nor a valid parent tier
+ * exists.
+ */
+export function resolvePolicySettings(): PolicySettingsResolution {
+  const errors: ValidationError[] = []
+  const adminTiers: Array<{
+    settings: SettingsJson
+    origin: PolicySettingsOrigin
+  }> = []
+
   const remoteSettings = getRemoteManagedSettingsSyncFromCache()
   if (remoteSettings && Object.keys(remoteSettings).length > 0) {
-    return 'remote'
+    const parsed = SettingsSchema().safeParse(remoteSettings)
+    if (parsed.success) {
+      adminTiers.push({ settings: parsed.data, origin: 'remote' })
+    } else {
+      errors.push(...formatZodError(parsed.error, 'remote managed settings'))
+    }
   }
 
-  // 2. Admin-only MDM (HKLM / macOS plist)
   const mdmResult = getMdmSettings()
+  errors.push(...mdmResult.errors)
   if (Object.keys(mdmResult.settings).length > 0) {
-    return getPlatform() === 'macos' ? 'plist' : 'hklm'
+    adminTiers.push({
+      settings: mdmResult.settings,
+      origin: getPlatform() === 'macos' ? 'plist' : 'hklm',
+    })
   }
 
-  // 3. managed-settings.json + managed-settings.d/ (file-based, requires admin)
-  const { settings: fileSettings } = loadManagedFileSettings()
-  if (fileSettings) {
-    return 'file'
+  const fileResult = loadManagedFileSettings()
+  errors.push(...fileResult.errors)
+  if (fileResult.settings) {
+    adminTiers.push({ settings: fileResult.settings, origin: 'file' })
   }
 
-  // 4. HKCU (lowest — user-writable)
+  const parentResult = validateParentManagedSettings()
+  errors.push(...parentResult.errors)
+
+  const adminSettings = adminTiers[0]?.settings ?? null
+  // Restrictions from lower-priority administrator tiers still constrain
+  // what a parent slice may grant, even though only the first administrator
+  // tier is the effective settings object. This mirrors 2.1.221's aggregate
+  // guard passed to its restrictive parent filter.
+  const parentGuard = buildParentManagedSettingsGuard(
+    adminTiers.map(tier => tier.settings),
+  )
+
+  const restrictedParent =
+    parentResult.settings && shouldMergeParentManagedSettings(adminSettings)
+      ? restrictParentManagedSettings(parentResult.settings, parentGuard)
+      : null
+  const parentSlice =
+    restrictedParent && Object.keys(restrictedParent).length > 0
+      ? restrictedParent
+      : null
+
+  if (adminSettings || parentSlice) {
+    const settings = mergeWith(
+      {},
+      parentSlice ?? {},
+      adminSettings ?? {},
+      settingsMergeCustomizer,
+    ) as SettingsJson
+    if (
+      adminTiers.some(
+        tier => tier.settings.forceRemoteSettingsRefresh === true,
+      )
+    ) {
+      settings.forceRemoteSettingsRefresh = true
+    }
+    return {
+      settings,
+      errors,
+      origin: adminTiers[0]?.origin ?? 'parent',
+    }
+  }
+
   const hkcu = getHkcuSettings()
+  errors.push(...hkcu.errors)
   if (Object.keys(hkcu.settings).length > 0) {
-    return 'hkcu'
+    return { settings: hkcu.settings, errors, origin: 'hkcu' }
   }
-
-  return null
+  return { settings: null, errors, origin: null }
 }
 
 /**
@@ -687,49 +752,10 @@ function loadSettingsFromDisk(): SettingsWithErrors {
       // policySettings: "first source wins" — use the highest-priority source
       // that has content. Priority: remote > HKLM/plist > managed-settings.json > HKCU
       if (source === 'policySettings') {
-        let policySettings: SettingsJson | null = null
-        const policyErrors: ValidationError[] = []
-
-        // 1. Remote (highest priority)
-        const remoteSettings = getRemoteManagedSettingsSyncFromCache()
-        if (remoteSettings && Object.keys(remoteSettings).length > 0) {
-          const result = SettingsSchema().safeParse(remoteSettings)
-          if (result.success) {
-            policySettings = result.data
-          } else {
-            // Remote exists but is invalid — surface errors even as we fall through
-            policyErrors.push(
-              ...formatZodError(result.error, 'remote managed settings'),
-            )
-          }
-        }
-
-        // 2. Admin-only MDM (HKLM / macOS plist)
-        if (!policySettings) {
-          const mdmResult = getMdmSettings()
-          if (Object.keys(mdmResult.settings).length > 0) {
-            policySettings = mdmResult.settings
-          }
-          policyErrors.push(...mdmResult.errors)
-        }
-
-        // 3. managed-settings.json + managed-settings.d/ (file-based, requires admin)
-        if (!policySettings) {
-          const { settings, errors } = loadManagedFileSettings()
-          if (settings) {
-            policySettings = settings
-          }
-          policyErrors.push(...errors)
-        }
-
-        // 4. HKCU (lowest — user-writable, only if nothing above exists)
-        if (!policySettings) {
-          const hkcu = getHkcuSettings()
-          if (Object.keys(hkcu.settings).length > 0) {
-            policySettings = hkcu.settings
-          }
-          policyErrors.push(...hkcu.errors)
-        }
+        const {
+          settings: policySettings,
+          errors: policyErrors,
+        } = resolvePolicySettings()
 
         // Merge the winning policy source into the settings chain
         if (policySettings) {
