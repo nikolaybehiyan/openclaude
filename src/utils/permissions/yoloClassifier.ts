@@ -34,14 +34,11 @@ import { sideQuery } from '../sideQuery.js'
 import { jsonStringify } from '../slowOperations.js'
 import { tokenCountWithEstimation } from '../tokens.js'
 import {
-  getBashPromptAllowDescriptions,
-  getBashPromptDenyDescriptions,
-} from './bashClassifier.js'
-import {
   extractToolUseBlock,
   parseClassifierResponse,
 } from './classifierShared.js'
 import { getClaudeTempDir } from './filesystem.js'
+import { permissionRuleValueFromString } from './permissionRuleParser.js'
 
 // Dead code elimination: conditional imports for auto mode classifier prompts.
 // At build time, the bundler inlines .txt files as string literals. At test
@@ -51,43 +48,27 @@ function txtRequire(mod: string | { default: string }): string {
   return typeof mod === 'string' ? mod : mod.default
 }
 
-const BASE_PROMPT: string = feature('TRANSCRIPT_CLASSIFIER')
-  ? txtRequire(require('./yolo-classifier-prompts/auto_mode_system_prompt.txt'))
-  : ''
+const BASE_PROMPT: string = txtRequire(
+  require('./yolo-classifier-prompts/auto_mode_system_prompt.txt'),
+)
 
-// External template is loaded separately so it's available for
-// `claude auto-mode defaults` even in ant builds. Ant builds use
-// permissions_anthropic.txt at runtime but should dump external defaults.
-const EXTERNAL_PERMISSIONS_TEMPLATE: string = feature('TRANSCRIPT_CLASSIFIER')
-  ? txtRequire(require('./yolo-classifier-prompts/permissions_external.txt'))
-  : ''
-
-const ANTHROPIC_PERMISSIONS_TEMPLATE: string =
-  feature('TRANSCRIPT_CLASSIFIER') && process.env.USER_TYPE === 'ant'
-    ? txtRequire(require('./yolo-classifier-prompts/permissions_anthropic.txt'))
-    : ''
+const EXTERNAL_PERMISSIONS_TEMPLATE: string = txtRequire(
+  require('./yolo-classifier-prompts/permissions_external.txt'),
+)
 /* eslint-enable custom-rules/no-process-env-top-level, @typescript-eslint/no-require-imports */
 
 const MAX_CLASSIFIER_TRANSCRIPT_CHARS = 200_000
 const MAX_CLASSIFIER_BLOCK_VALUE_CHARS = 32_000
 
-function isUsingExternalPermissions(): boolean {
-  if (process.env.USER_TYPE !== 'ant') return true
-  const config = getFeatureValue_CACHED_MAY_BE_STALE(
-    'tengu_auto_mode_config',
-    {} as AutoModeConfig,
-  )
-  return config?.forceExternalPermissions === true
-}
-
 /**
- * Shape of the settings.autoMode config — the three classifier prompt
+ * Shape of the settings.autoMode config — the four classifier prompt
  * sections a user can customize. Required-field variant (empty arrays when
  * absent) for JSON output; settings.ts uses the optional-field variant.
  */
 export type AutoModeRules = {
   allow: string[]
   soft_deny: string[]
+  hard_deny: string[]
   environment: string[]
 }
 
@@ -103,8 +84,51 @@ export type AutoModeRules = {
 export function getDefaultExternalAutoModeRules(): AutoModeRules {
   return {
     allow: extractTaggedBullets('user_allow_rules_to_replace'),
-    soft_deny: extractTaggedBullets('user_deny_rules_to_replace'),
+    soft_deny: extractTaggedBullets('user_soft_deny_rules_to_replace'),
+    hard_deny: extractTaggedBullets('user_hard_deny_rules_to_replace'),
     environment: extractTaggedBullets('user_environment_to_replace'),
+  }
+}
+
+function expandConfiguredRules(
+  configuredRules: readonly string[] | undefined,
+  defaultRules: readonly string[],
+): string[] {
+  if (!configuredRules?.length) return [...defaultRules]
+  const rules: string[] = []
+  let insertedDefaults = false
+  for (const rule of configuredRules) {
+    if (rule === '$defaults') {
+      if (!insertedDefaults) {
+        rules.push(...defaultRules)
+        insertedDefaults = true
+      }
+      continue
+    }
+    rules.push(rule)
+  }
+  return rules
+}
+
+/** Resolve settings exactly like Claude Code 2.1.221 `auto-mode config`. */
+export function resolveAutoModeRules(
+  configured?: Partial<AutoModeRules>,
+): AutoModeRules {
+  const defaults = getDefaultExternalAutoModeRules()
+  return {
+    allow: expandConfiguredRules(configured?.allow, defaults.allow),
+    soft_deny: expandConfiguredRules(
+      configured?.soft_deny,
+      defaults.soft_deny,
+    ),
+    hard_deny: expandConfiguredRules(
+      configured?.hard_deny,
+      defaults.hard_deny,
+    ),
+    environment: expandConfiguredRules(
+      configured?.environment,
+      defaults.environment,
+    ),
   }
 }
 
@@ -113,11 +137,68 @@ function extractTaggedBullets(tagName: string): string[] {
     new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`),
   )
   if (!match) return []
-  return (match[1] ?? '')
-    .split('\n')
-    .map(line => line.trim())
-    .filter(line => line.startsWith('- '))
-    .map(line => line.slice(2))
+  const rules: string[] = []
+  for (const line of (match[1] ?? '').split('\n')) {
+    const normalized = line.replace(/\r$/, '').trimEnd()
+    if (normalized.startsWith('- ')) rules.push(normalized.slice(2))
+    else if (rules.length > 0 && normalized.trim().length > 0)
+      rules[rules.length - 1] += `\n${normalized}`
+  }
+  return rules
+}
+
+function replaceRuleSection(
+  prompt: string,
+  tagName: string,
+  configuredRules?: readonly string[],
+): string {
+  return prompt.replace(
+    new RegExp(`<${tagName}>([\\s\\S]*?)</${tagName}>`),
+    (_match, defaults: string) => {
+      if (!configuredRules?.length) return defaults
+      let insertedDefaults = false
+      const lines: string[] = []
+      for (const rule of configuredRules) {
+        if (rule === '$defaults') {
+          if (!insertedDefaults) {
+            lines.push(defaults)
+            insertedDefaults = true
+          }
+          continue
+        }
+        lines.push(`- ${rule}`)
+      }
+      return lines.join('\n')
+    },
+  )
+}
+
+function settingsDenyRulesBlock(context: ToolPermissionContext): string {
+  const rules = new Set<string>()
+  for (const [source, sourceRules] of Object.entries(
+    context.alwaysDenyRules,
+  )) {
+    if (source === 'toolsNarrowing' || source === 'command') continue
+    for (const rule of sourceRules ?? []) {
+      if (
+        permissionRuleValueFromString(rule).ruleContent?.startsWith('prompt:')
+      )
+        continue
+      rules.add(rule)
+    }
+  }
+  if (rules.size === 0) return ''
+  return (
+    `- User Deny Rules: The user has configured these permission deny rules: ` +
+    `${[...rules].map(rule => `\`${rule}\``).join(', ')}. Each rule names a ` +
+    `tool and (optionally) an argument pattern that is already hard-blocked ` +
+    `for that tool. Block the action if it accomplishes the same effect via ` +
+    `a different tool — e.g. using Bash with \`python -c\`, \`sed -i\`, ` +
+    `\`cat >\`, heredocs, or similar to write or edit a file that an ` +
+    `Edit/Write/MultiEdit deny rule covers, or otherwise routing around a ` +
+    `deny rule by switching tools. The named tool itself is enforced ` +
+    `separately; your job here is to catch circumvention.`
+  )
 }
 
 /**
@@ -126,22 +207,19 @@ function extractTaggedBullets(tagName: string): string[] {
  * classifier sees its instructions.
  */
 export function buildDefaultExternalSystemPrompt(): string {
-  return BASE_PROMPT.replace(
+  let prompt = BASE_PROMPT.replace(
     '<permissions_template>',
     () => EXTERNAL_PERMISSIONS_TEMPLATE,
   )
-    .replace(
-      /<user_allow_rules_to_replace>([\s\S]*?)<\/user_allow_rules_to_replace>/,
-      (_m, defaults: string) => defaults,
-    )
-    .replace(
-      /<user_deny_rules_to_replace>([\s\S]*?)<\/user_deny_rules_to_replace>/,
-      (_m, defaults: string) => defaults,
-    )
-    .replace(
-      /<user_environment_to_replace>([\s\S]*?)<\/user_environment_to_replace>/,
-      (_m, defaults: string) => defaults,
-    )
+  for (const tag of [
+    'user_allow_rules_to_replace',
+    'user_soft_deny_rules_to_replace',
+    'user_hard_deny_rules_to_replace',
+    'user_environment_to_replace',
+  ]) {
+    prompt = replaceRuleSection(prompt, tag)
+  }
+  return prompt.replace('<settings_deny_rules>', '')
 }
 
 function getAutoModeDumpDir(): string {
@@ -604,59 +682,36 @@ function buildClaudeMdMessage(): Anthropic.MessageParam | null {
 export async function buildYoloSystemPrompt(
   context: ToolPermissionContext,
 ): Promise<string> {
-  const usingExternal = isUsingExternalPermissions()
-  const systemPrompt = BASE_PROMPT.replace('<permissions_template>', () =>
-    usingExternal
-      ? EXTERNAL_PERMISSIONS_TEMPLATE
-      : ANTHROPIC_PERMISSIONS_TEMPLATE,
+  let systemPrompt = BASE_PROMPT.replace(
+    '<permissions_template>',
+    () => EXTERNAL_PERMISSIONS_TEMPLATE,
   )
 
   const autoMode = getAutoModeConfig()
-  const includeBashPromptRules = feature('BASH_CLASSIFIER')
-    ? !usingExternal
-    : false
-  const includePowerShellGuidance = feature('POWERSHELL_AUTO_MODE')
-    ? !usingExternal
-    : false
-  const allowDescriptions = [
-    ...(includeBashPromptRules ? getBashPromptAllowDescriptions(context) : []),
-    ...(autoMode?.allow ?? []),
-  ]
-  const denyDescriptions = [
-    ...(includeBashPromptRules ? getBashPromptDenyDescriptions(context) : []),
-    ...(includePowerShellGuidance ? POWERSHELL_DENY_GUIDANCE : []),
-    ...(autoMode?.soft_deny ?? []),
-  ]
-
-  // All three sections use the same <foo_to_replace>...</foo_to_replace>
-  // delimiter pattern. The external template wraps its defaults inside the
-  // tags, so user-provided values REPLACE the defaults entirely. The
-  // anthropic template keeps its defaults outside the tags and uses an empty
-  // tag pair at the end of each section, so user-provided values are
-  // strictly ADDITIVE.
-  const userAllow = allowDescriptions.length
-    ? allowDescriptions.map(d => `- ${d}`).join('\n')
-    : undefined
-  const userDeny = denyDescriptions.length
-    ? denyDescriptions.map(d => `- ${d}`).join('\n')
-    : undefined
-  const userEnvironment = autoMode?.environment?.length
-    ? autoMode.environment.map(e => `- ${e}`).join('\n')
-    : undefined
-
-  return systemPrompt
-    .replace(
-      /<user_allow_rules_to_replace>([\s\S]*?)<\/user_allow_rules_to_replace>/,
-      (_m, defaults: string) => userAllow ?? defaults,
-    )
-    .replace(
-      /<user_deny_rules_to_replace>([\s\S]*?)<\/user_deny_rules_to_replace>/,
-      (_m, defaults: string) => userDeny ?? defaults,
-    )
-    .replace(
-      /<user_environment_to_replace>([\s\S]*?)<\/user_environment_to_replace>/,
-      (_m, defaults: string) => userEnvironment ?? defaults,
-    )
+  systemPrompt = replaceRuleSection(
+    systemPrompt,
+    'user_allow_rules_to_replace',
+    autoMode?.allow,
+  )
+  systemPrompt = replaceRuleSection(
+    systemPrompt,
+    'user_soft_deny_rules_to_replace',
+    autoMode?.soft_deny,
+  )
+  systemPrompt = replaceRuleSection(
+    systemPrompt,
+    'user_hard_deny_rules_to_replace',
+    autoMode?.hard_deny,
+  )
+  systemPrompt = replaceRuleSection(
+    systemPrompt,
+    'user_environment_to_replace',
+    autoMode?.environment,
+  )
+  return systemPrompt.replace(
+    '<settings_deny_rules>',
+    () => settingsDenyRulesBlock(context),
+  )
 }
 // ============================================================================
 // 2-Stage XML Classifier
@@ -1496,27 +1551,6 @@ function isJsonlTranscriptEnabled(): boolean {
   )
   return config?.jsonlTranscript === true
 }
-
-/**
- * PowerShell-specific deny guidance for the classifier. Appended to the
- * deny list in buildYoloSystemPrompt when PowerShell auto mode is active.
- * Maps PS idioms to the existing BLOCK categories so the classifier
- * recognizes `iex (iwr ...)` as "Code from External", `Remove-Item
- * -Recurse -Force` as "Irreversible Local Destruction", etc.
- *
- * Guarded at definition for DCE — with external:false, the string content
- * is absent from external builds (same pattern as the .txt requires above).
- */
-const POWERSHELL_DENY_GUIDANCE: readonly string[] = feature(
-  'POWERSHELL_AUTO_MODE',
-)
-  ? [
-      'PowerShell Download-and-Execute: `iex (iwr ...)`, `Invoke-Expression (Invoke-WebRequest ...)`, `Invoke-Expression (New-Object Net.WebClient).DownloadString(...)`, and any pipeline feeding remote content into `Invoke-Expression`/`iex` fall under "Code from External" — same as `curl | bash`.',
-      'PowerShell Irreversible Destruction: `Remove-Item -Recurse -Force`, `rm -r -fo`, `Clear-Content`, and `Set-Content` truncation of pre-existing files fall under "Irreversible Local Destruction" — same as `rm -rf` and `> file`.',
-      'PowerShell Persistence: modifying `$PROFILE` (any of the four profile paths), `Register-ScheduledTask`, `New-Service`, writing to registry Run keys (`HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run` or the HKLM equivalent), and WMI event subscriptions fall under "Unauthorized Persistence" — same as `.bashrc` edits and cron jobs.',
-      'PowerShell Elevation: `Start-Process -Verb RunAs`, `-ExecutionPolicy Bypass`, and disabling AMSI/Defender (`Set-MpPreference -DisableRealtimeMonitoring`) fall under "Security Weaken".',
-    ]
-  : []
 
 type AutoModeOutcome =
   | 'success'

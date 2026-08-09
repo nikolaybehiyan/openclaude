@@ -43,14 +43,14 @@ const PERMISSION_MODE_CONFIG: Partial<
   Record<PermissionMode, PermissionModeConfig>
 > = {
   default: {
-    title: 'Default',
-    shortTitle: 'Default',
+    title: 'Manual',
+    shortTitle: 'Manual',
     symbol: '',
     color: 'text',
     external: 'default',
   },
   plan: {
-    title: 'Plan Mode',
+    title: 'Plan',
     shortTitle: 'Plan',
     symbol: PAUSE_ICON,
     color: 'planMode',
@@ -80,11 +80,11 @@ const PERMISSION_MODE_CONFIG: Partial<
   ...(feature('TRANSCRIPT_CLASSIFIER')
     ? {
         auto: {
-          title: 'Auto mode',
+          title: 'Auto',
           shortTitle: 'Auto',
           symbol: '⏵⏵',
           color: 'warning' as ModeColorKey,
-          external: 'default' as ExternalPermissionMode,
+          external: 'auto' as ExternalPermissionMode,
         },
       }
     : {}),
@@ -92,16 +92,12 @@ const PERMISSION_MODE_CONFIG: Partial<
 
 /**
  * Type guard to check if a PermissionMode is an ExternalPermissionMode.
- * auto is internal-only and excluded from external modes.
+ * Claude Code 2.1.221 exposes auto; only the internal bubble mode is hidden.
  */
 export function isExternalPermissionMode(
   mode: PermissionMode,
 ): mode is ExternalPermissionMode {
-  // External users can't have auto, so always true for them
-  if (process.env.USER_TYPE !== 'ant') {
-    return true
-  }
-  return mode !== 'auto' && mode !== 'bubble'
+  return mode !== 'bubble'
 }
 
 function getModeConfig(mode: PermissionMode): PermissionModeConfig {
@@ -115,6 +111,7 @@ export function toExternalPermissionMode(
 }
 
 export function permissionModeFromString(str: string): PermissionMode {
+  if (str === 'manual') return 'default'
   return (PERMISSION_MODES as readonly string[]).includes(str)
     ? (str as PermissionMode)
     : 'default'

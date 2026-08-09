@@ -1,0 +1,8 @@
+{
+  "source": "Claude Code 2.1.221 official macOS universal binary",
+  "binary_sha256": "b3ce994579aa07c0344869f9520735907a1e9229186d79efc12c6163cb380711",
+  "assets": {
+    "auto_mode_system_prompt.txt": "adfe80b14ac39dfbb780ed4d1c46df09226a2656c3bcb9a4f8fdfd1158f8a056",
+    "permissions_external.txt": "08e14c1db9520d0171b6d3a8bd534f75c7566ccd56e765bbec4867d1f732e31f"
+  }
+}

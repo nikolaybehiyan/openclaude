@@ -6,7 +6,6 @@
  * to avoid circular dependencies.
  */
 
-import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 
 // ============================================================================
@@ -15,6 +14,7 @@ import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs
 
 export const EXTERNAL_PERMISSION_MODES = [
   'acceptEdits',
+  'auto',
   'bypassPermissions',
   'default',
   'dontAsk',
@@ -23,16 +23,15 @@ export const EXTERNAL_PERMISSION_MODES = [
 
 export type ExternalPermissionMode = (typeof EXTERNAL_PERMISSION_MODES)[number]
 
-// Exhaustive mode union for typechecking. The user-addressable runtime set
-// is INTERNAL_PERMISSION_MODES below.
-export type InternalPermissionMode = ExternalPermissionMode | 'auto' | 'bubble'
+// Exhaustive mode union for typechecking. `bubble` is the only internal-only
+// mode; Claude Code 2.1.221 exposes `auto` through the CLI and TypeScript SDK.
+export type InternalPermissionMode = ExternalPermissionMode | 'bubble'
 export type PermissionMode = InternalPermissionMode
 
 // Runtime validation set: modes that are user-addressable (settings.json
 // defaultMode, --permission-mode CLI flag, conversation recovery).
 export const INTERNAL_PERMISSION_MODES = [
   ...EXTERNAL_PERMISSION_MODES,
-  ...(feature('TRANSCRIPT_CLASSIFIER') ? (['auto'] as const) : ([] as const)),
 ] as const satisfies readonly PermissionMode[]
 
 export const PERMISSION_MODES = INTERNAL_PERMISSION_MODES
@@ -206,6 +205,8 @@ export type PermissionAskDecision<
   suggestions?: PermissionUpdate[]
   blockedPath?: string
   metadata?: PermissionMetadata
+  /** Whole-tool ask rule that still applies after the tool-specific check. */
+  matchedAskRule?: PermissionRule
   /**
    * If true, this ask decision was triggered by a bashCommandIsSafe_DEPRECATED security check
    * for patterns that splitCommand_DEPRECATED could misparse (e.g. line continuations, shell-quote
@@ -317,6 +318,8 @@ export type PermissionDecisionReason =
       // shell configs) — the classifier can see context and decide. False
       // for Windows path bypass attempts and cross-machine bridge messages.
       classifierApprovable: boolean
+      /** Claude Code keeps dangerous-removal checks active even in bypass mode. */
+      circuitBreaker?: string
     }
   | {
       type: 'other'

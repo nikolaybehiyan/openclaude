@@ -1037,7 +1037,15 @@ export const SettingsSchema = lazySchema(() =>
                 soft_deny: z
                   .array(z.string())
                   .optional()
-                  .describe('Rules for the auto mode classifier deny section'),
+                  .describe(
+                    'Rules for the auto mode classifier soft-deny section',
+                  ),
+                hard_deny: z
+                  .array(z.string())
+                  .optional()
+                  .describe(
+                    'Rules for the auto mode classifier hard-deny section',
+                  ),
                 ...(process.env.USER_TYPE === 'ant'
                   ? {
                       // Back-compat alias for ant users; external users use soft_deny

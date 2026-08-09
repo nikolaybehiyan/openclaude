@@ -74,6 +74,12 @@ export function buildPermissionContext(options: PermissionContextOptions): ToolP
     case 'bypassPermissions':
       internalMode = 'bypassPermissions'
       break
+    case 'auto':
+      internalMode = 'auto'
+      break
+    case 'dontAsk':
+      internalMode = 'dontAsk'
+      break
     default:
       internalMode = 'default'
   }

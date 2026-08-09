@@ -389,6 +389,72 @@ export function getRuleByContentsForToolName(
   return ruleByContents
 }
 
+function wildcardPermissionValueMatches(pattern: string, value: string): boolean {
+  const escaped = pattern
+    .split('*')
+    .map(part => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*')
+  return new RegExp(`^${escaped}$`, 's').test(value)
+}
+
+function scalarPermissionInput(value: unknown): string | null {
+  if (value === undefined || value === null || typeof value === 'object') {
+    return null
+  }
+  return String(value)
+}
+
+/**
+ * Claude Code 2.1.221 input-parameter rule syntax: `Tool(field:glob)`.
+ * CLI narrowing rules do not proxy through legacy tool aliases.
+ */
+export function getInputParamRule(
+  context: ToolPermissionContext,
+  tool: Pick<Tool, 'name' | 'aliases' | 'mcpInfo' | 'ruleContentField'>,
+  input: { [key: string]: unknown },
+  behavior: PermissionBehavior,
+): PermissionRule | null {
+  const canonicalName = getToolNameForPermissionCheck(tool)
+  const names = [canonicalName, ...(tool.aliases ?? [])]
+  for (const name of names) {
+    for (const [content, rule] of getRuleByContentsForToolName(
+      context,
+      name,
+      behavior,
+    )) {
+      if (name !== canonicalName && rule.source === 'cliArg') continue
+      const separator = content.indexOf(':')
+      if (separator <= 0) continue
+      const field = content.slice(0, separator).trim()
+      const pattern = content.slice(separator + 1).trim()
+      if (!field || !pattern || field === tool.ruleContentField) continue
+      if (!Object.hasOwn(input, field)) continue
+      const value = scalarPermissionInput(input[field])
+      if (value === null) continue
+      if (wildcardPermissionValueMatches(pattern, value.trim())) return rule
+    }
+  }
+  return null
+}
+
+function containsExplicitAskRule(
+  reason: PermissionDecisionReason | undefined,
+): boolean {
+  if (!reason) return false
+  if (reason.type === 'rule') return reason.rule.ruleBehavior === 'ask'
+  if (reason.type === 'subcommandResults') {
+    for (const result of reason.reasons.values()) {
+      if (
+        result.behavior === 'ask' &&
+        containsExplicitAskRule(result.decisionReason)
+      ) {
+        return true
+      }
+    }
+  }
+  return false
+}
+
 /**
  * Runs PermissionRequest hooks for headless/async agents that cannot show
  * permission prompts. This gives hooks an opportunity to allow or deny
@@ -544,6 +610,16 @@ export const hasPermissionsToUseTool: CanUseToolFn = async (
             },
           }
         }
+        return result
+      }
+      // Explicit ask rules and the plan-mode write floor remain interactive;
+      // Claude Code 2.1.221 never sends either through the Auto classifier.
+      if (
+        result.matchedAskRule?.ruleBehavior === 'ask' ||
+        containsExplicitAskRule(result.decisionReason) ||
+        (result.decisionReason?.type === 'mode' &&
+          result.decisionReason.mode === 'plan')
+      ) {
         return result
       }
       if (tool.requiresUserInteraction?.() && result.behavior === 'ask') {
@@ -1088,8 +1164,23 @@ export async function checkRuleBasedPermissions(
     }
   }
 
+  const inputDenyRule = getInputParamRule(
+    appState.toolPermissionContext,
+    tool,
+    input,
+    'deny',
+  )
+  if (inputDenyRule) {
+    return {
+      behavior: 'deny',
+      decisionReason: { type: 'rule', rule: inputDenyRule },
+      message: `Permission to use ${tool.name} has been denied.`,
+    }
+  }
+
   // 1b. Entire tool has an ask rule
   const askRule = getAskRuleForTool(appState.toolPermissionContext, tool)
+  let wholeToolAskRule: PermissionRule | null = null
   if (askRule) {
     const canSandboxAutoAllow =
       tool.name === BASH_TOOL_NAME &&
@@ -1098,14 +1189,7 @@ export async function checkRuleBasedPermissions(
       shouldUseSandbox(input)
 
     if (!canSandboxAutoAllow) {
-      return {
-        behavior: 'ask',
-        decisionReason: {
-          type: 'rule',
-          rule: askRule,
-        },
-        message: createPermissionRequestMessage(tool.name),
-      }
+      wholeToolAskRule = askRule
     }
     // Fall through to let tool.checkPermissions handle command-specific rules
   }
@@ -1129,6 +1213,24 @@ export async function checkRuleBasedPermissions(
   // in subcommandResults — no need to inspect decisionReason.type)
   if (toolPermissionResult?.behavior === 'deny') {
     return toolPermissionResult
+  }
+
+  const inputAskRule = getInputParamRule(
+    appState.toolPermissionContext,
+    tool,
+    input,
+    'ask',
+  )
+  const effectiveAskRule = wholeToolAskRule ?? inputAskRule
+  if (effectiveAskRule) {
+    if (toolPermissionResult?.behavior === 'ask') {
+      return { ...toolPermissionResult, matchedAskRule: effectiveAskRule }
+    }
+    return {
+      behavior: 'ask',
+      decisionReason: { type: 'rule', rule: effectiveAskRule },
+      message: createPermissionRequestMessage(tool.name),
+    }
   }
 
   // 1f. Content-specific ask rules from tool.checkPermissions
@@ -1180,8 +1282,23 @@ async function hasPermissionsToUseToolInner(
     }
   }
 
+  const inputDenyRule = getInputParamRule(
+    appState.toolPermissionContext,
+    tool,
+    input,
+    'deny',
+  )
+  if (inputDenyRule) {
+    return {
+      behavior: 'deny',
+      decisionReason: { type: 'rule', rule: inputDenyRule },
+      message: `Permission to use ${tool.name} has been denied.`,
+    }
+  }
+
   // 1b. Check if the entire tool should always ask for permission
   const askRule = getAskRuleForTool(appState.toolPermissionContext, tool)
+  let wholeToolAskRule: PermissionRule | null = null
   if (askRule) {
     // When autoAllowBashIfSandboxed is on, sandboxed commands skip the ask rule and
     // auto-allow via Bash's checkPermissions. Commands that won't be sandboxed (excluded
@@ -1193,14 +1310,7 @@ async function hasPermissionsToUseToolInner(
       shouldUseSandbox(input)
 
     if (!canSandboxAutoAllow) {
-      return {
-        behavior: 'ask',
-        decisionReason: {
-          type: 'rule',
-          rule: askRule,
-        },
-        message: createPermissionRequestMessage(tool.name),
-      }
+      wholeToolAskRule = askRule
     }
     // Fall through to let Bash's checkPermissions handle command-specific rules
   }
@@ -1227,6 +1337,24 @@ async function hasPermissionsToUseToolInner(
     return toolPermissionResult
   }
 
+  const inputAskRule = getInputParamRule(
+    appState.toolPermissionContext,
+    tool,
+    input,
+    'ask',
+  )
+  const effectiveAskRule = wholeToolAskRule ?? inputAskRule
+  if (effectiveAskRule) {
+    if (toolPermissionResult?.behavior === 'ask') {
+      return { ...toolPermissionResult, matchedAskRule: effectiveAskRule }
+    }
+    return {
+      behavior: 'ask',
+      decisionReason: { type: 'rule', rule: effectiveAskRule },
+      message: createPermissionRequestMessage(tool.name),
+    }
+  }
+
   // 1e. Tool requires user interaction even in bypass mode
   if (
     tool.requiresUserInteraction?.() &&
@@ -1249,16 +1377,6 @@ async function hasPermissionsToUseToolInner(
     return toolPermissionResult
   }
 
-  // 1g. Safety checks (e.g. .git/, .claude/, .vscode/, shell configs) are
-  // bypass-immune — they must prompt even in bypassPermissions mode.
-  // checkPathSafetyForAutoEdit returns {type:'safetyCheck'} for these paths.
-  if (
-    toolPermissionResult?.behavior === 'ask' &&
-    toolPermissionResult.decisionReason?.type === 'safetyCheck'
-  ) {
-    return toolPermissionResult
-  }
-
   // 2a. Check if mode allows the tool to run
   // IMPORTANT: Call getAppState() to get the latest value
   appState = context.getAppState()
@@ -1269,6 +1387,24 @@ async function hasPermissionsToUseToolInner(
     appState.toolPermissionContext.mode === 'bypassPermissions' ||
     (appState.toolPermissionContext.mode === 'plan' &&
       appState.toolPermissionContext.isBypassPermissionsModeAvailable)
+  if (
+    toolPermissionResult?.behavior === 'ask' &&
+    toolPermissionResult.decisionReason?.type === 'safetyCheck' &&
+    (!shouldBypassPermissions ||
+      toolPermissionResult.decisionReason.circuitBreaker ===
+        'dangerousRemoval')
+  ) {
+    return toolPermissionResult
+  }
+  if (
+    toolPermissionResult?.behavior === 'ask' &&
+    !shouldBypassPermissions &&
+    (toolPermissionResult.decisionReason?.type === 'sandboxOverride' ||
+      (toolPermissionResult.decisionReason?.type === 'mode' &&
+        toolPermissionResult.decisionReason.mode === 'plan'))
+  ) {
+    return toolPermissionResult
+  }
   if (shouldBypassPermissions) {
     return {
       behavior: 'allow',

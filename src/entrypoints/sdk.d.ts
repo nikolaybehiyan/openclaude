@@ -306,7 +306,12 @@ export type {
 
 export type QueryPermissionMode =
   | 'default'
+  | 'acceptEdits'
+  | 'auto'
+  | 'bypassPermissions'
+  | 'dontAsk'
   | 'plan'
+  // Legacy Agent SDK spellings remain accepted for compatibility.
   | 'auto-accept'
   | 'bypass-permissions'
   | 'bypassPermissions'

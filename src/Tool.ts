@@ -385,6 +385,12 @@ export type Tool<
    */
   aliases?: string[]
   /**
+   * Input field represented by the legacy positional `Tool(value)` rule.
+   * Claude Code 2.1.221 excludes this field from the newer
+   * `Tool(field:glob)` input-parameter rule matcher.
+   */
+  ruleContentField?: string
+  /**
    * One-line capability phrase used by ToolSearch for keyword matching.
    * Helps the model find this tool via keyword search when it's deferred.
    * 3–10 words, no trailing period.

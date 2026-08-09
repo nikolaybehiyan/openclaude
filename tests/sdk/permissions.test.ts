@@ -8,6 +8,13 @@ import {
 } from '../../src/entrypoints/sdk/permissions.js'
 import { getEmptyToolPermissionContext } from '../../src/Tool.js'
 import { filterToolsByDenyRules } from '../../src/tools.js'
+import {
+  getNextPermissionMode,
+} from '../../src/utils/permissions/getNextPermissionMode.js'
+import {
+  permissionModeFromString,
+  permissionModeTitle,
+} from '../../src/utils/permissions/PermissionMode.js'
 
 const askFallback = async () => ({
   behavior: 'ask' as const,
@@ -19,6 +26,21 @@ function permissionTestContext() {
   return {
     abortController: new AbortController(),
     getAppState: () => ({ toolPermissionContext }),
+  } as any
+}
+
+function permissionTestContextWith(
+  mode: 'default' | 'acceptEdits' | 'auto' | 'bypassPermissions' | 'dontAsk' | 'plan',
+  update?: (context: ReturnType<typeof getEmptyToolPermissionContext>) => void,
+) {
+  const toolPermissionContext = getEmptyToolPermissionContext()
+  toolPermissionContext.mode = mode
+  update?.(toolPermissionContext)
+  const state = { toolPermissionContext }
+  return {
+    abortController: new AbortController(),
+    getAppState: () => state,
+    setAppState: () => {},
   } as any
 }
 
@@ -49,6 +71,16 @@ describe('buildPermissionContext', () => {
   test('maps acceptEdits mode', () => {
     const ctx = buildPermissionContext({ cwd: '/tmp', permissionMode: 'acceptEdits' })
     expect(ctx.mode).toBe('acceptEdits')
+  })
+
+  test('maps auto mode without collapsing it to default', () => {
+    const ctx = buildPermissionContext({ cwd: '/tmp', permissionMode: 'auto' })
+    expect(ctx.mode).toBe('auto')
+  })
+
+  test('maps dontAsk mode without collapsing it to default', () => {
+    const ctx = buildPermissionContext({ cwd: '/tmp', permissionMode: 'dontAsk' })
+    expect(ctx.mode).toBe('dontAsk')
   })
 
   test('maps bypass-permissions mode', () => {
@@ -98,6 +130,90 @@ describe('buildPermissionContext', () => {
   test('disallowedTools defaults to empty array', () => {
     const ctx = buildPermissionContext({ cwd: '/tmp' })
     expect(ctx.alwaysDenyRules.cliArg).toEqual([])
+  })
+})
+
+describe('Claude Code 2.1.221 permission mode vocabulary and cycle', () => {
+  test('manual is an alias of canonical default', () => {
+    expect(permissionModeFromString('manual')).toBe('default')
+    expect(permissionModeTitle('default')).toBe('Manual')
+  })
+
+  test('cycles Manual → Accept edits → Plan → Bypass → Manual when bypass is available', () => {
+    const context = getEmptyToolPermissionContext()
+    context.isBypassPermissionsModeAvailable = true
+    expect(getNextPermissionMode(context)).toBe('acceptEdits')
+    context.mode = 'acceptEdits'
+    expect(getNextPermissionMode(context)).toBe('plan')
+    context.mode = 'plan'
+    expect(getNextPermissionMode(context)).toBe('bypassPermissions')
+    context.mode = 'bypassPermissions'
+    expect(getNextPermissionMode(context)).toBe('default')
+  })
+})
+
+describe('Claude Code 2.1.221 permission decisions', () => {
+  const canUseTool = createDefaultCanUseTool(getEmptyToolPermissionContext())
+
+  test('Manual asks and Don’t Ask converts the same decision to deny', async () => {
+    const tool = testTool({ behavior: 'ask' as const, message: 'approval needed' })
+    const manual = await canUseTool(
+      tool,
+      {},
+      permissionTestContextWith('default'),
+      {} as any,
+      'manual',
+      undefined,
+    )
+    const dontAsk = await canUseTool(
+      tool,
+      {},
+      permissionTestContextWith('dontAsk'),
+      {} as any,
+      'dont-ask',
+      undefined,
+    )
+    expect(manual.behavior).toBe('ask')
+    expect(dontAsk.behavior).toBe('deny')
+  })
+
+  test('Bypass allows ordinary safety prompts but keeps dangerous removal fenced', async () => {
+    const ordinary = testTool({
+      behavior: 'ask' as const,
+      message: 'protected path',
+      decisionReason: {
+        type: 'safetyCheck' as const,
+        reason: 'protected path',
+        classifierApprovable: false,
+      },
+    })
+    const dangerousRemoval = testTool({
+      behavior: 'ask' as const,
+      message: 'dangerous removal',
+      decisionReason: {
+        type: 'safetyCheck' as const,
+        reason: 'dangerous removal',
+        classifierApprovable: false,
+        circuitBreaker: 'dangerousRemoval',
+      },
+    })
+    const context = permissionTestContextWith('bypassPermissions')
+    expect((await canUseTool(ordinary, {}, context, {} as any, 'ordinary', undefined)).behavior).toBe('allow')
+    expect((await canUseTool(dangerousRemoval, {}, context, {} as any, 'dangerous', undefined)).behavior).toBe('ask')
+  })
+
+  test('Bypass still honors explicit deny, ask, and field-glob rules', async () => {
+    const tool = testTool({ behavior: 'passthrough' as const, message: 'approval needed' })
+    tool.ruleContentField = 'command'
+
+    const denied = permissionTestContextWith('bypassPermissions', context => {
+      context.alwaysDenyRules.userSettings = ['TestTool(scope:prod*)']
+    })
+    const asked = permissionTestContextWith('bypassPermissions', context => {
+      context.alwaysAskRules.userSettings = ['TestTool(scope:prod*)']
+    })
+    expect((await canUseTool(tool, { scope: 'production' }, denied, {} as any, 'deny', undefined)).behavior).toBe('deny')
+    expect((await canUseTool(tool, { scope: 'production' }, asked, {} as any, 'ask', undefined)).behavior).toBe('ask')
   })
 })
 

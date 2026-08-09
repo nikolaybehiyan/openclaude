@@ -1113,7 +1113,7 @@ async function run(): Promise<CommanderCommand> {
     } = options;
     // Claude Code 2.1.221 calls the interactive prompt mode `manual` on the
     // CLI. Internally and in the Agent SDK the same mode remains `default`.
-    const permissionModeCli = permissionModeCliRaw === 'manual'
+    const permissionModeCli = (permissionModeCliRaw as string | undefined) === 'manual'
       ? 'default'
       : permissionModeCliRaw;
     if (options.prefill) {
@@ -3809,12 +3809,11 @@ async function run(): Promise<CommanderCommand> {
     }
   }).version(`${MACRO.DISPLAY_VERSION ?? MACRO.VERSION} (OpenClaude)`, '-v, --version', 'Output the version number');
 
-  // The CLI vocabulary changed from `default` to `manual` in Claude Code
-  // 2.1.221. Keep the internal/SDK PermissionMode as `default`, but expose the
-  // authoritative Desktop-spawned argv contract here.
+  // Claude Code 2.1.221 accepts both the canonical `default` spelling and the
+  // `manual` CLI alias. Internally and in the Agent SDK they are the same mode.
   program.options
     .find(option => option.long === '--permission-mode')
-    ?.choices(['acceptEdits', 'auto', 'bypassPermissions', 'manual', 'dontAsk', 'plan']);
+    ?.choices([...PERMISSION_MODES, 'manual']);
 
   // Worktree flags
   program.option('-w, --worktree [name]', 'Create a new git worktree for this session (optionally specify a name)');

@@ -359,16 +359,18 @@ export const SeverityNumber = {};
           }),
         )
 
-        // Resolve .md and .txt file imports to empty string stubs
+        // Auto-mode classifier prompts are executable security policy. Keep
+        // their exact Claude Code text in the compiled CLI instead of silently
+        // replacing it with an empty string.
         build.onResolve({ filter: /\.(md|txt)$/ }, (args) => ({
-          path: args.path,
-          namespace: 'text-stub',
+          path: require('path').resolve(args.resolveDir, args.path),
+          namespace: 'text-file',
         }))
         build.onLoad(
-          { filter: /.*/, namespace: 'text-stub' },
-          () => ({
-            contents: `export default '';`,
-            loader: 'js',
+          { filter: /.*/, namespace: 'text-file' },
+          async (args) => ({
+            contents: await require('fs').promises.readFile(args.path, 'utf8'),
+            loader: 'text',
           }),
         )
 
@@ -730,16 +732,17 @@ export const Fragment = null;
           loader: 'js',
         }))
 
-        // Resolve .md and .txt file imports (used by yolo-classifier etc.) to empty string stubs
+        // Preserve classifier prompt assets in the SDK bundle too. Persistent
+        // SDK sessions can run the same permission classifier as the CLI.
         build.onResolve({ filter: /\.(md|txt)$/, namespace: 'file' }, (args) => ({
-          path: args.path,
-          namespace: 'sdk-text-stub',
+          path: require('path').resolve(args.resolveDir, args.path),
+          namespace: 'sdk-text-file',
         }))
         build.onLoad(
-          { filter: /.*/, namespace: 'sdk-text-stub' },
-          () => ({
-            contents: `export default '';`,
-            loader: 'js',
+          { filter: /.*/, namespace: 'sdk-text-file' },
+          async (args) => ({
+            contents: await require('fs').promises.readFile(args.path, 'utf8'),
+            loader: 'text',
           }),
         )
 
