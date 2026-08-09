@@ -18,6 +18,7 @@ import { createStore, type Store } from '../../state/store.js'
 import { getTools, getToolsForDefaultPreset } from '../../tools.js'
 import { createFileStateCacheWithSizeLimit } from '../../utils/fileStateCache.js'
 import type { ThinkingConfig } from '../../utils/thinking.js'
+import { isEffortLevel, type EffortLevel } from '../../utils/effort.js'
 import { init } from '../init.js'
 import {
   canonicalizePath,
@@ -188,6 +189,8 @@ export type SDKSessionOptions = {
   appendSystemPrompt?: string
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
+  /** Session-scoped model effort selected by a managed host. */
+  effort?: EffortLevel
   /** Override max output tokens for the model request. */
   maxOutputTokens?: number
   /** Override request temperature when the API layer permits it. */
@@ -266,6 +269,7 @@ export type SDKSessionUpdateOptions = Pick<
   | 'allowedTools'
   | 'disallowedTools'
   | 'thinkingConfig'
+  | 'effort'
   | '_runtimeExtensions'
 >
 
@@ -555,6 +559,15 @@ class SDKSessionImpl implements SDKSession {
         }))
         this.engine.setThinkingConfig(thinkingConfig)
       }
+    }
+
+    if (hasOwn(options, 'effort')) {
+      const effort = normalizeEffortLevel(options.effort, 'SDKSession.updateOptions.effort')
+      nextOptions.effort = effort
+      this.appStateStore.setState(prev => ({
+        ...prev,
+        effortValue: effort,
+      }))
     }
 
     for (const key of ['permissionMode', 'additionalDirectories', 'tools', 'allowedTools', 'disallowedTools'] as const) {
@@ -1600,6 +1613,16 @@ function normalizeThinkingConfig(value: unknown): ThinkingConfig | undefined {
   throw new Error('SDKSession.updateOptions.thinkingConfig.type must be adaptive, enabled, or disabled')
 }
 
+function normalizeEffortLevel(value: unknown, name: string): EffortLevel | undefined {
+  if (value === undefined || value === null) {
+    return undefined
+  }
+  if (typeof value !== 'string' || !isEffortLevel(value)) {
+    throw new Error(`${name} must be low, medium, high, xhigh, or max`)
+  }
+  return value
+}
+
 function mergeRuntimeTools(
   builtinTools: readonly Tool[],
   mcpTools: readonly Tool[],
@@ -1695,6 +1718,9 @@ function createEngineFromOptions(
   if (model) {
     stateWithPermissions.mainLoopModel = model
     stateWithPermissions.mainLoopModelForSession = model
+  }
+  if (options.effort !== undefined) {
+    stateWithPermissions.effortValue = normalizeEffortLevel(options.effort, 'SDKSessionOptions.effort')
   }
   const appStateStore = createStore<AppState>(stateWithPermissions)
   registerSDKSessionFunctionHooks(options, appStateStore, sessionId)

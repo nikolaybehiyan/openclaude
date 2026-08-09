@@ -106,6 +106,28 @@ describe('V2: session creation', () => {
     expect((session as any)._engine?.config?.thinkingConfig).toEqual({ type: 'disabled' })
   })
 
+  test('createSession() and updateOptions() apply managed effort to live model state', () => {
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(),
+      effort: 'medium',
+    })
+
+    expect((session as any)._appStateStore.getState().effortValue).toBe('medium')
+
+    session.updateOptions({ effort: 'max' })
+    expect((session as any)._appStateStore.getState().effortValue).toBe('max')
+
+    session.updateOptions({ effort: undefined })
+    expect((session as any)._appStateStore.getState().effortValue).toBeUndefined()
+  })
+
+  test('createSession() rejects invalid managed effort', () => {
+    expect(() => unstable_v2_createSession({
+      cwd: process.cwd(),
+      effort: 'turbo' as any,
+    })).toThrow('SDKSessionOptions.effort must be low, medium, high, xhigh, or max')
+  })
+
   test('updateOptions() applies live model, thinking, and permission options without replacing history', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),
