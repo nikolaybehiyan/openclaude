@@ -67,6 +67,50 @@ describe('prefetchOfficialMcpUrls', () => {
     await prefetchOfficialMcpUrls()
 
     expect(getSpy).toHaveBeenCalledTimes(1)
+    expect(getSpy.mock.calls[0]?.[0]).toBe(
+      'https://api.anthropic.com/mcp-registry/v0/servers?version=latest&limit=100&visibility=commercial%2Cgsuite%2Centerprise%2Chealth',
+    )
     expect(isOfficialMcpUrl('https://example.com/mcp')).toBe(true)
+  })
+
+  test('loads every registry page using the current Claude Code cursor contract', async () => {
+    delete process.env.CLAUDE_CODE_USE_OPENAI
+    delete process.env.CLAUDE_CODE_USE_GEMINI
+    delete process.env.CLAUDE_CODE_USE_GITHUB
+
+    mock.module('../../utils/model/providers.js', () => ({
+      getAPIProvider: () => 'firstParty',
+    }))
+    const getSpy = mock((url: string) => {
+      if (url.includes('cursor=page-2')) {
+        return Promise.resolve({
+          data: {
+            servers: [
+              { server: { remotes: [{ url: 'https://second.example/mcp' }] } },
+            ],
+            metadata: {},
+          },
+        })
+      }
+      return Promise.resolve({
+        data: {
+          servers: [
+            { server: { remotes: [{ url: 'https://first.example/mcp' }] } },
+          ],
+          metadata: { nextCursor: 'page-2' },
+        },
+      })
+    })
+    axios.get = getSpy as typeof axios.get
+
+    const { prefetchOfficialMcpUrls, isOfficialMcpUrl } = await importFreshModule()
+    await prefetchOfficialMcpUrls()
+
+    expect(getSpy).toHaveBeenCalledTimes(2)
+    expect(getSpy.mock.calls[1]?.[0]).toContain(
+      'visibility=commercial%2Cgsuite%2Centerprise%2Chealth&cursor=page-2',
+    )
+    expect(isOfficialMcpUrl('https://first.example/mcp')).toBe(true)
+    expect(isOfficialMcpUrl('https://second.example/mcp')).toBe(true)
   })
 })

@@ -11,7 +11,15 @@ type RegistryServer = {
 
 type RegistryResponse = {
   servers: RegistryServer[]
+  metadata?: {
+    nextCursor?: string
+  }
 }
+
+const officialRegistryURL =
+  'https://api.anthropic.com/mcp-registry/v0/servers'
+const officialRegistryVisibility =
+  'commercial,gsuite,enterprise,health'
 
 // URLs stripped of query string and trailing slash — matches the normalization
 // done by getLoggingSafeMcpBaseUrl so direct Set.has() lookup works.
@@ -42,20 +50,41 @@ export async function prefetchOfficialMcpUrls(): Promise<void> {
   }
 
   try {
-    const response = await axios.get<RegistryResponse>(
-      'https://api.anthropic.com/mcp-registry/v0/servers?version=latest&visibility=commercial',
-      { timeout: 5000 },
-    )
-
     const urls = new Set<string>()
-    for (const entry of response.data.servers) {
-      for (const remote of entry.server.remotes ?? []) {
-        const normalized = normalizeUrl(remote.url)
-        if (normalized) {
-          urls.add(normalized)
+    const seenCursors = new Set<string>()
+    let cursor: string | undefined
+    do {
+      const query = new URLSearchParams({
+        version: 'latest',
+        limit: '100',
+        visibility: officialRegistryVisibility,
+      })
+      if (cursor) {
+        query.set('cursor', cursor)
+      }
+      const response = await axios.get<RegistryResponse>(
+        `${officialRegistryURL}?${query.toString()}`,
+        { timeout: 5000 },
+      )
+
+      for (const entry of response.data.servers) {
+        for (const remote of entry.server.remotes ?? []) {
+          const normalized = normalizeUrl(remote.url)
+          if (normalized) {
+            urls.add(normalized)
+          }
         }
       }
-    }
+
+      cursor = response.data.metadata?.nextCursor?.trim() || undefined
+      if (cursor && seenCursors.has(cursor)) {
+        throw new Error('MCP registry returned a repeated pagination cursor')
+      }
+      if (cursor) {
+        seenCursors.add(cursor)
+      }
+    } while (cursor)
+
     officialUrls = urls
     logForDebugging(`[mcp-registry] Loaded ${urls.size} official MCP URLs`)
   } catch (error) {
