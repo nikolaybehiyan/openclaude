@@ -24,6 +24,7 @@ import {
   is1PEventLoggingEnabled,
   logGrowthBookExperimentTo1P,
 } from './firstPartyEventLogger.js'
+import { resolveGrowthBookTransport } from './growthbookTransport.js'
 
 /**
  * User attributes sent to GrowthBook for targeting.
@@ -500,10 +501,7 @@ const getGrowthBookClient = memoize(
         `GrowthBook: Creating client with clientKey=${clientKey}, attributes: ${jsonStringify(attributes)}`,
       )
     }
-    const baseUrl =
-      process.env.USER_TYPE === 'ant'
-        ? process.env.CLAUDE_CODE_GB_BASE_URL || 'https://api.anthropic.com/'
-        : 'https://api.anthropic.com/'
+    const transport = resolveGrowthBookTransport()
 
     // Skip auth if trust hasn't been established yet
     // This prevents executing apiKeyHelper commands before the trust dialog
@@ -515,23 +513,25 @@ const getGrowthBookClient = memoize(
       checkHasTrustDialogAccepted() ||
       getSessionTrustAccepted() ||
       getIsNonInteractiveSession()
-    const authHeaders = hasTrust
-      ? getAuthHeaders()
-      : { headers: {}, error: 'trust not established' }
-    const hasAuth = !authHeaders.error
-    clientCreatedWithAuth = hasAuth
+    const authHeaders = transport.requiresAnthropicAuth
+      ? hasTrust
+        ? getAuthHeaders()
+        : { headers: {}, error: 'trust not established' }
+      : { headers: {}, error: undefined }
+    const canInitialize = !authHeaders.error
+    clientCreatedWithAuth = canInitialize
 
     // Capture in local variable so the init callback operates on THIS client,
     // not a later client if reinitialization happens before init completes
     const thisClient = new GrowthBook({
-      apiHost: baseUrl,
+      apiHost: transport.apiHost,
       clientKey,
       attributes,
       remoteEval: true,
       // Re-fetch when user ID or org changes (org change = login to different org)
       cacheKeyAttributes: ['id', 'organizationUUID'],
       // Add auth headers if available
-      ...(authHeaders.error
+      ...(!transport.requiresAnthropicAuth || authHeaders.error
         ? {}
         : { apiHostRequestHeaders: authHeaders.headers }),
       // Debug logging for Ants
@@ -545,7 +545,7 @@ const getGrowthBookClient = memoize(
     })
     client = thisClient
 
-    if (!hasAuth) {
+    if (!canInitialize) {
       // No auth available yet — skip HTTP init, rely on disk-cached values.
       // initializeGrowthBook() will reset and re-create with auth when available.
       return { client: thisClient, initialized: Promise.resolve() }
