@@ -29,6 +29,7 @@ export type ModelCosts = {
   inputTokens: number
   outputTokens: number
   promptCacheWriteTokens: number
+  promptCacheWrite1hTokens: number
   promptCacheReadTokens: number
   webSearchRequests: number
 }
@@ -38,6 +39,7 @@ export const COST_TIER_3_15 = {
   inputTokens: 3,
   outputTokens: 15,
   promptCacheWriteTokens: 3.75,
+  promptCacheWrite1hTokens: 6,
   promptCacheReadTokens: 0.3,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -47,6 +49,7 @@ export const COST_TIER_15_75 = {
   inputTokens: 15,
   outputTokens: 75,
   promptCacheWriteTokens: 18.75,
+  promptCacheWrite1hTokens: 30,
   promptCacheReadTokens: 1.5,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -56,6 +59,7 @@ export const COST_TIER_5_25 = {
   inputTokens: 5,
   outputTokens: 25,
   promptCacheWriteTokens: 6.25,
+  promptCacheWrite1hTokens: 10,
   promptCacheReadTokens: 0.5,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -67,6 +71,7 @@ export const COST_TIER_2_10 = {
   inputTokens: 2,
   outputTokens: 10,
   promptCacheWriteTokens: 2.5,
+  promptCacheWrite1hTokens: 4,
   promptCacheReadTokens: 0.2,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -76,6 +81,7 @@ export const COST_TIER_10_50 = {
   inputTokens: 10,
   outputTokens: 50,
   promptCacheWriteTokens: 12.5,
+  promptCacheWrite1hTokens: 20,
   promptCacheReadTokens: 1,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -85,6 +91,7 @@ export const COST_HAIKU_35 = {
   inputTokens: 0.8,
   outputTokens: 4,
   promptCacheWriteTokens: 1,
+  promptCacheWrite1hTokens: 1.6,
   promptCacheReadTokens: 0.08,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -94,6 +101,7 @@ export const COST_HAIKU_45 = {
   inputTokens: 1,
   outputTokens: 5,
   promptCacheWriteTokens: 1.25,
+  promptCacheWrite1hTokens: 2,
   promptCacheReadTokens: 0.1,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
@@ -151,13 +159,32 @@ export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
  * Calculates the USD cost based on token usage and model cost configuration
  */
 function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
+  const cacheCreation = (
+    usage as Usage & {
+      cache_creation?: {
+        ephemeral_1h_input_tokens?: number
+        ephemeral_5m_input_tokens?: number
+      }
+    }
+  ).cache_creation
+  const oneHourCacheWriteTokens = Math.max(
+    0,
+    cacheCreation?.ephemeral_1h_input_tokens ?? 0,
+  )
+  const fiveMinuteCacheWriteTokens = Math.max(
+    0,
+    cacheCreation?.ephemeral_5m_input_tokens ??
+      (usage.cache_creation_input_tokens ?? 0) - oneHourCacheWriteTokens,
+  )
   return (
     (usage.input_tokens / 1_000_000) * modelCosts.inputTokens +
     (usage.output_tokens / 1_000_000) * modelCosts.outputTokens +
     ((usage.cache_read_input_tokens ?? 0) / 1_000_000) *
       modelCosts.promptCacheReadTokens +
-    ((usage.cache_creation_input_tokens ?? 0) / 1_000_000) *
+    (fiveMinuteCacheWriteTokens / 1_000_000) *
       modelCosts.promptCacheWriteTokens +
+    (oneHourCacheWriteTokens / 1_000_000) *
+      modelCosts.promptCacheWrite1hTokens +
     (usage.server_tool_use?.web_search_requests ?? 0) *
       modelCosts.webSearchRequests
   )

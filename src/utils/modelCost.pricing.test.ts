@@ -32,4 +32,18 @@ describe('current first-party model pricing', () => {
   test('Opus 4.6 fast-shaped usage stays on standard pricing', () => {
     expect(getOpus46CostTier(true)).toBe(COST_TIER_5_25)
   })
+
+  test('uses the separately reported one-hour cache-write tier', () => {
+    expect(
+      calculateUSDCost('claude-sonnet-5', {
+        ...oneMillionInput,
+        input_tokens: 0,
+        cache_creation_input_tokens: 1_000_000,
+        cache_creation: {
+          ephemeral_1h_input_tokens: 1_000_000,
+          ephemeral_5m_input_tokens: 0,
+        },
+      } as never),
+    ).toBe(4)
+  })
 })
