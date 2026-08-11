@@ -33,6 +33,15 @@ describe('current first-party model pricing', () => {
     expect(getOpus46CostTier(true)).toBe(COST_TIER_5_25)
   })
 
+  test('pinned CLI 2.1.211 Opus 4.7 fast usage uses the premium tier', () => {
+    expect(
+      getModelCosts('claude-opus-4-7', {
+        ...oneMillionInput,
+        speed: 'fast',
+      } as never),
+    ).toBe(COST_TIER_10_50)
+  })
+
   test('uses the separately reported one-hour cache-write tier', () => {
     expect(
       calculateUSDCost('claude-sonnet-5', {

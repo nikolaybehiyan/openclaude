@@ -108,7 +108,7 @@ export const COST_HAIKU_45 = {
 
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
-/** Get the official premium tier for Opus 5/4.8 fast mode. */
+/** Get the official premium tier for fast-capable Opus models. */
 export function getOpusFastCostTier(fastMode: boolean): ModelCosts {
   if (isFastModeEnabled() && fastMode) {
     return COST_TIER_10_50
@@ -193,7 +193,11 @@ function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const shortName = getCanonicalName(model)
 
-  if (shortName === 'claude-opus-5' || shortName === 'claude-opus-4-8') {
+  if (
+    shortName === 'claude-opus-5' ||
+    shortName === 'claude-opus-4-8' ||
+    shortName === 'claude-opus-4-7'
+  ) {
     const isFastMode = usage.speed === 'fast'
     return getOpusFastCostTier(isFastMode)
   }
