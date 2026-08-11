@@ -60,12 +60,23 @@ export const COST_TIER_5_25 = {
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
-// Fast mode pricing for Opus 4.6: $30 input / $150 output per Mtok
-export const COST_TIER_30_150 = {
-  inputTokens: 30,
-  outputTokens: 150,
-  promptCacheWriteTokens: 37.5,
-  promptCacheReadTokens: 3,
+// Standard pricing for Sonnet 5: $2 input / $10 output per MTok.
+// Anthropic made the launch price permanent; the planned Sep 2026 increase
+// was cancelled.
+export const COST_TIER_2_10 = {
+  inputTokens: 2,
+  outputTokens: 10,
+  promptCacheWriteTokens: 2.5,
+  promptCacheReadTokens: 0.2,
+  webSearchRequests: 0.01,
+} as const satisfies ModelCosts
+
+// Standard pricing for Fable 5: $10 input / $50 output per MTok.
+export const COST_TIER_10_50 = {
+  inputTokens: 10,
+  outputTokens: 50,
+  promptCacheWriteTokens: 12.5,
+  promptCacheReadTokens: 1,
   webSearchRequests: 0.01,
 } as const satisfies ModelCosts
 
@@ -89,13 +100,17 @@ export const COST_HAIKU_45 = {
 
 const DEFAULT_UNKNOWN_MODEL_COST = COST_TIER_5_25
 
-/**
- * Get the cost tier for Opus 4.6 based on fast mode.
- */
-export function getOpus46CostTier(fastMode: boolean): ModelCosts {
+/** Get the official premium tier for Opus 5/4.8 fast mode. */
+export function getOpusFastCostTier(fastMode: boolean): ModelCosts {
   if (isFastModeEnabled() && fastMode) {
-    return COST_TIER_30_150
+    return COST_TIER_10_50
   }
+  return COST_TIER_5_25
+}
+
+// Compatibility export for older UI callers. Opus 4.6 no longer has premium
+// fast pricing: Anthropic documents it as standard-speed/standard-price.
+export function getOpus46CostTier(_fastMode: boolean): ModelCosts {
   return COST_TIER_5_25
 }
 
@@ -103,6 +118,10 @@ export function getOpus46CostTier(fastMode: boolean): ModelCosts {
 // Costs from https://platform.claude.com/docs/en/about-claude/pricing
 // Web search cost: $10 per 1000 requests = $0.01 per request
 export const MODEL_COSTS: Record<ModelShortName, ModelCosts> = {
+  'claude-fable-5': COST_TIER_10_50,
+  'claude-opus-5': COST_TIER_5_25,
+  'claude-opus-4-8': COST_TIER_5_25,
+  'claude-sonnet-5': COST_TIER_2_10,
   [firstPartyNameToCanonical(CLAUDE_3_5_HAIKU_CONFIG.firstParty)]:
     COST_HAIKU_35,
   [firstPartyNameToCanonical(CLAUDE_HAIKU_4_5_CONFIG.firstParty)]:
@@ -147,12 +166,9 @@ function tokensToUSDCost(modelCosts: ModelCosts, usage: Usage): number {
 export function getModelCosts(model: string, usage: Usage): ModelCosts {
   const shortName = getCanonicalName(model)
 
-  // Check if this is an Opus 4.6 model with fast mode active.
-  if (
-    shortName === firstPartyNameToCanonical(CLAUDE_OPUS_4_6_CONFIG.firstParty)
-  ) {
+  if (shortName === 'claude-opus-5' || shortName === 'claude-opus-4-8') {
     const isFastMode = usage.speed === 'fast'
-    return getOpus46CostTier(isFastMode)
+    return getOpusFastCostTier(isFastMode)
   }
 
   const costs = MODEL_COSTS[shortName]
