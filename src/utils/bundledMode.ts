@@ -9,14 +9,21 @@ export function isRunningWithBun(): boolean {
   return process.versions.bun !== undefined
 }
 
+type BunRuntimeIdentity = Pick<typeof Bun, 'embeddedFiles' | 'main'>
+
+export function isBundledBunRuntime(runtime: BunRuntimeIdentity): boolean {
+  return (
+    (Array.isArray(runtime.embeddedFiles) && runtime.embeddedFiles.length > 0) ||
+    runtime.main.startsWith('/$bunfs/')
+  )
+}
+
 /**
  * Detects if running as a Bun-compiled standalone executable.
- * This checks for embedded files which are present in compiled binaries.
+ * Compiled Bun programs execute their virtual entry point from /$bunfs/ even
+ * when they do not embed any additional asset files. Keep embeddedFiles as a
+ * compatible signal for older Bun releases and asset-bearing executables.
  */
 export function isInBundledMode(): boolean {
-  return (
-    typeof Bun !== 'undefined' &&
-    Array.isArray(Bun.embeddedFiles) &&
-    Bun.embeddedFiles.length > 0
-  )
+  return typeof Bun !== 'undefined' && isBundledBunRuntime(Bun)
 }
