@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { errorMessage } from '../../utils/errors.js'
 import { getAPIProvider } from '../../utils/model/providers.js'
@@ -16,10 +17,12 @@ type RegistryResponse = {
   }
 }
 
-const officialRegistryURL =
-  'https://api.anthropic.com/mcp-registry/v0/servers'
 const officialRegistryVisibility =
   'commercial,gsuite,enterprise,health'
+
+function officialRegistryURL(): string {
+  return `${getOauthConfig().BASE_API_URL}/mcp-registry/v0/servers`
+}
 
 // URLs stripped of query string and trailing slash — matches the normalization
 // done by getLoggingSafeMcpBaseUrl so direct Set.has() lookup works.
@@ -63,7 +66,7 @@ export async function prefetchOfficialMcpUrls(): Promise<void> {
         query.set('cursor', cursor)
       }
       const response = await axios.get<RegistryResponse>(
-        `${officialRegistryURL}?${query.toString()}`,
+        `${officialRegistryURL()}?${query.toString()}`,
         { timeout: 5000 },
       )
 

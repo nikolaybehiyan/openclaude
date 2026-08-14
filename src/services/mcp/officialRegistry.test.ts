@@ -73,6 +73,34 @@ describe('prefetchOfficialMcpUrls', () => {
     expect(isOfficialMcpUrl('https://example.com/mcp')).toBe(true)
   })
 
+  test('fetches the owned registry when a custom OAuth control plane is configured', async () => {
+    delete process.env.CLAUDE_CODE_USE_OPENAI
+    delete process.env.CLAUDE_CODE_USE_GEMINI
+    delete process.env.CLAUDE_CODE_USE_GITHUB
+    process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.darbmind.ru'
+
+    mock.module('../../utils/model/providers.js', () => ({
+      getAPIProvider: () => 'firstParty',
+    }))
+    const getSpy = mock(() =>
+      Promise.resolve({
+        data: {
+          servers: [{ server: { remotes: [{ url: 'https://owned.example/mcp' }] } }],
+        },
+      }),
+    )
+    axios.get = getSpy as typeof axios.get
+
+    const { prefetchOfficialMcpUrls, isOfficialMcpUrl } = await importFreshModule()
+    await prefetchOfficialMcpUrls()
+
+    expect(getSpy).toHaveBeenCalledTimes(1)
+    expect(getSpy.mock.calls[0]?.[0]).toBe(
+      'https://ai.darbmind.ru/mcp-registry/v0/servers?version=latest&limit=100&visibility=commercial%2Cgsuite%2Centerprise%2Chealth',
+    )
+    expect(isOfficialMcpUrl('https://owned.example/mcp')).toBe(true)
+  })
+
   test('loads every registry page using the current Claude Code cursor contract', async () => {
     delete process.env.CLAUDE_CODE_USE_OPENAI
     delete process.env.CLAUDE_CODE_USE_GEMINI
