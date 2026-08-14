@@ -1,7 +1,14 @@
 import { expect, test } from 'bun:test'
 import path from 'path'
 
-import { resolveRipgrepConfig, wrapRipgrepUnavailableError } from './ripgrep.js'
+import {
+  materializePackagedRipgrep,
+  resolveRipgrepConfig,
+  wrapRipgrepUnavailableError,
+} from './ripgrep.js'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs'
+import { tmpdir } from 'os'
+import { join } from 'path'
 
 const MOCK_BUILTIN_PATH = path.normalize(
   process.platform === 'win32'
@@ -23,6 +30,32 @@ test('falls back to system rg when @vscode/ripgrep cannot be resolved', () => {
     command: 'rg',
     args: [],
   })
+})
+
+test('prefers a target-specific packaged rg over compiled-runtime multicall', () => {
+  expect(
+    resolveRipgrepConfig({
+      userWantsSystemRipgrep: false,
+      bundledMode: true,
+      packagedCommand: '/tmp/openclaude/rg',
+      builtinCommand: null,
+      systemExecutablePath: 'rg',
+      processExecPath: '/tmp/openclaude/claude',
+    }),
+  ).toEqual({ mode: 'builtin', command: '/tmp/openclaude/rg', args: [] })
+})
+
+test('materializes an embedded target rg as an executable', () => {
+  const root = mkdtempSync(join(tmpdir(), 'openclaude-packaged-rg-test-'))
+  try {
+    const embedded = join(root, 'embedded-rg')
+    writeFileSync(embedded, 'target-ripgrep')
+    const executable = materializePackagedRipgrep(embedded, join(root, 'cache'))
+    expect(executable).not.toBeNull()
+    expect(readFileSync(executable!, 'utf8')).toBe('target-ripgrep')
+  } finally {
+    rmSync(root, { recursive: true, force: true })
+  }
 })
 
 test('uses builtin @vscode/ripgrep path when the package resolves', () => {

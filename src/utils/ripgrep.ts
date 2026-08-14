@@ -1,8 +1,17 @@
 import type { ChildProcess, ExecFileException } from 'child_process'
 import { execFile, spawn } from 'child_process'
-import { existsSync } from 'fs'
+import { createHash } from 'crypto'
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync,
+} from 'fs'
 import memoize from 'lodash-es/memoize.js'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import * as path from 'path'
 import { logEvent } from 'src/services/analytics/index.js'
 import { isInBundledMode } from './bundledMode.js'
@@ -22,6 +31,12 @@ type RipgrepConfig = {
 }
 
 type RipgrepErrorLike = Pick<NodeJS.ErrnoException, 'code' | 'message'>
+
+declare global {
+  // Release wrappers set this to a Bun-embedded, target-specific static rg.
+  // The normal Node runtime and native multicall Bun runtime leave it unset.
+  var __OPENCLAUDE_PACKAGED_RG__: string | undefined
+}
 
 function isErrnoException(error: unknown): error is NodeJS.ErrnoException {
   return error instanceof Error
@@ -51,6 +66,7 @@ function resolveBuiltinRgPath(): string | null {
 type ResolveRipgrepConfigArgs = {
   userWantsSystemRipgrep: boolean
   bundledMode: boolean
+  packagedCommand?: string | null
   builtinCommand: string | null
   systemExecutablePath: string
   processExecPath?: string
@@ -59,6 +75,7 @@ type ResolveRipgrepConfigArgs = {
 export function resolveRipgrepConfig({
   userWantsSystemRipgrep,
   bundledMode,
+  packagedCommand,
   builtinCommand,
   systemExecutablePath,
   processExecPath = process.execPath,
@@ -66,6 +83,10 @@ export function resolveRipgrepConfig({
   if (userWantsSystemRipgrep && systemExecutablePath !== 'rg') {
     // SECURITY: Use command name 'rg' instead of systemExecutablePath to prevent PATH hijacking
     return { mode: 'system', command: 'rg', args: [] }
+  }
+
+  if (packagedCommand) {
+    return { mode: 'builtin', command: packagedCommand, args: [] }
   }
 
   if (bundledMode) {
@@ -90,17 +111,46 @@ export function resolveRipgrepConfig({
   return { mode: 'system', command: 'rg', args: [] }
 }
 
+export function materializePackagedRipgrep(
+  embeddedPath: string | undefined,
+  root = path.join(tmpdir(), 'openclaude-packaged-tools'),
+): string | null {
+  if (!embeddedPath) return null
+  const payload = readFileSync(embeddedPath)
+  const digest = createHash('sha256').update(payload).digest('hex')
+  const directory = path.join(root, digest)
+  const executable = path.join(directory, process.platform === 'win32' ? 'rg.exe' : 'rg')
+  if (existsSync(executable) && statSync(executable).size === payload.length) {
+    return executable
+  }
+  mkdirSync(directory, { recursive: true, mode: 0o700 })
+  const temporary = `${executable}.partial-${process.pid}`
+  writeFileSync(temporary, payload, { mode: 0o755 })
+  chmodSync(temporary, 0o755)
+  try {
+    renameSync(temporary, executable)
+  } catch (error) {
+    if (!existsSync(executable)) throw error
+  }
+  chmodSync(executable, 0o755)
+  return executable
+}
+
 const getRipgrepConfig = memoize((): RipgrepConfig => {
   const userWantsSystemRipgrep = isEnvDefinedFalsy(
     process.env.USE_BUILTIN_RIPGREP,
   )
   const bundledMode = isInBundledMode()
+  const packagedCommand = materializePackagedRipgrep(
+    globalThis.__OPENCLAUDE_PACKAGED_RG__,
+  )
   const builtinCommand = resolveBuiltinRgPath()
   const { cmd: systemExecutablePath } = findExecutable('rg', [])
 
   return resolveRipgrepConfig({
     userWantsSystemRipgrep,
     bundledMode,
+    packagedCommand,
     builtinCommand,
     systemExecutablePath,
   })
