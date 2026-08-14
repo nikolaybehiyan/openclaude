@@ -31,6 +31,10 @@ import { sleep } from '../../utils/sleep.js'
 import { jsonStringify } from '../../utils/slowOperations.js'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
 import { isOAuthTokenExpired } from '../oauth/client.js'
+import {
+  hasHostManagedFirstPartyEventLogging,
+  resolveFirstPartyEventLoggingBaseUrl,
+} from './firstPartyEventLoggingTransport.js'
 import { stripProtoFields } from './index.js'
 import { type EventMetadata, to1PEventFormat } from './metadata.js'
 
@@ -111,17 +115,16 @@ export class FirstPartyEventLoggingExporter implements LogRecordExporter {
   ) {
     // Default: prod, except when ANTHROPIC_BASE_URL is explicitly staging.
     // Overridable via tengu_1p_event_batch_config.baseUrl.
-    const baseUrl =
-      options.baseUrl ||
-      (process.env.ANTHROPIC_BASE_URL === 'https://api-staging.anthropic.com'
-        ? 'https://api-staging.anthropic.com'
-        : 'https://api.anthropic.com')
+    const baseUrl = resolveFirstPartyEventLoggingBaseUrl(options.baseUrl)
 
     this.endpoint = `${baseUrl}${options.path || '/api/event_logging/batch'}`
 
     this.timeout = options.timeout || 10000
     this.maxBatchSize = options.maxBatchSize || 200
-    this.skipAuth = options.skipAuth ?? false
+    // Provider credentials belong to the inference endpoint and must never be
+    // forwarded to a host-managed telemetry origin.
+    this.skipAuth =
+      hasHostManagedFirstPartyEventLogging() || (options.skipAuth ?? false)
     this.batchDelayMs = options.batchDelayMs || 100
     this.baseBackoffDelayMs = options.baseBackoffDelayMs || 500
     this.maxBackoffDelayMs = options.maxBackoffDelayMs || 30000
