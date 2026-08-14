@@ -5,6 +5,22 @@ export type GrowthBookTransport = {
   requiresAnthropicAuth: boolean
 }
 
+/**
+ * Feature control and product telemetry are separate concerns for
+ * host-managed distributions. OpenClaude intentionally disables product
+ * telemetry, but a configured remote-eval control plane must still be able to
+ * deliver runtime gates and dynamic configuration.
+ */
+export function isGrowthBookControlPlaneEnabled(
+  firstPartyEventLoggingEnabled: boolean,
+  environment: NodeJS.ProcessEnv = process.env,
+): boolean {
+  return (
+    firstPartyEventLoggingEnabled ||
+    Boolean(environment.CLAUDE_CODE_GB_BASE_URL?.trim())
+  )
+}
+
 function normalizedHTTPURL(value: string): string | null {
   try {
     const url = new URL(value)
@@ -43,4 +59,3 @@ export function resolveGrowthBookTransport(
       new URL(apiHost).origin === new URL(DEFAULT_GROWTHBOOK_API_HOST).origin,
   }
 }
-

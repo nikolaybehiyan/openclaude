@@ -24,7 +24,11 @@ import {
   is1PEventLoggingEnabled,
   logGrowthBookExperimentTo1P,
 } from './firstPartyEventLogger.js'
-import { resolveGrowthBookTransport } from './growthbookTransport.js'
+import { resolveGrowthBookFeatureValue } from './growthbookFeatureValue.js'
+import {
+  isGrowthBookControlPlaneEnabled,
+  resolveGrowthBookTransport,
+} from './growthbookTransport.js'
 
 /**
  * User attributes sent to GrowthBook for targeting.
@@ -421,8 +425,7 @@ function syncRemoteEvalToDisk(): void {
  * Check if GrowthBook operations should be enabled
  */
 function isGrowthBookEnabled(): boolean {
-  // GrowthBook depends on 1P event logging.
-  return is1PEventLoggingEnabled()
+  return isGrowthBookControlPlaneEnabled(is1PEventLoggingEnabled())
 }
 
 /**
@@ -691,13 +694,19 @@ async function getFeatureValueInternal<T>(
     return defaultValue
   }
 
-  // Use cached remote eval values if available (workaround for SDK bug)
-  let result: T
-  if (remoteEvalFeatureValues.has(feature)) {
-    result = remoteEvalFeatureValues.get(feature) as T
-  } else {
-    result = growthBookClient.getFeatureValue(feature, defaultValue) as T
-  }
+  // A failed/timed-out init leaves the SDK payload empty. In that state the
+  // previous complete client-scoped disk snapshot is authoritative; otherwise
+  // startup-critical dynamic configs would incorrectly fall back to defaults
+  // (for example, an enabled Auto mode becomes the disabled circuit breaker).
+  // Once a fresh remote payload exists it remains authoritative, including
+  // removals, so stale disk-only keys are never resurrected.
+  const result = resolveGrowthBookFeatureValue<T>({
+    feature,
+    remoteValues: remoteEvalFeatureValues,
+    diskValues: getGlobalConfig().cachedGrowthBookFeatures,
+    sdkValue: () =>
+      growthBookClient.getFeatureValue(feature, defaultValue) as T,
+  })
 
   // Log experiment exposure using stored experiment data
   if (logExposure) {

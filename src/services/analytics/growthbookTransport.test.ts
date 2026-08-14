@@ -1,5 +1,8 @@
 import { describe, expect, test } from 'bun:test'
-import { resolveGrowthBookTransport } from './growthbookTransport.js'
+import {
+  isGrowthBookControlPlaneEnabled,
+  resolveGrowthBookTransport,
+} from './growthbookTransport.js'
 
 describe('GrowthBook transport', () => {
   test('keeps the official Anthropic endpoint and auth contract by default', () => {
@@ -27,5 +30,21 @@ describe('GrowthBook transport', () => {
       }),
     ).toThrow('CLAUDE_CODE_GB_BASE_URL')
   })
-})
 
+  test('keeps host-managed feature control enabled when product telemetry is disabled', () => {
+    expect(
+      isGrowthBookControlPlaneEnabled(false, {
+        CLAUDE_CODE_GB_BASE_URL: 'https://ai.darbmind.ru',
+      }),
+    ).toBe(true)
+  })
+
+  test('stays disabled without telemetry or a host-managed control plane', () => {
+    expect(isGrowthBookControlPlaneEnabled(false, {})).toBe(false)
+    expect(
+      isGrowthBookControlPlaneEnabled(false, {
+        CLAUDE_CODE_GB_BASE_URL: '   ',
+      }),
+    ).toBe(false)
+  })
+})
