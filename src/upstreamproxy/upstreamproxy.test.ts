@@ -1,5 +1,8 @@
 import { expect, test } from 'bun:test'
-import { isValidPemContent } from './upstreamproxy.ts'
+import {
+  isValidPemContent,
+  resolveUpstreamProxyBaseURL,
+} from './upstreamproxy.ts'
 
 // Finding #42-6: The CA cert downloaded from the upstream proxy is written
 // to disk without validation. A compromised server could send arbitrary data.
@@ -39,4 +42,28 @@ test('isValidPemContent returns false for whitespace only', () => {
 
 test('isValidPemContent returns false for malformed PEM (no end marker)', () => {
   expect(isValidPemContent('-----BEGIN CERTIFICATE-----\nABCD')).toBe(false)
+})
+
+test('CCR relay control origin is independent from external inference', () => {
+  const environment = {
+    AGENT_PROXY_URL: 'http://code-service.code-service.svc.cluster.local:8080',
+    ANTHROPIC_BASE_URL: 'https://api.z.ai/api/anthropic',
+  }
+  expect(resolveUpstreamProxyBaseURL(undefined, environment)).toBe(
+    'http://code-service.code-service.svc.cluster.local:8080',
+  )
+})
+
+test('explicit CCR base wins and legacy inference fallback remains compatible', () => {
+  expect(
+    resolveUpstreamProxyBaseURL('https://control.example.test', {
+      AGENT_PROXY_URL: 'https://ignored.example.test',
+      ANTHROPIC_BASE_URL: 'https://provider.example.test',
+    }),
+  ).toBe('https://control.example.test')
+  expect(
+    resolveUpstreamProxyBaseURL(undefined, {
+      ANTHROPIC_BASE_URL: 'https://legacy-control.example.test',
+    }),
+  ).toBe('https://legacy-control.example.test')
 })

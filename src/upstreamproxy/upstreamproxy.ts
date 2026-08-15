@@ -111,14 +111,12 @@ export async function initUpstreamProxy(opts?: {
 
   setNonDumpable()
 
-  // CCR injects ANTHROPIC_BASE_URL via StartupContext (sessionExecutor.ts /
-  // sessionHandler.ts). getOauthConfig() is wrong here: it keys off
-  // USER_TYPE + USE_{LOCAL,STAGING}_OAUTH, none of which the container sets,
-  // so it always returned the prod URL and the CA fetch 404'd.
-  const baseUrl =
-    opts?.ccrBaseUrl ??
-    process.env.ANTHROPIC_BASE_URL ??
-    'https://api.anthropic.com'
+  // Claude Code 2.1.221 uses AGENT_PROXY_URL as the dedicated CCR relay
+  // control origin. ANTHROPIC_BASE_URL is only the backwards-compatible
+  // fallback: host-managed external inference deliberately points it at a
+  // different provider origin.
+  const baseUrl = resolveUpstreamProxyBaseURL(opts?.ccrBaseUrl)
+  delete process.env.AGENT_PROXY_URL
   const caBundlePath =
     opts?.caBundlePath ?? join(homedir(), '.ccr', 'ca-bundle.crt')
 
@@ -150,6 +148,18 @@ export async function initUpstreamProxy(opts?: {
   }
 
   return state
+}
+
+export function resolveUpstreamProxyBaseURL(
+  ccrBaseUrl?: string,
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  return (
+    ccrBaseUrl ??
+    environment.AGENT_PROXY_URL ??
+    environment.ANTHROPIC_BASE_URL ??
+    'https://api.anthropic.com'
+  )
 }
 
 /**
