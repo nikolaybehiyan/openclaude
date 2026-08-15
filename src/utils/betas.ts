@@ -160,26 +160,29 @@ export function modelSupportsStructuredOutputs(model: string): boolean {
 export function modelSupportsAutoMode(model: string): boolean {
   if (feature('TRANSCRIPT_CLASSIFIER')) {
     const m = getCanonicalName(model)
-    // External: firstParty-only at launch (PI probes not wired for
-    // Bedrock/Vertex/Foundry yet). Checked before allowModels so the GB
-    // override can't enable auto mode on unsupported providers.
-    if (process.env.USER_TYPE !== 'ant' && getAPIProvider() !== 'firstParty') {
-      return false
-    }
-    // GrowthBook override: tengu_auto_mode_config.allowModels force-enables
-    // auto mode for listed models, bypassing the denylist/allowlist below.
-    // Exact model IDs (e.g. "claude-strudel-v6-p") match only that model;
-    // canonical names (e.g. "claude-strudel") match the whole family.
     const config = getFeatureValue_CACHED_MAY_BE_STALE<{
       allowModels?: string[]
     }>('tengu_auto_mode_config', {})
     const rawLower = model.toLowerCase()
-    if (
+    const explicitlyAllowed =
       config?.allowModels?.some(
         am => am.toLowerCase() === rawLower || am.toLowerCase() === m,
-      )
+      ) ?? false
+
+    // A configured host feature-control plane owns the classifier rollout for
+    // that distribution. Its explicit allowModels may authorize a proxied
+    // provider; direct third-party users still retain the upstream first-party
+    // restriction because they have no trusted host control plane.
+    if (
+      explicitlyAllowed &&
+      (process.env.USER_TYPE === 'ant' ||
+        getAPIProvider() === 'firstParty' ||
+        Boolean(process.env.CLAUDE_CODE_GB_BASE_URL?.trim()))
     ) {
       return true
+    }
+    if (process.env.USER_TYPE !== 'ant' && getAPIProvider() !== 'firstParty') {
+      return false
     }
     if (process.env.USER_TYPE === 'ant') {
       // Denylist: block known-unsupported claude models, allow everything else (ant-internal models etc.)

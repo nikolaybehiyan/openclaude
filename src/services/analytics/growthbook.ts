@@ -425,8 +425,21 @@ function syncRemoteEvalToDisk(): void {
  * Check if GrowthBook operations should be enabled
  */
 function isGrowthBookEnabled(): boolean {
-  return isGrowthBookControlPlaneEnabled(is1PEventLoggingEnabled())
+  const telemetryEnabled = is1PEventLoggingEnabled()
+  const hostConfigured = Boolean(
+    process.env.CLAUDE_CODE_GB_BASE_URL?.trim(),
+  )
+  const enabled = isGrowthBookControlPlaneEnabled(telemetryEnabled)
+  if (!growthBookControlPlaneStatusLogged) {
+    growthBookControlPlaneStatusLogged = true
+    logForDebugging(
+      `GrowthBook control plane: enabled=${enabled}, hostConfigured=${hostConfigured}, clientKeyConfigured=${Boolean(getGrowthBookClientKey())}, telemetryEnabled=${telemetryEnabled}`,
+    )
+  }
+  return enabled
 }
+
+let growthBookControlPlaneStatusLogged = false
 
 /**
  * Hostname of ANTHROPIC_BASE_URL when it points at a non-Anthropic proxy.
@@ -523,6 +536,9 @@ const getGrowthBookClient = memoize(
       : { headers: {}, error: undefined }
     const canInitialize = !authHeaders.error
     clientCreatedWithAuth = canInitialize
+    logForDebugging(
+      `GrowthBook client: apiOrigin=${new URL(transport.apiHost).origin}, requiresAnthropicAuth=${transport.requiresAnthropicAuth}, canInitialize=${canInitialize}`,
+    )
 
     // Capture in local variable so the init callback operates on THIS client,
     // not a later client if reinitialization happens before init completes
@@ -557,6 +573,9 @@ const getGrowthBookClient = memoize(
     const initialized = thisClient
       .init({ timeout: 5000 })
       .then(async result => {
+        logForDebugging(
+          `GrowthBook init result: source=${result.source}, success=${result.success}`,
+        )
         // Guard: if this client was replaced by a newer one, skip processing
         if (client !== thisClient) {
           if (process.env.USER_TYPE === 'ant') {
@@ -604,9 +623,7 @@ const getGrowthBookClient = memoize(
         }
       })
       .catch(error => {
-        if (process.env.USER_TYPE === 'ant') {
-          logError(toError(error))
-        }
+        logError(toError(error))
       })
 
     // Register cleanup handlers for graceful shutdown (named refs so resetGrowthBook can remove them)

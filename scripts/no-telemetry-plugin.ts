@@ -1,14 +1,16 @@
 /**
  * No-Telemetry Build Plugin for OpenClaude
  *
- * Replaces all analytics, telemetry, and phone-home modules with no-op stubs
- * at compile time. Zero runtime cost, zero network calls to Anthropic.
+ * Replaces analytics, telemetry, and phone-home modules with no-op stubs at
+ * compile time. The GrowthBook control-plane module is deliberately retained:
+ * it is inert unless CLAUDE_CODE_GB_BASE_URL is configured, and a host-managed
+ * distribution needs it for runtime gates without enabling product telemetry.
  *
  * This file is NOT tracked upstream — merge conflicts are impossible.
  * Only build.ts needs a one-line import + one-line array entry.
  *
  * Kills:
- *   - GrowthBook remote feature flags (api.anthropic.com)
+ *   - GrowthBook exposure telemetry (the host control-plane fetch is retained)
  *   - Datadog event intake
  *   - 1P event logging (api.anthropic.com/api/event_logging/batch)
  *   - BigQuery metrics exporter (api.anthropic.com/api/claude_code/metrics)
@@ -433,6 +435,13 @@ export const Timestamp = {
 `,
 }
 
+// This module owns runtime product gates, not telemetry transport. Keeping it
+// in the map as reference documentation is harmless, but the build must always
+// compile the real implementation so CLAUDE_CODE_GB_BASE_URL can work.
+const retainedControlPlaneModules = new Set([
+	'services/analytics/growthbook',
+])
+
 function escapeForResolvedPathRegex(modulePath: string): string {
 	return modulePath
 		.replace(/[|\\{}()[\]^$+*?.]/g, '\\$&')
@@ -443,6 +452,7 @@ export const noTelemetryPlugin: BunPlugin = {
 	name: 'no-telemetry',
 	setup(build) {
 		for (const [modulePath, contents] of Object.entries(stubs)) {
+			if (retainedControlPlaneModules.has(modulePath)) continue
 			// Build regex that matches the resolved file path on any OS
 			// e.g. "services/analytics/growthbook" → /services[/\\]analytics[/\\]growthbook\.(ts|js)$/
 			const escaped = escapeForResolvedPathRegex(modulePath)
@@ -454,6 +464,8 @@ export const noTelemetryPlugin: BunPlugin = {
 			}))
 		}
 
-		console.log(`  🔇 no-telemetry: stubbed ${Object.keys(stubs).length} modules`)
+		console.log(
+			`  🔇 no-telemetry: stubbed ${Object.keys(stubs).length - retainedControlPlaneModules.size} modules; retained host feature control`,
+		)
 	},
 }
