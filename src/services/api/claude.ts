@@ -205,7 +205,6 @@ import {
   normalizeModelStringForAPI,
   parseUserSpecifiedModel,
 } from '../../utils/model/model.js'
-import { canonicalizeProviderModelResponse } from '../../utils/model/modelStrings.js'
 import {
   startSessionActivity,
   stopSessionActivity,
@@ -943,10 +942,7 @@ export async function* executeNonStreamingRequest(
     }
   } while (!e.done)
 
-  return canonicalizeProviderModelResponse(
-    e.value as BetaMessage,
-    retryOptions.model,
-  )
+  return e.value as BetaMessage
 }
 
 /**
@@ -2043,10 +2039,7 @@ async function* queryModel(
 
         switch (part.type) {
           case 'message_start': {
-            partialMessage = canonicalizeProviderModelResponse(
-              part.message,
-              options.model,
-            )
+            partialMessage = part.message
             ttftMs = Date.now() - start
             usage = updateUsage(usage, part.message?.usage)
             // Capture research from message_start if available (internal only).
