@@ -88,7 +88,10 @@ function applyModelOverrides(ms: ModelStrings): ModelStrings {
  * it is returned unchanged. Safe to call during module init (no-ops if settings
  * aren't loaded yet).
  */
-export function resolveOverriddenModel(modelId: string): string {
+export function resolveOverriddenModel(
+  modelId: string,
+  preferredCanonicalId?: string,
+): string {
   let overrides: Record<string, string> | undefined
   try {
     overrides = getInitialSettings().modelOverrides
@@ -98,12 +101,38 @@ export function resolveOverriddenModel(modelId: string): string {
   if (!overrides) {
     return modelId
   }
+  // Several canonical product models may intentionally share one provider
+  // model. When projecting a provider response, the caller knows which
+  // canonical model it requested; prefer that exact reverse edge instead of
+  // whichever duplicate provider value happens to appear first in the map.
+  if (
+    preferredCanonicalId &&
+    overrides[preferredCanonicalId] === modelId
+  ) {
+    return preferredCanonicalId
+  }
   for (const [canonicalId, override] of Object.entries(overrides)) {
     if (override === modelId) {
       return canonicalId
     }
   }
   return modelId
+}
+
+/**
+ * Restore the caller-visible canonical model on a provider response without
+ * changing any other response field. modelOverrides are an API-boundary
+ * concern: a provider ID must not leak back into the transcript or product UI.
+ */
+export function canonicalizeProviderModelResponse<T extends { model: string }>(
+  response: T,
+  requestedCanonicalModel: string,
+): T {
+  const model = resolveOverriddenModel(
+    response.model,
+    requestedCanonicalModel,
+  )
+  return model === response.model ? response : { ...response, model }
 }
 
 export function resolveProviderModelOverride(modelId: string): string {

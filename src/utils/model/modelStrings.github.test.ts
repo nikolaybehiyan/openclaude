@@ -6,7 +6,11 @@ import {
   setSessionSettingsCache,
 } from '../settings/settingsCache.js'
 import { normalizeModelStringForAPI, parseUserSpecifiedModel } from './model.js'
-import { getModelStrings } from './modelStrings.js'
+import {
+  canonicalizeProviderModelResponse,
+  getModelStrings,
+  resolveOverriddenModel,
+} from './modelStrings.js'
 
 const originalEnv = {
   CLAUDE_CODE_USE_GITHUB: process.env.CLAUDE_CODE_USE_GITHUB,
@@ -70,4 +74,35 @@ test('modelOverrides apply at provider API boundary', () => {
 
   expect(normalizeModelStringForAPI('claude-sonnet-4-6')).toBe('glm-5-turbo')
   expect(normalizeModelStringForAPI('claude-sonnet-4-6[1m]')).toBe('glm-5-turbo')
+})
+
+test('modelOverrides restore the exact requested canonical model on responses', () => {
+  setSessionSettingsCache({
+    settings: {
+      modelOverrides: {
+        'claude-opus-5[1m]': 'glm-5.2',
+        'claude-sonnet-5[1m]': 'glm-5.2',
+        'claude-fable-5[1m]': 'glm-5.3',
+      },
+    },
+    errors: [],
+  })
+
+  expect(resolveOverriddenModel('glm-5.2', 'claude-opus-5[1m]')).toBe(
+    'claude-opus-5[1m]',
+  )
+  const providerResponse = {
+    id: 'msg_1',
+    model: 'glm-5.3',
+    content: [{ type: 'text', text: 'hello' }],
+  }
+  const productResponse = canonicalizeProviderModelResponse(
+    providerResponse,
+    'claude-fable-5[1m]',
+  )
+  expect(productResponse).toEqual({
+    ...providerResponse,
+    model: 'claude-fable-5[1m]',
+  })
+  expect(providerResponse.model).toBe('glm-5.3')
 })
