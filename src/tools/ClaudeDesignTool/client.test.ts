@@ -1,4 +1,11 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
+import {
+  callClaudeDesignOperationWithDependencies,
+  DesignConsentRequiredError,
+  DesignProjectGrantRequiredError,
+  resetDesignSessionCacheForTests,
+  type ClaudeDesignClientDependencies,
+} from './client.js'
 
 type FetchCall = {
   path: string
@@ -7,34 +14,22 @@ type FetchCall = {
 }
 
 let calls: FetchCall[] = []
-let handler: (call: FetchCall) => Promise<Record<string, any>>
+let handler: (
+  call: FetchCall,
+) => ReturnType<ClaudeDesignClientDependencies['jsonFetch']>
 
-mock.module('../../services/design/auth.js', () => ({
-  resolveDesignAccessToken: async () => ({
+const dependencies: ClaudeDesignClientDependencies = {
+  resolveAccessToken: async () => ({
     ok: true as const,
     accessToken: 'token-a',
   }),
-  refreshDesignAccessTokenAfter401: async () => 'token-b',
-}))
-
-mock.module('../../services/design/http.js', () => ({
-  designJSONFetch: async (
-    path: string,
-    token: string,
-    init: Record<string, any>,
-  ) => {
-    const call = { path, token, init }
+  refreshAccessTokenAfter401: async () => 'token-b',
+  jsonFetch: async (path, token, init = {}) => {
+    const call = { path, token, init: init as Record<string, any> }
     calls.push(call)
     return handler(call)
   },
-}))
-
-const {
-  callClaudeDesignOperation,
-  DesignConsentRequiredError,
-  DesignProjectGrantRequiredError,
-  resetDesignSessionCacheForTests,
-} = await import('./client.js')
+}
 
 function response(
   data: Record<string, any>,
@@ -57,9 +52,12 @@ beforeEach(() => {
 
 describe('ClaudeDesign native MCP transport', () => {
   test('initializes, discovers, and calls with exact protocol/session DTOs', async () => {
-    handler = async call => {
+    handler = async (call) => {
       if (call.init.body.method === 'initialize') {
-        return response({ jsonrpc: '2.0', id: 0, result: {} }, { session: 's1' })
+        return response(
+          { jsonrpc: '2.0', id: 0, result: {} },
+          { session: 's1' },
+        )
       }
       if (call.init.body.method === 'tools/list') {
         return response({
@@ -82,17 +80,18 @@ describe('ClaudeDesign native MCP transport', () => {
       })
     }
 
-    const output = await callClaudeDesignOperation(
+    const output = await callClaudeDesignOperationWithDependencies(
       'read_file',
       { project_id: 'p', path: 'index.html' },
       new AbortController().signal,
+      dependencies,
     )
 
     expect(output).toEqual({
       operation: 'read_file',
       content: [{ type: 'text', text: 'ok' }],
     })
-    expect(calls.map(call => call.init.body)).toEqual([
+    expect(calls.map((call) => call.init.body)).toEqual([
       {
         jsonrpc: '2.0',
         id: 0,
@@ -114,7 +113,7 @@ describe('ClaudeDesign native MCP transport', () => {
         },
       },
     ])
-    expect(calls.every(call => call.path === '/v1/design/mcp')).toBe(true)
+    expect(calls.every((call) => call.path === '/v1/design/mcp')).toBe(true)
     expect(calls[0]?.init.headers).toMatchObject({
       'anthropic-version': '2023-06-01',
       Accept: 'application/json, text/event-stream',
@@ -126,7 +125,7 @@ describe('ClaudeDesign native MCP transport', () => {
 
   test('refreshes once after 401 without leaking the failed token', async () => {
     let first = true
-    handler = async call => {
+    handler = async (call) => {
       if (first) {
         first = false
         return response({}, { status: 401 })
@@ -140,13 +139,14 @@ describe('ClaudeDesign native MCP transport', () => {
       return response({ result: { content: [] } })
     }
 
-    await callClaudeDesignOperation(
+    await callClaudeDesignOperationWithDependencies(
       'list',
       {},
       new AbortController().signal,
+      dependencies,
     )
 
-    expect(calls.slice(0, 2).map(call => call.token)).toEqual([
+    expect(calls.slice(0, 2).map((call) => call.token)).toEqual([
       'token-a',
       'token-b',
     ])
@@ -156,16 +156,17 @@ describe('ClaudeDesign native MCP transport', () => {
     handler = async () =>
       response({}, { contentType: 'text/event-stream; charset=utf-8' })
     await expect(
-      callClaudeDesignOperation(
+      callClaudeDesignOperationWithDependencies(
         'list',
         {},
         new AbortController().signal,
+        dependencies,
       ),
     ).rejects.toThrow('only handles JSON')
   })
 
   test('maps the canonical consent 403 to a typed permission signal', async () => {
-    handler = async call => {
+    handler = async (call) => {
       if (call.init.body.method === 'initialize') {
         return response({ result: {} }, { session: 's3' })
       }
@@ -188,16 +189,17 @@ describe('ClaudeDesign native MCP transport', () => {
     }
 
     await expect(
-      callClaudeDesignOperation(
+      callClaudeDesignOperationWithDependencies(
         'read_file',
         { project_id: 'p', path: 'x' },
         new AbortController().signal,
+        dependencies,
       ),
     ).rejects.toBeInstanceOf(DesignConsentRequiredError)
   })
 
   test('maps only a bounded canonical project-grant 403 to a typed permission signal', async () => {
-    handler = async call => {
+    handler = async (call) => {
       if (call.init.body.method === 'initialize') {
         return response({ result: {} }, { session: 's4' })
       }
@@ -220,13 +222,14 @@ describe('ClaudeDesign native MCP transport', () => {
     }
 
     await expect(
-      callClaudeDesignOperation(
+      callClaudeDesignOperationWithDependencies(
         'write_files',
         {
           project_id: 'project-1',
           files: [{ path: 'slides/intro.html', data: '<h1>Hello</h1>' }],
         },
         new AbortController().signal,
+        dependencies,
       ),
     ).rejects.toBeInstanceOf(DesignProjectGrantRequiredError)
   })

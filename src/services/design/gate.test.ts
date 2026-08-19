@@ -1,4 +1,8 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { beforeEach, describe, expect, test } from 'bun:test'
+import {
+  designGateFailureWithDependencies,
+  type DesignGateDependencies,
+} from './gate.js'
 
 let allowDesignSync = true
 let featureEnabled = true
@@ -7,27 +11,16 @@ let firstPartyBase = true
 let hostManaged = false
 let essentialOnly = false
 
-mock.module('../../utils/settings/settings.js', () => ({
-  getSettingsForSource: () =>
-    allowDesignSync ? { allow_design_sync: true } : {},
-}))
-mock.module('../analytics/growthbook.js', () => ({
-  getFeatureValue_CACHED_MAY_BE_STALE: () => featureEnabled,
-}))
-mock.module('../../utils/model/providers.js', () => ({
-  getAPIProvider: () => provider,
-  isFirstPartyAnthropicBaseUrl: () => firstPartyBase,
-}))
-mock.module('../../utils/privacyLevel.js', () => ({
-  isEssentialTrafficOnly: () => essentialOnly,
-}))
-mock.module('../../constants/oauth.js', () => ({
-  DESIGN_OAUTH_SCOPES: ['user:design:read', 'user:design:write'],
-  getOauthConfig: () => ({ BASE_API_URL: 'https://ai.darbmind.ru' }),
-  isHostManagedExternalInference: () => hostManaged,
-}))
-
-const { designGateFailure } = await import('./gate.js')
+function failure() {
+  return designGateFailureWithDependencies({
+    allowDesignSync: () => allowDesignSync,
+    featureEnabled: () => featureEnabled,
+    apiProvider: () => provider,
+    firstPartyAnthropicBaseUrl: () => firstPartyBase,
+    hostManagedExternalInference: () => hostManaged,
+    essentialTrafficOnly: () => essentialOnly,
+  } satisfies DesignGateDependencies)
+}
 
 beforeEach(() => {
   allowDesignSync = true
@@ -41,29 +34,29 @@ beforeEach(() => {
 describe('Claude Design feature gate', () => {
   test('requires both managed policy and GrowthBook activation', () => {
     allowDesignSync = false
-    expect(designGateFailure()).toBe('disabled')
+    expect(failure()).toBe('disabled')
     allowDesignSync = true
     featureEnabled = false
-    expect(designGateFailure()).toBe('disabled')
+    expect(failure()).toBe('disabled')
   })
 
   test('fails closed for ordinary third-party providers and custom bases', () => {
     provider = 'openai'
-    expect(designGateFailure()).toBe('wrong_provider')
+    expect(failure()).toBe('wrong_provider')
     provider = 'firstParty'
     firstPartyBase = false
-    expect(designGateFailure()).toBe('wrong_provider')
+    expect(failure()).toBe('wrong_provider')
   })
 
   test('allows only the explicit host-managed split control/model plane', () => {
     provider = 'openai'
     firstPartyBase = false
     hostManaged = true
-    expect(designGateFailure()).toBe(null)
+    expect(failure()).toBe(null)
   })
 
   test('blocks nonessential traffic before any Design request', () => {
     essentialOnly = true
-    expect(designGateFailure()).toBe('essential_traffic_only')
+    expect(failure()).toBe('essential_traffic_only')
   })
 })

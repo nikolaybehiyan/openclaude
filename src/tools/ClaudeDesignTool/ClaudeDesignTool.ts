@@ -50,6 +50,32 @@ type InternalInput = ClaudeDesignInput & {
   __projectGrantServerObserved?: boolean
 }
 
+const defaultClaudeDesignToolDependencies = {
+  designGateFailure,
+  resolveDesignAccessToken,
+  readDesignConsent,
+  readDesignProjectGrants,
+  grantDesignConsent,
+  grantDesignProject,
+  callClaudeDesignOperation,
+  verifyDesignProjectIdentity,
+}
+
+let claudeDesignToolDependencies = defaultClaudeDesignToolDependencies
+
+export function setClaudeDesignToolDependenciesForTests(
+  overrides: Partial<typeof defaultClaudeDesignToolDependencies>,
+): () => void {
+  const previous = claudeDesignToolDependencies
+  claudeDesignToolDependencies = {
+    ...defaultClaudeDesignToolDependencies,
+    ...overrides,
+  }
+  return () => {
+    claudeDesignToolDependencies = previous
+  }
+}
+
 function operationLabel(operation?: string): string {
   switch (operation) {
     case 'list':
@@ -134,7 +160,7 @@ export const ClaudeDesignTool = buildTool({
   searchHint: 'work with Claude Design (claude.ai/design) projects',
   maxResultSizeChars: 100_000,
   isEnabled() {
-    return designGateFailure() === null
+    return claudeDesignToolDependencies.designGateFailure() === null
   },
   get inputSchema() {
     return claudeDesignInputSchema()
@@ -205,22 +231,24 @@ export const ClaudeDesignTool = buildTool({
     return { result: true }
   },
   async checkPermissions(input, context) {
-    const auth = await resolveDesignAccessToken(context.abortController.signal)
+    const auth = await claudeDesignToolDependencies.resolveDesignAccessToken(
+      context.abortController.signal,
+    )
     let needsConsent = false
     if (auth.ok && input.operation !== 'list') {
       try {
         needsConsent =
-          (await readDesignConsent(auth.accessToken, context.abortController.signal)) ===
-          false
+          (await claudeDesignToolDependencies.readDesignConsent(
+            auth.accessToken,
+            context.abortController.signal,
+          )) === false
       } catch {
         // Fall through to the canonical 403 response when preflight is unavailable.
       }
     }
     const withConsent = {
       ...input,
-      ...(needsConsent
-        ? { __consentBitShown: DESIGN_CONSENT_BIT }
-        : {}),
+      ...(needsConsent ? { __consentBitShown: DESIGN_CONSENT_BIT } : {}),
       __approvalCanReachUser: approvalCanReachUser(context),
     } as ClaudeDesignInput
     if (
@@ -238,8 +266,10 @@ export const ClaudeDesignTool = buildTool({
     }
     if (
       input.operation === 'copy_files' &&
-      !(typeof input.arguments.plan_token === 'string' &&
-        input.arguments.plan_token)
+      !(
+        typeof input.arguments.plan_token === 'string' &&
+        input.arguments.plan_token
+      )
     ) {
       return {
         behavior: 'deny',
@@ -286,8 +316,10 @@ export const ClaudeDesignTool = buildTool({
     if (
       (input.operation === 'write_files' ||
         input.operation === 'create_support_js') &&
-      !(typeof input.arguments.plan_token === 'string' &&
-        input.arguments.plan_token)
+      !(
+        typeof input.arguments.plan_token === 'string' &&
+        input.arguments.plan_token
+      )
     ) {
       const targets = tokenlessWriteTargets(input.operation, input.arguments)
       if (targets.outcome !== 'pass') {
@@ -337,10 +369,11 @@ export const ClaudeDesignTool = buildTool({
       }
       if (auth.ok) {
         try {
-          const grants = await readDesignProjectGrants(
-            auth.accessToken,
-            context.abortController.signal,
-          )
+          const grants =
+            await claudeDesignToolDependencies.readDesignProjectGrants(
+              auth.accessToken,
+              context.abortController.signal,
+            )
           if (grants?.has(id)) {
             return { behavior: 'allow', updatedInput: withConsent }
           }
@@ -373,14 +406,18 @@ export const ClaudeDesignTool = buildTool({
       }
       let identity
       try {
-        const project = await callClaudeDesignOperation(
-          'get_project',
-          { project_id: id },
-          context.abortController.signal,
-        )
+        const project =
+          await claudeDesignToolDependencies.callClaudeDesignOperation(
+            'get_project',
+            { project_id: id },
+            context.abortController.signal,
+          )
         identity = project.isError
           ? null
-          : verifyDesignProjectIdentity(id, project.content)
+          : claudeDesignToolDependencies.verifyDesignProjectIdentity(
+              id,
+              project.content,
+            )
       } catch {
         identity = null
       }
@@ -433,8 +470,10 @@ export const ClaudeDesignTool = buildTool({
     const internal = input as InternalInput
     if (
       input.operation === 'copy_files' &&
-      !(typeof input.arguments.plan_token === 'string' &&
-        input.arguments.plan_token)
+      !(
+        typeof input.arguments.plan_token === 'string' &&
+        input.arguments.plan_token
+      )
     ) {
       throw new Error(
         'copy_files without a plan_token always requires per-batch approval — use finalize_plan declaring every destination in writes, then pass the returned plan_token.',
@@ -443,23 +482,29 @@ export const ClaudeDesignTool = buildTool({
     if (
       (input.operation === 'write_files' ||
         input.operation === 'create_support_js') &&
-      !(typeof input.arguments.plan_token === 'string' &&
-        input.arguments.plan_token) &&
+      !(
+        typeof input.arguments.plan_token === 'string' &&
+        input.arguments.plan_token
+      ) &&
       tokenlessWriteTargets(input.operation, input.arguments).outcome !== 'pass'
     ) {
       throw new Error(
         `${input.operation} without a plan_token: this batch includes paths that always require per-batch approval — use finalize_plan with writes (and deletes if needed), then pass the returned plan_token.`,
       )
     }
-    const auth = await resolveDesignAccessToken(context.abortController.signal)
+    const auth = await claudeDesignToolDependencies.resolveDesignAccessToken(
+      context.abortController.signal,
+    )
     if (!auth.ok) {
-      throw new Error(`Claude Design authentication unavailable: ${auth.reason}`)
+      throw new Error(
+        `Claude Design authentication unavailable: ${auth.reason}`,
+      )
     }
     let consentRetried = false
     let projectGrantRetried = false
     const execute = async (): Promise<ClaudeDesignOutput> => {
       try {
-        return (await callClaudeDesignOperation(
+        return (await claudeDesignToolDependencies.callClaudeDesignOperation(
           input.operation,
           input.arguments,
           context.abortController.signal,
@@ -473,7 +518,7 @@ export const ClaudeDesignTool = buildTool({
           !consentRetried
         ) {
           consentRetried = true
-          await grantDesignConsent(
+          await claudeDesignToolDependencies.grantDesignConsent(
             auth.accessToken,
             context.abortController.signal,
           )
@@ -488,7 +533,7 @@ export const ClaudeDesignTool = buildTool({
           !projectGrantRetried
         ) {
           projectGrantRetried = true
-          await grantDesignProject(
+          await claudeDesignToolDependencies.grantDesignProject(
             auth.accessToken,
             error.projectId,
             context.abortController.signal,
@@ -521,10 +566,7 @@ export const ClaudeDesignTool = buildTool({
       throw error
     }
   },
-  mapToolResultToToolResultBlockParam(
-    output,
-    toolUseID,
-  ): ToolResultBlockParam {
+  mapToolResultToToolResultBlockParam(output, toolUseID): ToolResultBlockParam {
     const content: Array<TextBlockParam | ImageBlockParam> = []
     for (const block of output.content) {
       if (block.type === 'text' && typeof block.text === 'string') {
@@ -550,10 +592,7 @@ export const ClaudeDesignTool = buildTool({
             source: {
               type: 'base64',
               media_type: block.mimeType as
-                | 'image/png'
-                | 'image/jpeg'
-                | 'image/gif'
-                | 'image/webp',
+                'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp',
               data: block.data,
             },
           })
@@ -567,7 +606,7 @@ export const ClaudeDesignTool = buildTool({
       type: 'tool_result',
       content: output.isError
         ? content
-            .flatMap(block => (block.type === 'text' ? [block.text] : []))
+            .flatMap((block) => (block.type === 'text' ? [block.text] : []))
             .join('\n')
             .trim() || '(error with no message)'
         : content.length > 0
@@ -576,6 +615,9 @@ export const ClaudeDesignTool = buildTool({
       ...(output.isError ? { is_error: true } : {}),
     }
   },
-} satisfies ToolDef<ReturnType<typeof claudeDesignInputSchema>, ClaudeDesignOutput>)
+} satisfies ToolDef<
+  ReturnType<typeof claudeDesignInputSchema>,
+  ClaudeDesignOutput
+>)
 
 export { KNOWN_OPERATIONS }

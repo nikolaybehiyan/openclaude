@@ -15,10 +15,7 @@ import type {
   DesignMcpContent,
   DesignMcpTool,
 } from '../../services/design/types.js'
-import {
-  installDesignCatalog,
-  resetDesignCatalogForTests,
-} from './catalog.js'
+import { installDesignCatalog, resetDesignCatalogForTests } from './catalog.js'
 
 type MCPResponse = {
   jsonrpc?: string
@@ -35,6 +32,18 @@ type RawMCPResponse = {
   status: number
   headers: Headers
   data: MCPResponse
+}
+
+export type ClaudeDesignClientDependencies = {
+  resolveAccessToken: typeof resolveDesignAccessToken
+  refreshAccessTokenAfter401: typeof refreshDesignAccessTokenAfter401
+  jsonFetch: typeof designJSONFetch
+}
+
+const defaultClientDependencies: ClaudeDesignClientDependencies = {
+  resolveAccessToken: resolveDesignAccessToken,
+  refreshAccessTokenAfter401: refreshDesignAccessTokenAfter401,
+  jsonFetch: designJSONFetch,
 }
 
 export class DesignConsentRequiredError extends Error {
@@ -67,9 +76,10 @@ async function requestMCP(
   token: string,
   currentSession: string | null,
   signal: AbortSignal,
+  dependencies: ClaudeDesignClientDependencies,
   retried = false,
 ): Promise<RawMCPResponse> {
-  const response = await designJSONFetch(DESIGN_MCP_PATH, token, {
+  const response = await dependencies.jsonFetch(DESIGN_MCP_PATH, token, {
     method: 'POST',
     body,
     signal,
@@ -83,9 +93,19 @@ async function requestMCP(
     },
   })
   if (response.status === 401 && !retried && !signal.aborted) {
-    const refreshed = await refreshDesignAccessTokenAfter401(token, signal)
+    const refreshed = await dependencies.refreshAccessTokenAfter401(
+      token,
+      signal,
+    )
     if (refreshed && refreshed !== token) {
-      return requestMCP(body, refreshed, currentSession, signal, true)
+      return requestMCP(
+        body,
+        refreshed,
+        currentSession,
+        signal,
+        dependencies,
+        true,
+      )
     }
   }
   if (response.contentType.startsWith('text/event-stream')) {
@@ -103,6 +123,7 @@ async function requestMCP(
 async function ensureSession(
   token: string,
   signal: AbortSignal,
+  dependencies: ClaudeDesignClientDependencies,
 ): Promise<string | null> {
   if (initialized) return sessionId
   if (initializing) return initializing
@@ -121,9 +142,12 @@ async function ensureSession(
       token,
       null,
       signal,
+      dependencies,
     )
     if (response.status < 200 || response.status >= 300) {
-      throw new Error(`Claude Design initialize failed: HTTP ${response.status}`)
+      throw new Error(
+        `Claude Design initialize failed: HTTP ${response.status}`,
+      )
     }
     sessionId = response.headers.get('mcp-session-id') || null
     initialized = true
@@ -140,24 +164,27 @@ async function ensureSession(
 async function discoverTools(
   token: string,
   signal: AbortSignal,
+  dependencies: ClaudeDesignClientDependencies,
 ): Promise<DesignMcpTool[]> {
   if (discovery) return discovery
   const pending = (async () => {
-    let currentSession = await ensureSession(token, signal)
+    let currentSession = await ensureSession(token, signal, dependencies)
     let response = await requestMCP(
       { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
       token,
       currentSession,
       signal,
+      dependencies,
     )
     if (response.status === 404 && currentSession) {
       resetDesignSessionCacheForTests()
-      currentSession = await ensureSession(token, signal)
+      currentSession = await ensureSession(token, signal, dependencies)
       response = await requestMCP(
         { jsonrpc: '2.0', id: 1, method: 'tools/list', params: {} },
         token,
         currentSession,
         signal,
+        dependencies,
       )
     }
     const tools = response.data.result?.tools
@@ -236,12 +263,30 @@ export async function callClaudeDesignOperation(
   content: DesignMcpContent[]
   isError?: boolean
 }> {
-  const auth = await resolveDesignAccessToken(signal)
+  return callClaudeDesignOperationWithDependencies(
+    operation,
+    args,
+    signal,
+    defaultClientDependencies,
+  )
+}
+
+export async function callClaudeDesignOperationWithDependencies(
+  operation: string,
+  args: Record<string, unknown>,
+  signal: AbortSignal,
+  dependencies: ClaudeDesignClientDependencies,
+): Promise<{
+  operation: string
+  content: DesignMcpContent[]
+  isError?: boolean
+}> {
+  const auth = await dependencies.resolveAccessToken(signal)
   if (!auth.ok) {
     throw new Error(`Claude Design authentication unavailable: ${auth.reason}`)
   }
   const token = auth.accessToken
-  const tools = await discoverTools(token, signal)
+  const tools = await discoverTools(token, signal, dependencies)
   if (operation === 'list') {
     return {
       operation,
@@ -249,7 +294,7 @@ export async function callClaudeDesignOperation(
         {
           type: 'text',
           text: JSON.stringify({
-            tools: tools.map(tool => ({
+            tools: tools.map((tool) => ({
               name: tool.name,
               description: tool.description ?? '',
               inputSchema: tool.inputSchema ?? {},
@@ -260,7 +305,7 @@ export async function callClaudeDesignOperation(
     }
   }
 
-  let currentSession = await ensureSession(token, signal)
+  let currentSession = await ensureSession(token, signal, dependencies)
   let response = await requestMCP(
     {
       jsonrpc: '2.0',
@@ -271,10 +316,11 @@ export async function callClaudeDesignOperation(
     token,
     currentSession,
     signal,
+    dependencies,
   )
   if (response.status === 404 && currentSession) {
     resetDesignSessionCacheForTests()
-    currentSession = await ensureSession(token, signal)
+    currentSession = await ensureSession(token, signal, dependencies)
     response = await requestMCP(
       {
         jsonrpc: '2.0',
@@ -285,6 +331,7 @@ export async function callClaudeDesignOperation(
       token,
       currentSession,
       signal,
+      dependencies,
     )
   }
   if (response.status === 403) parse403(response.data)
@@ -292,7 +339,9 @@ export async function callClaudeDesignOperation(
     throw new Error('Claude Design authentication failed (HTTP 401)')
   }
   if (response.status < 200 || response.status >= 300) {
-    throw new Error(`Claude Design ${operation} failed: HTTP ${response.status}`)
+    throw new Error(
+      `Claude Design ${operation} failed: HTTP ${response.status}`,
+    )
   }
   if (response.data.error) {
     return {

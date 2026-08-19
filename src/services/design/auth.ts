@@ -3,7 +3,10 @@ import {
   getClaudeAIOAuthTokensAsync,
   handleOAuth401Error,
 } from '../../utils/auth.js'
-import { getSecureStorage, type SecureStorageData } from '../../utils/secureStorage/index.js'
+import {
+  getSecureStorage,
+  type SecureStorageData,
+} from '../../utils/secureStorage/index.js'
 import {
   generateCodeChallenge,
   generateCodeVerifier,
@@ -76,9 +79,13 @@ export function isDesignOAuthClientConfigured(): boolean {
   return !getDesignOAuthClientID().startsWith('00000000-')
 }
 
-async function postToken(body: Record<string, unknown>, signal?: AbortSignal) {
+async function postToken(
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+  fetcher: typeof globalThis.fetch = globalThis.fetch,
+) {
   const timeout = AbortSignal.timeout(15_000)
-  const response = await fetch(getOauthConfig().TOKEN_URL, {
+  const response = await fetcher(getOauthConfig().TOKEN_URL, {
     method: 'POST',
     redirect: 'error',
     signal: signal ? AbortSignal.any([signal, timeout]) : timeout,
@@ -89,7 +96,9 @@ async function postToken(body: Record<string, unknown>, signal?: AbortSignal) {
     error?: string
   }
   if (!response.ok) {
-    throw new Error(`Design OAuth token exchange failed (HTTP ${response.status})`)
+    throw new Error(
+      `Design OAuth token exchange failed (HTTP ${response.status})`,
+    )
   }
   return payload
 }
@@ -100,7 +109,7 @@ function slotFromTokenResponse(
   previousRefreshToken?: string,
 ): DesignOAuthSlot {
   const scopes = response.scope.split(' ').filter(Boolean)
-  const missing = DESIGN_OAUTH_SCOPES.filter(scope => !scopes.includes(scope))
+  const missing = DESIGN_OAUTH_SCOPES.filter((scope) => !scopes.includes(scope))
   if (missing.length > 0) {
     throw new Error(
       `The authorization server did not grant the design scopes (missing: ${missing.join(', ')}) — the Claude Design app registration may be incomplete or out of date.`,
@@ -116,8 +125,10 @@ function slotFromTokenResponse(
     accessToken: response.access_token,
     refreshToken,
     expiresAt: Date.now() + response.expires_in * 1000,
-    scopes: scopes.filter(scope =>
-      DESIGN_OAUTH_SCOPES.includes(scope as (typeof DESIGN_OAUTH_SCOPES)[number]),
+    scopes: scopes.filter((scope) =>
+      DESIGN_OAUTH_SCOPES.includes(
+        scope as (typeof DESIGN_OAUTH_SCOPES)[number],
+      ),
     ),
     clientId,
   }
@@ -157,7 +168,7 @@ async function refreshStoredDesignOAuth(
     const detail = error instanceof Error ? error.message : 'refresh failed'
     if (/401|invalid_grant|expired/i.test(detail)) {
       clearStoredDesignOAuth(
-        current => current.refreshToken === slot.refreshToken,
+        (current) => current.refreshToken === slot.refreshToken,
       )
       return {
         ok: false,
@@ -266,6 +277,21 @@ export async function completeDesignOAuth(
   pastedCode: string,
   signal?: AbortSignal,
 ): Promise<void> {
+  return completeDesignOAuthWithDependencies(pending, pastedCode, signal, {
+    fetcher: globalThis.fetch,
+    save: saveStoredDesignOAuth,
+  })
+}
+
+export async function completeDesignOAuthWithDependencies(
+  pending: PendingDesignOAuth,
+  pastedCode: string,
+  signal: AbortSignal | undefined,
+  dependencies: {
+    fetcher: typeof globalThis.fetch
+    save: (slot: DesignOAuthSlot) => { success: boolean; warning?: string }
+  },
+): Promise<void> {
   const [authorizationCode, state] = pastedCode.trim().split('#')
   if (!authorizationCode || state !== pending.state) {
     throw new Error('Invalid code. Please make sure the full code was copied')
@@ -282,9 +308,10 @@ export async function completeDesignOAuth(
     signal
       ? AbortSignal.any([signal, AbortSignal.timeout(DESIGN_LOGIN_TIMEOUT_MS)])
       : AbortSignal.timeout(DESIGN_LOGIN_TIMEOUT_MS),
+    dependencies.fetcher,
   )
   const slot = slotFromTokenResponse(response, pending.clientId)
-  if (!saveStoredDesignOAuth(slot).success) {
+  if (!dependencies.save(slot).success) {
     throw new Error(
       'Could not save the design credential to secure storage. Retry, or run /design-login.',
     )

@@ -1,63 +1,18 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import {
+  ClaudeDesignTool,
+  setClaudeDesignToolDependenciesForTests,
+} from './ClaudeDesignTool.js'
+import {
+  callClaudeDesignOperation,
+  DesignProjectGrantRequiredError,
+} from './client.js'
 
 let needsConsent = false
 let grantWrites = 0
-let operationHandler: (
-  operation: string,
-) => Promise<Record<string, unknown>>
+let operationHandler: typeof callClaudeDesignOperation
 
-class TestDesignProjectGrantRequiredError extends Error {
-  constructor(readonly projectId: string) {
-    super('project grant required')
-  }
-}
-
-class TestDesignConsentRequiredError extends Error {
-  constructor(readonly consent: string) {
-    super('consent required')
-  }
-}
-
-mock.module('../../services/design/auth.js', () => ({
-  resolveDesignAccessToken: async () => ({
-    ok: true as const,
-    accessToken: 'design-token',
-  }),
-}))
-
-mock.module('../../services/design/control.js', () => ({
-  readDesignConsent: async () => !needsConsent,
-  readDesignProjectGrants: async () => new Set<string>(),
-  grantDesignConsent: async () => {},
-  grantDesignProject: async () => {
-    grantWrites++
-  },
-}))
-
-mock.module('../../services/design/gate.js', () => ({
-  designGateFailure: () => null,
-}))
-
-mock.module('../../services/analytics/growthbook.js', () => ({
-  getFeatureValue_CACHED_MAY_BE_STALE: () => true,
-}))
-
-mock.module('./client.js', () => ({
-  callClaudeDesignOperation: async (operation: string) =>
-    operationHandler(operation),
-  DesignConsentRequiredError: TestDesignConsentRequiredError,
-  DesignProjectGrantRequiredError: TestDesignProjectGrantRequiredError,
-}))
-
-mock.module('./projectIdentity.js', () => ({
-  verifyDesignProjectIdentity: () => ({
-    name: 'Parity fixture',
-    sharingLabel: 'private',
-    url: 'https://ai.darbmind.ru/design/p/project-a',
-  }),
-}))
-
-const { ClaudeDesignTool } = await import('./ClaudeDesignTool.js')
+let restoreDependencies: (() => void) | undefined
 
 function context() {
   const abortController = new AbortController()
@@ -86,12 +41,36 @@ const writeInput = {
 beforeEach(() => {
   needsConsent = false
   grantWrites = 0
-  operationHandler = async operation => {
+  operationHandler = async (operation) => {
     if (operation === 'get_project') {
       return { operation, content: [{ type: 'text', text: '{}' }] }
     }
     return { operation, content: [] }
   }
+  restoreDependencies = setClaudeDesignToolDependenciesForTests({
+    designGateFailure: () => null,
+    resolveDesignAccessToken: async () => ({
+      ok: true as const,
+      accessToken: 'design-token',
+    }),
+    readDesignConsent: async () => !needsConsent,
+    readDesignProjectGrants: async () => new Set<string>(),
+    grantDesignConsent: async () => {},
+    grantDesignProject: async () => {
+      grantWrites++
+    },
+    callClaudeDesignOperation: (...args) => operationHandler(...args),
+    verifyDesignProjectIdentity: () => ({
+      name: 'Parity fixture',
+      sharingLabel: 'private',
+      url: 'https://ai.darbmind.ru/design/p/project-a',
+    }),
+  })
+})
+
+afterEach(() => {
+  restoreDependencies?.()
+  restoreDependencies = undefined
 })
 
 describe('ClaudeDesign 2.1.221 permission metadata', () => {
@@ -123,7 +102,7 @@ describe('ClaudeDesign 2.1.221 permission metadata', () => {
 
   test('never POSTs a grant after the server watcher supplied approval', async () => {
     operationHandler = async () => {
-      throw new TestDesignProjectGrantRequiredError('project-a')
+      throw new DesignProjectGrantRequiredError('project-a')
     }
     await expect(
       ClaudeDesignTool.call(

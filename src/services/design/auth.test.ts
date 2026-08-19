@@ -1,26 +1,18 @@
-import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
+import {
+  beginDesignOAuth,
+  completeDesignOAuthWithDependencies,
+} from './auth.js'
+import type { DesignOAuthSlot } from './types.js'
 
-let storage: Record<string, unknown> = {}
-
-mock.module('../../utils/secureStorage/index.js', () => ({
-  getSecureStorage: () => ({
-    read: () => storage,
-    update: (next: Record<string, unknown>) => {
-      storage = next
-      return { success: true }
-    },
-  }),
-}))
-
-const { beginDesignOAuth, completeDesignOAuth, getStoredDesignOAuth } =
-  await import('./auth.js')
+let saved: DesignOAuthSlot | null = null
 
 const originalFetch = globalThis.fetch
 const originalOauthBase = process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
 const originalClientId = process.env.CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID
 
 beforeEach(() => {
-  storage = {}
+  saved = null
   process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.darbmind.ru'
   process.env.CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID = 'design-client-test'
 })
@@ -58,7 +50,10 @@ describe('separate Claude Design OAuth', () => {
   test('exchanges and stores a bounded, scope-checked Design credential', async () => {
     const pending = await beginDesignOAuth()
     let request: { url: string; init?: RequestInit } | undefined
-    globalThis.fetch = (async (url: string | URL | Request, init?: RequestInit) => {
+    const fetcher = (async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
       request = { url: String(url), init }
       return new Response(
         JSON.stringify({
@@ -71,7 +66,18 @@ describe('separate Claude Design OAuth', () => {
       )
     }) as typeof fetch
 
-    await completeDesignOAuth(pending, `auth-code#${pending.state}`)
+    await completeDesignOAuthWithDependencies(
+      pending,
+      `auth-code#${pending.state}`,
+      undefined,
+      {
+        fetcher,
+        save: (slot) => {
+          saved = slot
+          return { success: true }
+        },
+      },
+    )
 
     expect(request?.url).toBe('https://ai.darbmind.ru/v1/oauth/token')
     expect(request?.init?.redirect).toBe('error')
@@ -82,7 +88,7 @@ describe('separate Claude Design OAuth', () => {
       code_verifier: pending.codeVerifier,
       state: pending.state,
     })
-    expect(getStoredDesignOAuth()).toMatchObject({
+    expect(saved).toMatchObject({
       accessToken: 'design-access',
       refreshToken: 'design-refresh',
       clientId: 'design-client-test',
@@ -92,7 +98,7 @@ describe('separate Claude Design OAuth', () => {
 
   test('fails closed when either Design scope is absent', async () => {
     const pending = await beginDesignOAuth()
-    globalThis.fetch = (async () =>
+    const fetcher = (async () =>
       new Response(
         JSON.stringify({
           access_token: 'bad-access',
@@ -104,8 +110,19 @@ describe('separate Claude Design OAuth', () => {
       )) as unknown as typeof fetch
 
     await expect(
-      completeDesignOAuth(pending, `auth-code#${pending.state}`),
+      completeDesignOAuthWithDependencies(
+        pending,
+        `auth-code#${pending.state}`,
+        undefined,
+        {
+          fetcher,
+          save: (slot) => {
+            saved = slot
+            return { success: true }
+          },
+        },
+      ),
     ).rejects.toThrow('missing: user:design:write')
-    expect(getStoredDesignOAuth()).toBe(null)
+    expect(saved).toBe(null)
   })
 })
