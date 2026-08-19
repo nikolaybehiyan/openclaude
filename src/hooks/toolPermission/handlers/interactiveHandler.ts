@@ -30,6 +30,10 @@ import type { PermissionUpdate } from '../../../utils/permissions/PermissionUpda
 import { hasPermissionsToUseTool } from '../../../utils/permissions/permissions.js'
 import type { PermissionContext } from '../PermissionContext.js'
 import { createResolveOnce } from '../PermissionContext.js'
+import {
+  getServerApprovalWatchProvider,
+  runServerApprovalWatch,
+} from '../serverApprovalWatch.js'
 
 type InteractivePermissionParams = {
   ctx: PermissionContext
@@ -68,12 +72,18 @@ function handleInteractivePermission(
   } = params
 
   const { resolve: resolveOnce, isResolved, claim } = createResolveOnce(resolve)
+  const localBridgeCallbacks = result.localDisplayOnly
+    ? undefined
+    : bridgeCallbacks
+  const localChannelCallbacks = result.localDisplayOnly
+    ? undefined
+    : channelCallbacks
   let userInteracted = false
   let checkmarkTransitionTimer: ReturnType<typeof setTimeout> | undefined
   // Hoisted so onDismissCheckmark (Esc during checkmark window) can also
   // remove the abort listener — not just the timer callback.
   let checkmarkAbortHandler: (() => void) | undefined
-  const bridgeRequestId = bridgeCallbacks ? randomUUID() : undefined
+  const bridgeRequestId = localBridgeCallbacks ? randomUUID() : undefined
   // Hoisted so local/hook/classifier wins can remove the pending channel
   // entry. No "tell remote to dismiss" equivalent — the text sits in your
   // phone, and a stale "yes abc123" after local-resolve falls through
@@ -136,12 +146,12 @@ function handleInteractivePermission(
     },
     onAbort() {
       if (!claim()) return
-      if (bridgeCallbacks && bridgeRequestId) {
-        bridgeCallbacks.sendResponse(bridgeRequestId, {
+      if (localBridgeCallbacks && bridgeRequestId) {
+        localBridgeCallbacks.sendResponse(bridgeRequestId, {
           behavior: 'deny',
           message: 'User aborted',
         })
-        bridgeCallbacks.cancelRequest(bridgeRequestId)
+        localBridgeCallbacks.cancelRequest(bridgeRequestId)
       }
       channelUnsubscribe?.()
       ctx.logCancelled()
@@ -159,13 +169,13 @@ function handleInteractivePermission(
     ) {
       if (!claim()) return // atomic check-and-mark before await
 
-      if (bridgeCallbacks && bridgeRequestId) {
-        bridgeCallbacks.sendResponse(bridgeRequestId, {
+      if (localBridgeCallbacks && bridgeRequestId) {
+        localBridgeCallbacks.sendResponse(bridgeRequestId, {
           behavior: 'allow',
           updatedInput,
           updatedPermissions: permissionUpdates,
         })
-        bridgeCallbacks.cancelRequest(bridgeRequestId)
+        localBridgeCallbacks.cancelRequest(bridgeRequestId)
       }
       channelUnsubscribe?.()
 
@@ -183,12 +193,12 @@ function handleInteractivePermission(
     onReject(feedback?: string, contentBlocks?: ContentBlockParam[]) {
       if (!claim()) return
 
-      if (bridgeCallbacks && bridgeRequestId) {
-        bridgeCallbacks.sendResponse(bridgeRequestId, {
+      if (localBridgeCallbacks && bridgeRequestId) {
+        localBridgeCallbacks.sendResponse(bridgeRequestId, {
           behavior: 'deny',
           message: feedback ?? 'User denied permission',
         })
-        bridgeCallbacks.cancelRequest(bridgeRequestId)
+        localBridgeCallbacks.cancelRequest(bridgeRequestId)
       }
       channelUnsubscribe?.()
 
@@ -220,8 +230,8 @@ function handleInteractivePermission(
         // a CCR-initiated mode switch, the very case this callback exists
         // for after useReplBridge started calling it).
         if (!claim()) return
-        if (bridgeCallbacks && bridgeRequestId) {
-          bridgeCallbacks.cancelRequest(bridgeRequestId)
+        if (localBridgeCallbacks && bridgeRequestId) {
+          localBridgeCallbacks.cancelRequest(bridgeRequestId)
         }
         channelUnsubscribe?.()
         ctx.removeFromQueue()
@@ -241,8 +251,8 @@ function handleInteractivePermission(
   // (e.g. plan edit). Tools whose local dialog injects fields (ReviewArtifact
   // `selected`, AskUserQuestion `answers`) tolerate the field being missing
   // so generic remote approval degrades gracefully instead of throwing.
-  if (bridgeCallbacks && bridgeRequestId) {
-    bridgeCallbacks.sendRequest(
+  if (localBridgeCallbacks && bridgeRequestId) {
+    localBridgeCallbacks.sendRequest(
       bridgeRequestId,
       ctx.tool.name,
       displayInput,
@@ -253,7 +263,7 @@ function handleInteractivePermission(
     )
 
     const signal = ctx.toolUseContext.abortController.signal
-    const unsubscribe = bridgeCallbacks.onResponse(
+    const unsubscribe = localBridgeCallbacks.onResponse(
       bridgeRequestId,
       response => {
         if (!claim()) return // Local user/hook/classifier already responded
@@ -315,7 +325,7 @@ function handleInteractivePermission(
   // — the local dialog is always there as the floor.
   if (
     (feature('KAIROS') || feature('KAIROS_CHANNELS')) &&
-    channelCallbacks &&
+    localChannelCallbacks &&
     !ctx.tool.requiresUserInteraction?.()
   ) {
     const channelRequestId = shortRequestId(ctx.toolUseID)
@@ -360,7 +370,7 @@ function handleInteractivePermission(
       // dead closure stayed registered on the session-scoped abort signal
       // until the session ended. Not a functional bug (Map.delete is
       // idempotent), but it held the closure alive.
-      const mapUnsub = channelCallbacks.onResponse(
+      const mapUnsub = localChannelCallbacks.onResponse(
         channelRequestId,
         response => {
           if (!claim()) return // Another racer won
@@ -369,8 +379,8 @@ function handleInteractivePermission(
           clearClassifierIndicator()
           ctx.removeFromQueue()
           // Bridge is the other remote — tell it we're done.
-          if (bridgeCallbacks && bridgeRequestId) {
-            bridgeCallbacks.cancelRequest(bridgeRequestId)
+          if (localBridgeCallbacks && bridgeRequestId) {
+            localBridgeCallbacks.cancelRequest(bridgeRequestId)
           }
 
           if (response.behavior === 'allow') {
@@ -407,6 +417,59 @@ function handleInteractivePermission(
     }
   }
 
+  // Race the local prompt against a product-owned durable server approval.
+  // This is the 2.1.221 generic boundary: the permission core never interprets
+  // product descriptor fields and only injects the observed marker on success.
+  const serverApprovalDescriptor = result.serverApprovalWatch
+  const serverApprovalProvider = serverApprovalDescriptor
+    ? getServerApprovalWatchProvider()
+    : null
+  const serverApprovalObserver =
+    serverApprovalDescriptor && serverApprovalProvider?.isEnabled()
+      ? serverApprovalProvider.createObserver(serverApprovalDescriptor)
+      : null
+  if (serverApprovalDescriptor && serverApprovalObserver) {
+    const signal = ctx.toolUseContext.abortController.signal
+    void runServerApprovalWatch(serverApprovalObserver, {
+      signal,
+      isResolved,
+      isPlanMode: () =>
+        ctx.toolUseContext.getAppState().toolPermissionContext.mode === 'plan',
+      onParked() {
+        logForDebugging(
+          'Server approval observed but parked: session is in plan mode',
+        )
+      },
+      onObserved() {
+        if (!claim()) return
+        clearClassifierChecking(ctx.toolUseID)
+        clearClassifierIndicator()
+        if (localBridgeCallbacks && bridgeRequestId) {
+          localBridgeCallbacks.cancelRequest(bridgeRequestId)
+        }
+        channelUnsubscribe?.()
+        ctx.removeFromQueue()
+        ctx.logDecision(
+          {
+            decision: 'accept',
+            source: { type: 'user', permanent: false },
+          },
+          { permissionPromptStartTimeMs },
+        )
+        resolveOnce(
+          ctx.buildAllow({
+            ...(result.updatedInput ?? displayInput),
+            __projectGrantServerObserved: true,
+          }),
+        )
+      },
+    }).catch(error => {
+      logForDebugging(
+        `Server-approval watcher stopped (${errorMessage(error)})`,
+      )
+    })
+  }
+
   // Skip hooks if they were already awaited in the coordinator branch above
   if (!awaitAutomatedChecksBeforeDialog) {
     // Execute PermissionRequest hooks asynchronously
@@ -421,8 +484,8 @@ function handleInteractivePermission(
         permissionPromptStartTimeMs,
       )
       if (!hookDecision || !claim()) return
-      if (bridgeCallbacks && bridgeRequestId) {
-        bridgeCallbacks.cancelRequest(bridgeRequestId)
+      if (localBridgeCallbacks && bridgeRequestId) {
+        localBridgeCallbacks.cancelRequest(bridgeRequestId)
       }
       channelUnsubscribe?.()
       ctx.removeFromQueue()
@@ -453,8 +516,8 @@ function handleInteractivePermission(
         },
         onAllow: decisionReason => {
           if (!claim()) return
-          if (bridgeCallbacks && bridgeRequestId) {
-            bridgeCallbacks.cancelRequest(bridgeRequestId)
+          if (localBridgeCallbacks && bridgeRequestId) {
+            localBridgeCallbacks.cancelRequest(bridgeRequestId)
           }
           channelUnsubscribe?.()
           clearClassifierChecking(ctx.toolUseID)

@@ -193,6 +193,16 @@ export type PendingClassifierCheck = {
 }
 
 /**
+ * Opaque descriptor consumed by a registered first-party server approval
+ * observer. The permission core only owns the race; a product surface owns
+ * the descriptor schema and polling implementation.
+ */
+export type ServerApprovalWatch = {
+  kind: string
+  [key: string]: unknown
+}
+
+/**
  * Result when user should be prompted
  */
 export type PermissionAskDecision<
@@ -219,6 +229,10 @@ export type PermissionAskDecision<
    * The classifier may auto-approve the permission before the user responds.
    */
   pendingClassifierCheck?: PendingClassifierCheck
+  /** Keep this prompt local instead of relaying it to bridge/channel clients. */
+  localDisplayOnly?: boolean
+  /** Race the local prompt against a product-owned durable server approval. */
+  serverApprovalWatch?: ServerApprovalWatch
   /**
    * Optional content blocks (e.g., images) to include alongside the rejection
    * message in the tool result. Used when users paste images as feedback.

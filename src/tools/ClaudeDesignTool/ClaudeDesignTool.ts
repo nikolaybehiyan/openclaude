@@ -41,11 +41,13 @@ import {
   type ClaudeDesignInput,
   type ClaudeDesignOutput,
 } from './schemas.js'
+import './serverApprovalWatch.js'
 
 type InternalInput = ClaudeDesignInput & {
   __consentBitShown?: typeof DESIGN_CONSENT_BIT
   __projectGrantAskShown?: string
   __approvalCanReachUser?: boolean
+  __projectGrantServerObserved?: boolean
 }
 
 function operationLabel(operation?: string): string {
@@ -267,6 +269,7 @@ export const ClaudeDesignTool = buildTool({
           .filter(Boolean)
           .join(' '),
         updatedInput: withConsent,
+        localDisplayOnly: true,
         decisionReason: safetyReason(
           'design agent consent — approving records a server-side grant for Claude agents to read and write your design projects',
         ),
@@ -398,6 +401,11 @@ export const ClaudeDesignTool = buildTool({
           __projectGrantAskShown: id,
           __approvalCanReachUser: approvalCanReachUser(context),
         } as ClaudeDesignInput,
+        localDisplayOnly: true,
+        serverApprovalWatch: {
+          kind: 'design_project_grant',
+          projectId: id,
+        },
         decisionReason: safetyReason(
           'durable project write grant — approving records a server-side project grant',
         ),
@@ -415,6 +423,9 @@ export const ClaudeDesignTool = buildTool({
         .filter(Boolean)
         .join(' '),
       updatedInput: withConsent,
+      ...(input.operation === 'finalize_plan'
+        ? { localDisplayOnly: true }
+        : {}),
       decisionReason: safetyReason('Claude Design write operation'),
     }
   },
@@ -473,6 +484,7 @@ export const ClaudeDesignTool = buildTool({
           internal.__projectGrantAskShown === error.projectId &&
           internal.__approvalCanReachUser === true &&
           approvalCanReachUser(context) &&
+          internal.__projectGrantServerObserved !== true &&
           !projectGrantRetried
         ) {
           projectGrantRetried = true
