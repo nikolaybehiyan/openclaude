@@ -12,6 +12,11 @@ import commit from './commands/commit.js'
 import commitMessage from './commands/commit-message/index.js'
 import copy from './commands/copy/index.js'
 import desktop from './commands/desktop/index.js'
+import design from './commands/design/index.js'
+import designConsent from './commands/design-consent/index.js'
+import designLogin from './commands/design-login/index.js'
+import designRevoke from './commands/design-revoke/index.js'
+import designSync from './commands/design-sync/index.js'
 import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
 import config from './commands/config/index.js'
@@ -283,6 +288,11 @@ const COMMANDS = memoize((): Command[] => [
   config,
   copy,
   desktop,
+  design,
+  designConsent,
+  designLogin,
+  designRevoke,
+  designSync,
   context,
   contextNonInteractive,
   cost,

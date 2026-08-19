@@ -2,6 +2,8 @@
 import { toolMatchesName, type Tool, type Tools } from './Tool.js'
 import { AgentTool } from './tools/AgentTool/AgentTool.js'
 import { SkillTool } from './tools/SkillTool/SkillTool.js'
+import { ClaudeDesignTool } from './tools/ClaudeDesignTool/ClaudeDesignTool.js'
+import { DesignSyncTool } from './tools/DesignSyncTool/DesignSyncTool.js'
 import { BashTool } from './tools/BashTool/BashTool.js'
 import { FileEditTool } from './tools/FileEditTool/FileEditTool.js'
 import { FileReadTool } from './tools/FileReadTool/FileReadTool.js'
@@ -199,6 +201,8 @@ export function getAllBaseTools(): Tools {
     TaskStopTool,
     AskUserQuestionTool,
     SkillTool,
+    ClaudeDesignTool,
+    DesignSyncTool,
     EnterPlanModeTool,
     ...(SuggestBackgroundPRTool ? [SuggestBackgroundPRTool] : []),
     ...(WebBrowserTool ? [WebBrowserTool] : []),

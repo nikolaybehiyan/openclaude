@@ -32,6 +32,10 @@ export function fileSuffixForOauthConfig(): string {
 
 export const CLAUDE_AI_INFERENCE_SCOPE = 'user:inference' as const
 export const CLAUDE_AI_PROFILE_SCOPE = 'user:profile' as const
+export const DESIGN_OAUTH_SCOPES = [
+  'user:design:read',
+  'user:design:write',
+] as const
 const CONSOLE_SCOPE = 'org:create_api_key' as const
 export const OAUTH_BETA_HEADER = 'oauth-2025-04-20' as const
 
@@ -75,6 +79,7 @@ type OauthConfig = {
   CLAUDEAI_SUCCESS_URL: string
   MANUAL_REDIRECT_URL: string
   CLIENT_ID: string
+  DESIGN_CLIENT_ID: string
   OAUTH_FILE_SUFFIX: string
   MCP_PROXY_URL: string
   MCP_PROXY_PATH: string
@@ -97,6 +102,7 @@ const PROD_OAUTH_CONFIG = {
     'https://platform.claude.com/oauth/code/success?app=claude-code',
   MANUAL_REDIRECT_URL: 'https://platform.claude.com/oauth/code/callback',
   CLIENT_ID: '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+  DESIGN_CLIENT_ID: '59637612-477b-4836-a601-b0589eda7704',
   // No suffix for production config
   OAUTH_FILE_SUFFIX: '',
   MCP_PROXY_URL: 'https://mcp-proxy.anthropic.com',
@@ -136,6 +142,7 @@ const STAGING_OAUTH_CONFIG =
         MANUAL_REDIRECT_URL:
           'https://platform.staging.ant.dev/oauth/code/callback',
         CLIENT_ID: '22422756-60c9-4084-8eb7-27705fd5cf9a',
+        DESIGN_CLIENT_ID: '00000000-0000-4000-8000-000000000000',
         OAUTH_FILE_SUFFIX: '-staging-oauth',
         MCP_PROXY_URL: 'https://mcp-proxy-staging.anthropic.com',
         MCP_PROXY_PATH: '/v1/mcp/{server_id}',
@@ -167,6 +174,7 @@ function getLocalOauthConfig(): OauthConfig {
     CLAUDEAI_SUCCESS_URL: `${consoleBase}/oauth/code/success?app=claude-code`,
     MANUAL_REDIRECT_URL: `${consoleBase}/oauth/code/callback`,
     CLIENT_ID: '22422756-60c9-4084-8eb7-27705fd5cf9a',
+    DESIGN_CLIENT_ID: '00000000-0000-4000-8000-000000000000',
     OAUTH_FILE_SUFFIX: '-local-oauth',
     MCP_PROXY_URL: 'http://localhost:8205',
     MCP_PROXY_PATH: '/v1/toolbox/shttp/mcp/{server_id}',
