@@ -182,6 +182,19 @@ export const init = memoize(async (): Promise<void> => {
       }
     }
 
+    // Claude Code 2.1.221 synchronizes enabled account skills into the
+    // tenant-private CLAUDE_CONFIG_DIR before normal skill discovery. Project
+    // skills are discovered separately from the verified repository clones.
+    if (
+      isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
+      isEnvTruthy(process.env.CLAUDE_CODE_SYNC_SKILLS)
+    ) {
+      const { startRemoteSkillSync } = await import(
+        '../utils/skills/remoteSkillSync.js'
+      )
+      await startRemoteSkillSync()
+    }
+
     // Set up git-bash if relevant
     setShellIfWindows()
 
