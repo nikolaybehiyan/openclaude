@@ -235,11 +235,12 @@ export async function syncRemoteSkillsOnce(
   }
 }
 
-function remoteSkillSyncEnabled(): boolean {
-  return (
-    isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) &&
-    isEnvTruthy(process.env.CLAUDE_CODE_SYNC_SKILLS)
-  )
+export function remoteSkillSyncEnabled(): boolean {
+  // The runtime owner sets this only for ordinary hosted Remote Code
+  // sessions.  Do not couple skill synchronization to CLAUDE_CODE_REMOTE:
+  // that flag owns the optional upstream-proxy relay and is absent when a
+  // Remote session does not need that relay.
+  return isEnvTruthy(process.env.CLAUDE_CODE_SYNC_SKILLS)
 }
 
 function remoteSkillSyncOptionsFromEnvironment():

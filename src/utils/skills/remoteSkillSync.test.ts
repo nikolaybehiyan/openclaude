@@ -10,7 +10,10 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, test } from 'bun:test'
 import { strToU8, zipSync } from 'fflate'
-import { syncRemoteSkillsOnce } from './remoteSkillSync.js'
+import {
+  remoteSkillSyncEnabled,
+  syncRemoteSkillsOnce,
+} from './remoteSkillSync.js'
 
 const temporaryDirectories: string[] = []
 
@@ -23,6 +26,21 @@ afterEach(async () => {
 })
 
 describe('Remote account skill sync', () => {
+  test('does not require the optional Remote upstream proxy flag', () => {
+    const previousSync = process.env.CLAUDE_CODE_SYNC_SKILLS
+    const previousRemote = process.env.CLAUDE_CODE_REMOTE
+    try {
+      process.env.CLAUDE_CODE_SYNC_SKILLS = '1'
+      delete process.env.CLAUDE_CODE_REMOTE
+      expect(remoteSkillSyncEnabled()).toBe(true)
+    } finally {
+      if (previousSync === undefined) delete process.env.CLAUDE_CODE_SYNC_SKILLS
+      else process.env.CLAUDE_CODE_SYNC_SKILLS = previousSync
+      if (previousRemote === undefined) delete process.env.CLAUDE_CODE_REMOTE
+      else process.env.CLAUDE_CODE_REMOTE = previousRemote
+    }
+  })
+
   test('installs verified account skills and removes only stale managed skills', async () => {
     const configDir = await mkdtemp(join(tmpdir(), 'remote-skills-'))
     temporaryDirectories.push(configDir)
