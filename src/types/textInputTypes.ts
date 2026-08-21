@@ -303,6 +303,16 @@ export type QueuedCommand = {
   mode: PromptInputMode
   /** Defaults to the priority implied by `mode` when enqueued. */
   priority?: QueuePriority
+  /** Host-verified Claude Tag/Slack or Teams human relay turn. */
+  verifiedSlackHumanTurn?: boolean
+  /** Validated Claude Code Relay turn id (printable ASCII, max 128 chars). */
+  ccrTurnId?: string
+  /** Upstream client platform used to verify a relay-human origin. */
+  clientPlatform?: string
+  /** Allows a host to persist/ack the input without invoking the model. */
+  shouldQuery?: boolean
+  /** Internal wake source; only commands from the same source may batch. */
+  wakeupSource?: string
   uuid?: UUID
   orphanedPermission?: OrphanedPermission
   /** Raw pasted contents including images. Images are resized at execution time. */

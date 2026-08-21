@@ -32,6 +32,9 @@ const PROVIDER_MANAGED_ENV_VARS = new Set([
   'CLAUDIA_CODE_INFERENCE_CREDENTIAL_URL',
   'CLAUDE_CODE_API_KEY_HELPER_TTL_MS',
   'CLAUDE_CODE_SUBPROCESS_ENV_SCRUB',
+  // Host-resolved Claude Tag memory attachments. User settings must not be
+  // able to replace service partitions or relax read-only scopes.
+  'CLAUDE_MEMORY_STORES',
   // Region routing (per-model VERTEX_REGION_CLAUDE_* handled by prefix below)
   'CLOUD_ML_REGION',
   // Auth

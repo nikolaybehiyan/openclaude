@@ -552,6 +552,8 @@ export type Attachment =
       origin?: MessageOrigin
       /** Carried from QueuedCommand.isMeta — distinguishes human-typed from system-injected */
       isMeta?: boolean
+      /** Host-verified Slack/Teams human relay turn. */
+      verifiedSlackHumanTurn?: boolean
     }
   | {
       type: 'output_style'
@@ -1078,6 +1080,7 @@ export async function getQueuedCommandAttachments(
         commandMode: _.mode,
         origin: _.origin,
         isMeta: _.isMeta,
+        verifiedSlackHumanTurn: _.verifiedSlackHumanTurn,
       }
     }),
   )

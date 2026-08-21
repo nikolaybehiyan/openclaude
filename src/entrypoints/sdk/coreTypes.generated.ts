@@ -1567,6 +1567,11 @@ export type SDKUserMessage = {
   isSynthetic?: boolean
   tool_use_result?: unknown
   priority?: "now" | "next" | "later"
+  shouldQuery?: boolean
+  client_platform?: string
+  inbound_origin?: string
+  turn_id?: string
+  receiver_grouping_id?: string
   timestamp?: string
   uuid?: string
   session_id?: string
@@ -1579,6 +1584,11 @@ export type SDKUserMessageReplay = {
   isSynthetic?: boolean
   tool_use_result?: unknown
   priority?: "now" | "next" | "later"
+  shouldQuery?: boolean
+  client_platform?: string
+  inbound_origin?: string
+  turn_id?: string
+  receiver_grouping_id?: string
   timestamp?: string
   uuid: string
   session_id: string
@@ -2059,6 +2069,11 @@ export type SDKMessage = ({
   isSynthetic?: boolean
   tool_use_result?: unknown
   priority?: "now" | "next" | "later"
+  shouldQuery?: boolean
+  client_platform?: string
+  inbound_origin?: string
+  turn_id?: string
+  receiver_grouping_id?: string
   timestamp?: string
   uuid?: string
   session_id?: string
@@ -2069,6 +2084,11 @@ export type SDKMessage = ({
   isSynthetic?: boolean
   tool_use_result?: unknown
   priority?: "now" | "next" | "later"
+  shouldQuery?: boolean
+  client_platform?: string
+  inbound_origin?: string
+  turn_id?: string
+  receiver_grouping_id?: string
   timestamp?: string
   uuid: string
   session_id: string

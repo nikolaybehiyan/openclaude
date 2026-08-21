@@ -1,5 +1,7 @@
 import { feature } from 'bun:bundle'
 import { join } from 'path'
+import { hasConfiguredMemoryStores } from '../services/multiStoreMemory/config.js'
+import { loadMultiStoreMemoryPrompt } from '../services/multiStoreMemory/prompt.js'
 import { getFsImplementation } from '../utils/fsOperations.js'
 import { getAutoMemPath, isAutoMemoryEnabled } from './paths.js'
 
@@ -417,6 +419,14 @@ export function buildSearchingPastContextSection(autoMemDir: string): string[] {
  * Returns null when auto memory is disabled.
  */
 export async function loadMemoryPrompt(): Promise<string | null> {
+  // Claude Tag / Remote multi-store memory is an explicit opt-in contract.
+  // Keep it ahead of the legacy auto/team branches so an invalid or empty
+  // server-provided store list fails closed instead of leaking into ordinary
+  // chat memory. When CLAUDE_MEMORY_STORES is absent this is a strict no-op.
+  if (hasConfiguredMemoryStores()) {
+    return loadMultiStoreMemoryPrompt()
+  }
+
   const autoEnabled = isAutoMemoryEnabled()
 
   const skipIndex = getFeatureValue_CACHED_MAY_BE_STALE(

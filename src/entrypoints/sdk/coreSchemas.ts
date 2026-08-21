@@ -1286,6 +1286,11 @@ const SDKUserMessageContentSchema = lazySchema(() =>
     isSynthetic: z.boolean().optional(),
     tool_use_result: z.unknown().optional(),
     priority: z.enum(['now', 'next', 'later']).optional(),
+    shouldQuery: z.boolean().optional(),
+    client_platform: z.string().optional(),
+    inbound_origin: z.string().optional(),
+    turn_id: z.string().optional(),
+    receiver_grouping_id: z.string().optional(),
     timestamp: z
       .string()
       .optional()

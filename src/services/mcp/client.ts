@@ -63,6 +63,7 @@ import {
   handleOAuth401Error,
 } from '../../utils/auth.js'
 import { registerCleanup } from '../../utils/cleanupRegistry.js'
+import { withCurrentCcrTurnHeader } from '../../utils/ccrTurnContext.js'
 import { detectCodeIndexingFromMcpServerName } from '../../utils/codeIndexing.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from '../../utils/envUtils.js'
@@ -553,6 +554,15 @@ export function wrapFetchWithTimeout(baseFetch: FetchLike): FetchLike {
   }
 }
 
+/**
+ * Relay turns attach their validated CCR turn id to server-resolved MCP
+ * requests. The value is read per request so a long-lived transport never
+ * leaks the prior turn's header into a later turn.
+ */
+export function wrapFetchWithCcrTurnId(baseFetch: FetchLike): FetchLike {
+  return (url, init) => baseFetch(url, withCurrentCcrTurnHeader(init))
+}
+
 export function getMcpServerConnectionBatchSize(): number {
   return parseInt(process.env.MCP_SERVER_CONNECTION_BATCH_SIZE || '', 10) || 3
 }
@@ -836,13 +846,19 @@ export const connectToServer = memoize(
           `Proxy options: ${proxyOptions.dispatcher ? 'custom dispatcher' : 'default'}`,
         )
 
+        const baseHttpFetch = wrapFetchWithStepUpDetection(
+          createFetchWithInit(),
+          authProvider,
+        )
         const transportOptions: StreamableHTTPClientTransportOptions = {
           authProvider,
           // Use fresh timeout per request to avoid stale AbortSignal bug.
           // Step-up detection wraps innermost so the 403 is seen before the
           // SDK's handler calls auth() → tokens().
           fetch: wrapFetchWithTimeout(
-            wrapFetchWithStepUpDetection(createFetchWithInit(), authProvider),
+            sessionIngressToken && !hasOAuthTokens
+              ? wrapFetchWithCcrTurnId(baseHttpFetch)
+              : baseHttpFetch,
           ),
           requestInit: {
             ...proxyOptions,

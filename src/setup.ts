@@ -349,11 +349,19 @@ export async function setup(
     void import('./utils/sessionFileAccessHooks.js').then(m =>
       m.registerSessionFileAccessHooks(),
     ) // Register session file access analytics hooks
-    if (feature('TEAMMEM')) {
+    if (feature('TEAMMEM') && !process.env.CLAUDE_MEMORY_STORES?.trim()) {
       void import('./services/teamMemorySync/watcher.js').then(m =>
         m.startTeamMemoryWatcher(),
       ) // Start team memory sync watcher
     }
+  }
+  // Explicit Claude Tag memory stores are host-owned and independent from the
+  // legacy repo team-memory feature. The module is inert when the env var is
+  // absent, preserving ordinary chat behavior.
+  if (process.env.CLAUDE_MEMORY_STORES?.trim()) {
+    void import('./services/multiStoreMemory/sync.js').then(m =>
+      m.startMultiStoreMemorySync(),
+    )
   }
   initSinks() // Attach error log + analytics sinks and drain queued events
 

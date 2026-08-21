@@ -48,6 +48,7 @@ import {
   peek,
   subscribeToCommandQueue,
   getCommandsByMaxPriority,
+  getCommandQueueSnapshot,
 } from 'src/utils/messageQueueManager.js'
 import { notifyCommandLifecycle } from 'src/utils/commandLifecycle.js'
 import {
@@ -298,6 +299,16 @@ import {
   type ChannelEntry,
 } from 'src/bootstrap/state.js'
 import { runWithWorkload, WORKLOAD_CRON } from 'src/utils/workloadContext.js'
+import {
+  runWithCcrTurnId,
+  selectCcrTurnId,
+} from 'src/utils/ccrTurnContext.js'
+import {
+  extractCcrTurnId,
+  isSlashPrompt,
+  isVerifiedTagRelayHuman,
+  resolveTagRelayPriority,
+} from 'src/utils/tagRelay.js'
 import type { UUID } from 'crypto'
 import { randomUUID } from 'crypto'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
@@ -430,6 +441,32 @@ export function joinPromptValues(values: PromptValue[]): PromptValue {
   return values.flatMap(toBlocks)
 }
 
+function commandOriginsMatch(
+  left: QueuedCommand['origin'],
+  right: QueuedCommand['origin'],
+): boolean {
+  if (left === right) return true
+  if (!left || !right || left.kind !== right.kind) return false
+  if (left.kind === 'peer' && right.kind === 'peer') {
+    return (
+      left.from === right.from &&
+      left.inbound_origin === right.inbound_origin &&
+      left.senderTaskId === right.senderTaskId &&
+      left.verifiedPeerPid === right.verifiedPeerPid
+    )
+  }
+  if (left.kind === 'channel' && right.kind === 'channel') {
+    return left.server === right.server
+  }
+  if (
+    left.kind === 'task-notification' &&
+    right.kind === 'task-notification'
+  ) {
+    return left.subkind === right.subkind
+  }
+  return true
+}
+
 /**
  * Whether `next` can be batched into the same ask() call as `head`. Only
  * prompt-mode commands batch, and only when the workload tag matches (so the
@@ -445,7 +482,14 @@ export function canBatchWith(
     next !== undefined &&
     next.mode === 'prompt' &&
     next.workload === head.workload &&
-    next.isMeta === head.isMeta
+    next.isMeta === head.isMeta &&
+    next.shouldQuery === head.shouldQuery &&
+    next.wakeupSource === head.wakeupSource &&
+    commandOriginsMatch(next.origin, head.origin) &&
+    !!next.verifiedSlackHumanTurn === !!head.verifiedSlackHumanTurn &&
+    next.priority === head.priority &&
+    !isSlashPrompt(head.value) &&
+    !isSlashPrompt(next.value)
   )
 }
 
@@ -1956,6 +2000,10 @@ function runHeadlessStreaming(
                 ...command,
                 value: joinPromptValues(batch.map(c => c.value)),
                 uuid: batch.findLast(c => c.uuid)?.uuid ?? command.uuid,
+                clientPlatform:
+                  batch.find(c => c.clientPlatform)?.clientPlatform ??
+                  command.clientPlatform,
+                ccrTurnId: selectCcrTurnId(batch),
               }
             }
           }
@@ -2143,107 +2191,113 @@ function runHeadlessStreaming(
           // const-capture: TS loses `while ((command = dequeue()))` narrowing
           // inside the closure.
           const cmd = command
-          await runWithWorkload(cmd.workload ?? options.workload, async () => {
-            for await (const message of ask({
-              commands: uniqBy(
-                [...currentCommands, ...appState.mcp.commands],
-                'name',
-              ),
-              prompt: input,
-              promptUuid: cmd.uuid,
-              isMeta: cmd.isMeta,
-              cwd: cwd(),
-              tools: allTools,
-              verbose: options.verbose,
-              mcpClients: allMcpClients,
-              thinkingConfig: options.thinkingConfig,
-              maxTurns: options.maxTurns,
-              maxBudgetUsd: options.maxBudgetUsd,
-              taskBudget: options.taskBudget,
-              canUseTool,
-              userSpecifiedModel: activeUserSpecifiedModel,
-              fallbackModel: options.fallbackModel,
-              jsonSchema: getInitJsonSchema() ?? options.jsonSchema,
-              mutableMessages,
-              getReadFileCache: () =>
-                pendingSeeds.size === 0
-                  ? readFileState
-                  : mergeFileStateCaches(readFileState, pendingSeeds),
-              setReadFileCache: cache => {
-                readFileState = cache
-                for (const [path, seed] of pendingSeeds.entries()) {
-                  const existing = readFileState.get(path)
-                  if (!existing || seed.timestamp > existing.timestamp) {
-                    readFileState.set(path, seed)
-                  }
-                }
-                pendingSeeds.clear()
-              },
-              customSystemPrompt: options.systemPrompt,
-              appendSystemPrompt: options.appendSystemPrompt,
-              getAppState,
-              setAppState,
-              abortController,
-              replayUserMessages: options.replayUserMessages,
-              includePartialMessages: options.includePartialMessages,
-              handleElicitation: (serverName, params, elicitSignal) =>
-                structuredIO.handleElicitation(
-                  serverName,
-                  params.message,
-                  undefined,
-                  elicitSignal,
-                  params.mode,
-                  params.url,
-                  'elicitationId' in params ? params.elicitationId : undefined,
+          await runWithCcrTurnId(cmd.ccrTurnId, () =>
+            runWithWorkload(cmd.workload ?? options.workload, async () => {
+              for await (const message of ask({
+                commands: uniqBy(
+                  [...currentCommands, ...appState.mcp.commands],
+                  'name',
                 ),
-              agents: currentAgents,
-              orphanedPermission: cmd.orphanedPermission,
-              setSDKStatus: status => {
-                output.enqueue({
-                  type: 'system',
-                  subtype: 'status',
-                  status,
-                  session_id: getSessionId(),
-                  uuid: randomUUID(),
-                })
-              },
-            })) {
-              // Forward messages to bridge incrementally (mid-turn) so
-              // claude.ai sees progress and the connection stays alive
-              // while blocked on permission requests.
-              forwardMessagesToBridge()
+                prompt: input,
+                promptUuid: cmd.uuid,
+                isMeta: cmd.isMeta,
+                shouldQuery: cmd.shouldQuery,
+                verifiedSlackHumanTurn: cmd.verifiedSlackHumanTurn,
+                cwd: cwd(),
+                tools: allTools,
+                verbose: options.verbose,
+                mcpClients: allMcpClients,
+                thinkingConfig: options.thinkingConfig,
+                maxTurns: options.maxTurns,
+                maxBudgetUsd: options.maxBudgetUsd,
+                taskBudget: options.taskBudget,
+                canUseTool,
+                userSpecifiedModel: activeUserSpecifiedModel,
+                fallbackModel: options.fallbackModel,
+                jsonSchema: getInitJsonSchema() ?? options.jsonSchema,
+                mutableMessages,
+                getReadFileCache: () =>
+                  pendingSeeds.size === 0
+                    ? readFileState
+                    : mergeFileStateCaches(readFileState, pendingSeeds),
+                setReadFileCache: cache => {
+                  readFileState = cache
+                  for (const [path, seed] of pendingSeeds.entries()) {
+                    const existing = readFileState.get(path)
+                    if (!existing || seed.timestamp > existing.timestamp) {
+                      readFileState.set(path, seed)
+                    }
+                  }
+                  pendingSeeds.clear()
+                },
+                customSystemPrompt: options.systemPrompt,
+                appendSystemPrompt: options.appendSystemPrompt,
+                getAppState,
+                setAppState,
+                abortController,
+                replayUserMessages: options.replayUserMessages,
+                includePartialMessages: options.includePartialMessages,
+                handleElicitation: (serverName, params, elicitSignal) =>
+                  structuredIO.handleElicitation(
+                    serverName,
+                    params.message,
+                    undefined,
+                    elicitSignal,
+                    params.mode,
+                    params.url,
+                    'elicitationId' in params
+                      ? params.elicitationId
+                      : undefined,
+                  ),
+                agents: currentAgents,
+                orphanedPermission: cmd.orphanedPermission,
+                setSDKStatus: status => {
+                  output.enqueue({
+                    type: 'system',
+                    subtype: 'status',
+                    status,
+                    session_id: getSessionId(),
+                    uuid: randomUUID(),
+                  })
+                },
+              })) {
+                // Forward messages to bridge incrementally (mid-turn) so
+                // claude.ai sees progress and the connection stays alive
+                // while blocked on permission requests.
+                forwardMessagesToBridge()
 
-              if (message.type === 'result') {
-                // Flush pending SDK events so they appear before result on the stream.
-                for (const event of drainSdkEvents()) {
-                  output.enqueue(event)
-                }
+                if (message.type === 'result') {
+                  // Flush pending SDK events so they appear before result on the stream.
+                  for (const event of drainSdkEvents()) {
+                    output.enqueue(event)
+                  }
 
-                // Hold-back: don't emit result while background agents are running
-                const currentState = getAppState()
-                if (
-                  getRunningTasks(currentState).some(
-                    t =>
-                      (t.type === 'local_agent' ||
-                        t.type === 'local_workflow') &&
-                      isBackgroundTask(t),
-                  )
-                ) {
-                  heldBackResult = message
+                  // Hold-back: don't emit result while background agents are running
+                  const currentState = getAppState()
+                  if (
+                    getRunningTasks(currentState).some(
+                      t =>
+                        (t.type === 'local_agent' ||
+                          t.type === 'local_workflow') &&
+                        isBackgroundTask(t),
+                    )
+                  ) {
+                    heldBackResult = message
+                  } else {
+                    heldBackResult = null
+                    output.enqueue(message)
+                  }
                 } else {
-                  heldBackResult = null
+                  // Flush SDK events (task_started, task_progress) so background
+                  // agent progress is streamed in real-time, not batched until result.
+                  for (const event of drainSdkEvents()) {
+                    output.enqueue(event)
+                  }
                   output.enqueue(message)
                 }
-              } else {
-                // Flush SDK events (task_started, task_progress) so background
-                // agent progress is streamed in real-time, not batched until result.
-                for (const event of drainSdkEvents()) {
-                  output.enqueue(event)
-                }
-                output.enqueue(message)
               }
-            }
-          }) // end runWithWorkload
+            }),
+          ) // end runWithCcrTurnId/runWithWorkload
 
           for (const uuid of batchUuids) {
             notifyCommandLifecycle(uuid, 'completed')
@@ -4133,13 +4187,32 @@ function runHeadlessStreaming(
         trackReceivedMessageUuid(message.uuid)
       }
 
+      const resolvedValue = await resolveAndPrepend(
+        message,
+        message.message.content,
+      )
+      const verifiedRelayHuman = isVerifiedTagRelayHuman(message)
+      const ccrTurnId = extractCcrTurnId(message, verifiedRelayHuman)
       enqueue({
         mode: 'prompt' as const,
         // file_attachments rides the protobuf catchall from the web composer.
         // Same-ref no-op when absent (no 'file_attachments' key).
-        value: await resolveAndPrepend(message, message.message.content),
+        value: resolvedValue,
         uuid: message.uuid,
-        priority: message.priority,
+        priority: verifiedRelayHuman
+          ? resolveTagRelayPriority({
+              explicitPriority: message.priority,
+              value: resolvedValue,
+              queue: getCommandQueueSnapshot(),
+            })
+          : message.priority,
+        shouldQuery: message.shouldQuery,
+        clientPlatform:
+          typeof message.client_platform === 'string'
+            ? message.client_platform
+            : undefined,
+        verifiedSlackHumanTurn: verifiedRelayHuman || undefined,
+        ccrTurnId,
       })
       // Increment prompt count for attribution tracking and save snapshot
       // The snapshot persists promptCount so it survives compaction

@@ -212,7 +212,12 @@ export class QueryEngine {
 
   async *submitMessage(
     prompt: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean },
+    options?: {
+      uuid?: string
+      isMeta?: boolean
+      shouldQuery?: boolean
+      verifiedSlackHumanTurn?: boolean
+    },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const {
       cwd,
@@ -436,6 +441,17 @@ export class QueryEngine {
       querySource: 'sdk',
     })
 
+    if (options?.verifiedSlackHumanTurn && options.uuid !== undefined) {
+      for (const message of messagesFromUserInput) {
+        if (message.type === 'user' && message.uuid === options.uuid) {
+          message.verifiedSlackHumanTurn = true
+        }
+      }
+    }
+
+    const effectiveShouldQuery =
+      shouldQuery && options?.shouldQuery !== false
+
     // Push new messages, including user input and any attachments
     this.mutableMessages.push(...messagesFromUserInput)
 
@@ -563,7 +579,7 @@ export class QueryEngine {
     // Record when system message is yielded for headless latency tracking
     headlessProfilerCheckpoint('system_message_yielded')
 
-    if (!shouldQuery) {
+    if (!effectiveShouldQuery) {
       // Return the results of local slash commands.
       // Use messagesFromUserInput (not replayableMessages) for command output
       // because selectableUserMessagesFilter excludes local-command-stdout tags.
@@ -1337,6 +1353,8 @@ export async function* ask({
   prompt,
   promptUuid,
   isMeta,
+  shouldQuery,
+  verifiedSlackHumanTurn,
   cwd,
   tools,
   mcpClients,
@@ -1370,6 +1388,8 @@ export async function* ask({
   prompt: string | Array<ContentBlockParam>
   promptUuid?: string
   isMeta?: boolean
+  shouldQuery?: boolean
+  verifiedSlackHumanTurn?: boolean
   cwd: string
   tools: Tools
   verbose?: boolean
@@ -1443,6 +1463,8 @@ export async function* ask({
     yield* engine.submitMessage(prompt, {
       uuid: promptUuid,
       isMeta,
+      shouldQuery,
+      verifiedSlackHumanTurn,
     })
   } finally {
     setReadFileCache(engine.getReadFileState())

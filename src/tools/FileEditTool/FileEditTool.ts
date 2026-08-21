@@ -5,6 +5,7 @@ import { diagnosticTracker } from '../../services/diagnosticTracking.js'
 import { clearDeliveredDiagnosticsForFile } from '../../services/lsp/LSPDiagnosticRegistry.js'
 import { getLspServerManager } from '../../services/lsp/manager.js'
 import { notifyVscodeFileUpdated } from '../../services/mcp/vscodeSdkMcp.js'
+import { checkMultiStoreMemoryWrite } from '../../services/multiStoreMemory/guard.js'
 import { checkTeamMemSecrets } from '../../services/teamMemorySync/teamMemSecretGuard.js'
 import {
   activateConditionalSkillsForPaths,
@@ -139,6 +140,14 @@ export const FileEditTool = buildTool({
     // Use expandPath for consistent path normalization (especially on Windows
     // where "/" vs "\" can cause readFileState lookup mismatches)
     const fullFilePath = expandPath(file_path)
+
+    const multiStoreError = checkMultiStoreMemoryWrite(
+      fullFilePath,
+      new_string,
+    )
+    if (multiStoreError) {
+      return { result: false, message: multiStoreError, errorCode: 0 }
+    }
 
     // Reject edits to team memory files that introduce secrets
     const secretError = checkTeamMemSecrets(fullFilePath, new_string)
@@ -342,16 +351,25 @@ export const FileEditTool = buildTool({
       }
     }
 
+    // The first guard above rejects read-only/escaping paths before any file
+    // work. Re-check the fully rendered file here so an edit cannot bypass the
+    // 2.1.221 size or secret policy by supplying only a small replacement.
+    const editedFileContent = replace_all
+      ? file.replaceAll(actualOldString, new_string)
+      : file.replace(actualOldString, new_string)
+    const finalMultiStoreError = checkMultiStoreMemoryWrite(
+      fullFilePath,
+      editedFileContent,
+    )
+    if (finalMultiStoreError) {
+      return { result: false, message: finalMultiStoreError, errorCode: 0 }
+    }
+
     // Additional validation for Claude settings files
     const settingsValidationResult = validateInputForSettingsFileEdit(
       fullFilePath,
       file,
-      () => {
-        // Simulate the edit to get the final content using the exact same logic as the tool
-        return replace_all
-          ? file.replaceAll(actualOldString, new_string)
-          : file.replace(actualOldString, new_string)
-      },
+      () => editedFileContent,
     )
 
     if (settingsValidationResult !== null) {

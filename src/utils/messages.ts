@@ -72,6 +72,7 @@ import type {
   ToolUseSummaryMessage,
   UserMessage,
 } from '../types/message.js'
+import { wrapTagRelayText } from './tagRelay.js'
 import { isAdvisorBlock } from './advisor.js'
 import { isAgentSwarmsEnabled } from './agentSwarmsEnabled.js'
 import { count } from './array.js'
@@ -2105,10 +2106,11 @@ export function normalizeMessagesForAPI(
           // tools that no longer exist (e.g., MCP server was disconnected).
           let normalizedMessage = message
           if (!isToolSearchEnabledOptimistic()) {
-            normalizedMessage = stripToolReferenceBlocksFromUserMessage(message)
+            normalizedMessage =
+              stripToolReferenceBlocksFromUserMessage(normalizedMessage)
           } else {
             normalizedMessage = stripUnavailableToolReferencesFromUserMessage(
-              message,
+              normalizedMessage,
               availableToolNames,
             )
           }
@@ -3781,7 +3783,11 @@ Read the team config to discover your teammates' names. Check the task list peri
         const content: ContentBlockParam[] = [
           {
             type: 'text',
-            text: wrapCommandText(textContent, origin),
+            text: wrapCommandText(
+              textContent,
+              origin,
+              attachment.verifiedSlackHumanTurn === true,
+            ),
           },
           ...imageBlocks,
         ]
@@ -3799,7 +3805,11 @@ Read the team config to discover your teammates' names. Check the task list peri
       // String prompt
       return wrapMessagesInSystemReminder([
         createUserMessage({
-          content: wrapCommandText(String(attachment.prompt), origin),
+          content: wrapCommandText(
+            String(attachment.prompt),
+            origin,
+            attachment.verifiedSlackHumanTurn === true,
+          ),
           ...metaProp,
           origin,
           uuid: attachment.source_uuid,
@@ -5508,7 +5518,11 @@ export function stripAdvisorBlocks(
 export function wrapCommandText(
   raw: string,
   origin: MessageOrigin | undefined,
+  verifiedSlackHumanTurn = false,
 ): string {
+  if (verifiedSlackHumanTurn) {
+    return wrapTagRelayText(raw)
+  }
   switch (origin?.kind) {
     case 'task-notification':
       return `A background agent completed a task:\n${raw}`

@@ -134,6 +134,9 @@ export async function* handleStopHooks(
   // memory extraction, auto-dream). Scripted -p calls don't want auto-memory
   // or forked agents contending for resources during shutdown.
   if (!isBareMode()) {
+    const hasExplicitTagMemory = Boolean(
+      process.env.CLAUDE_MEMORY_STORES?.trim(),
+    )
     // Inline env check for dead code elimination in external builds
     if (!isEnvDefinedFalsy(process.env.CLAUDE_CODE_ENABLE_PROMPT_SUGGESTION)) {
       void executePromptSuggestion(stopHookContext)
@@ -141,7 +144,8 @@ export async function* handleStopHooks(
     if (
       feature('EXTRACT_MEMORIES') &&
       !toolUseContext.agentId &&
-      isExtractModeActive()
+      isExtractModeActive() &&
+      !hasExplicitTagMemory
     ) {
       // Fire-and-forget in both interactive and non-interactive. For -p/SDK,
       // print.ts drains the in-flight promise after flushing the response
@@ -151,8 +155,29 @@ export async function* handleStopHooks(
         toolUseContext.appendSystemMessage,
       )
     }
-    if (!toolUseContext.agentId) {
+    if (!toolUseContext.agentId && !hasExplicitTagMemory) {
       void executeAutoDream(stopHookContext, toolUseContext.appendSystemMessage)
+    }
+  }
+
+  // Claude Tag memory writes use ordinary file tools. Flush the explicit
+  // multi-store mounts at the end of every main-agent turn so a short Remote
+  // session cannot exit with unpersisted memory. No env var means no import,
+  // network request, or behavior change for ordinary chat.
+  if (
+    !toolUseContext.agentId &&
+    process.env.CLAUDE_MEMORY_STORES?.trim()
+  ) {
+    try {
+      const { flushMultiStoreMemory } = await import(
+        '../services/multiStoreMemory/sync.js'
+      )
+      await flushMultiStoreMemory()
+    } catch (error) {
+      logForDebugging(
+        `[multi-store-memory] turn-end flush failed: ${errorMessage(error)}`,
+        { level: 'warn' },
+      )
     }
   }
 

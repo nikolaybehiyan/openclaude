@@ -404,7 +404,15 @@ export function createSkillCommand({
  * Recursively finds nested SKILL.md files under a /skills/ directory.
  * Ignores markdown files placed directly in the root /skills/ directory.
  */
-async function findSkillMarkdownFiles(basePath: string): Promise<string[]> {
+type SkillDirectoryLoadOptions = {
+  disallowSymlinks?: boolean
+  maxSkillBytes?: number
+}
+
+async function findSkillMarkdownFiles(
+  basePath: string,
+  options?: SkillDirectoryLoadOptions,
+): Promise<string[]> {
   const fs = getFsImplementation()
   const visitedDirs = new Set<string>()
   const skillFiles: string[] = []
@@ -435,6 +443,7 @@ async function findSkillMarkdownFiles(basePath: string): Promise<string[]> {
       const entryPath = join(skillDirPath, entry.name)
 
       if (isSkillFile(entryPath)) {
+        if (options?.disallowSymlinks && entry.isSymbolicLink()) continue
         skillFiles.push(entryPath)
         continue
       }
@@ -445,6 +454,7 @@ async function findSkillMarkdownFiles(basePath: string): Promise<string[]> {
       }
 
       if (entry.isSymbolicLink()) {
+        if (options?.disallowSymlinks) continue
         try {
           if ((await fs.stat(entryPath)).isDirectory()) {
             childDirs.push(entryPath)
@@ -480,6 +490,7 @@ async function findSkillMarkdownFiles(basePath: string): Promise<string[]> {
     }
 
     if (entry.isSymbolicLink()) {
+      if (options?.disallowSymlinks) continue
       try {
         if ((await fs.stat(entryPath)).isDirectory()) {
           topLevelDirs.push(entryPath)
@@ -506,9 +517,10 @@ async function findSkillMarkdownFiles(basePath: string): Promise<string[]> {
 async function loadSkillsFromSkillsDir(
   basePath: string,
   source: SettingSource,
+  options?: SkillDirectoryLoadOptions,
 ): Promise<SkillWithPath[]> {
   const fs = getFsImplementation()
-  const skillFiles = await findSkillMarkdownFiles(basePath)
+  const skillFiles = await findSkillMarkdownFiles(basePath, options)
 
   const results = await Promise.all(
     skillFiles.map(async (skillFilePath): Promise<SkillWithPath | null> => {
@@ -517,6 +529,16 @@ async function loadSkillsFromSkillsDir(
 
         let content: string
         try {
+          if (options?.maxSkillBytes !== undefined) {
+            const fileStat = await fs.stat(skillFilePath)
+            if (fileStat.size > options.maxSkillBytes) {
+              logForDebugging(
+                `[skills] skipped oversized ${skillFilePath} (${fileStat.size} bytes)`,
+                { level: 'warn' },
+              )
+              return null
+            }
+          }
           content = await fs.readFile(skillFilePath, { encoding: 'utf-8' })
         } catch (e: unknown) {
           // SKILL.md doesn't exist, skip this entry. Log non-ENOENT errors
@@ -1005,7 +1027,10 @@ export async function discoverSkillDirsForPaths(
  *
  * @param dirs Array of skill directories to load from (should be sorted deepest first)
  */
-export async function addSkillDirectories(dirs: string[]): Promise<void> {
+export async function addSkillDirectories(
+  dirs: string[],
+  options?: SkillDirectoryLoadOptions,
+): Promise<void> {
   if (
     !isSettingSourceEnabled('projectSettings') ||
     isRestrictedToPluginOnly('skills')
@@ -1023,7 +1048,7 @@ export async function addSkillDirectories(dirs: string[]): Promise<void> {
 
   // Load skills from all directories
   const loadedSkills = await Promise.all(
-    dirs.map(dir => loadSkillsFromSkillsDir(dir, 'projectSettings')),
+    dirs.map(dir => loadSkillsFromSkillsDir(dir, 'projectSettings', options)),
   )
 
   // Process in reverse order (shallower first) so deeper paths override

@@ -127,6 +127,9 @@ const TEAMMATE_ENV_VARS = [
   // disable memory on ephemeral CCR filesystems. Forwarding REMOTE alone
   // would flip teammates to memory-off when the parent has it on.
   'CLAUDE_CODE_REMOTE_MEMORY_DIR',
+  // Explicit Claude Tag memory-store projection. The value contains only
+  // host-relative store paths and access metadata, never credentials.
+  'CLAUDE_MEMORY_STORES',
   // Upstream proxy — the parent's MITM relay is reachable from teammates
   // (same container network). Forward the proxy vars so teammates route
   // customer-configured upstream traffic through the relay for credential

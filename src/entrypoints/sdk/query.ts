@@ -81,6 +81,11 @@ import {
   stripExtraFields,
 } from './transcript.js'
 import { hydrateToolProgressOutput } from './toolProgress.js'
+import { iterateWithCcrTurnId } from '../../utils/ccrTurnContext.js'
+import {
+  extractCcrTurnId,
+  isVerifiedTagRelayHuman,
+} from '../../utils/tagRelay.js'
 
 // ============================================================================
 // QueryOptions type
@@ -628,7 +633,22 @@ class QueryImpl implements Query {
               for await (const userMessage of self.prompt) {
                 if (self.abortController.signal.aborted) break
                 const content = extractPromptFromUserMessage(userMessage)
-                for await (const engineMsg of self.engine.submitMessage(content, { uuid: userMessage.uuid })) {
+                const verifiedRelayHuman =
+                  isVerifiedTagRelayHuman(userMessage)
+                const ccrTurnId = extractCcrTurnId(
+                  userMessage,
+                  verifiedRelayHuman,
+                )
+                const turn = self.engine.submitMessage(content, {
+                  uuid: userMessage.uuid,
+                  isMeta: userMessage.isSynthetic,
+                  shouldQuery: userMessage.shouldQuery,
+                  verifiedSlackHumanTurn: verifiedRelayHuman || undefined,
+                })
+                for await (const engineMsg of iterateWithCcrTurnId(
+                  ccrTurnId,
+                  turn,
+                )) {
                   yield await hydrateToolProgressOutput(engineMsg)
                   yield* self.drainAgentFailureQueue()
                 }
