@@ -15,6 +15,7 @@ import {
 } from '../../bootstrap/state.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { safeParseJSON } from '../../utils/json.js'
+import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import type { SettingsJson } from '../../utils/settings/types.js'
 import { SettingsSchema } from '../../utils/settings/types.js'
 import {
@@ -54,6 +55,10 @@ export function loadParentManagedSettingsFromFlag(value: string): void {
     return
   }
   setParentManagedSettings(parsed)
+  // Some imported startup modules consult policySettings before main() can
+  // eagerly parse CLI flags. Invalidate that cached empty/admin-only result so
+  // the hidden SDK parent tier participates in the real policy resolution.
+  resetSettingsCache()
 }
 
 export function validateParentManagedSettings(): {

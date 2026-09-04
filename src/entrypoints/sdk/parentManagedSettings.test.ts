@@ -178,8 +178,8 @@ describe('--managed-settings compatibility with Claude Code 2.1.221', () => {
   })
 
   test('projects the hidden Design gate into the effective policy tier', () => {
+    expect(getSettingsForSource('policySettings')).toBeNull()
     loadParentManagedSettingsFromFlag('{"allow_design_sync":true}')
-    resetSettingsCache()
     expect(getSettingsForSource('policySettings')?.allow_design_sync).toBe(true)
   })
 
