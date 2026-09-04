@@ -1,4 +1,5 @@
 import { getOauthConfig, DESIGN_OAUTH_SCOPES } from '../../constants/oauth.js'
+import { isEnvTruthy } from '../../utils/envUtils.js'
 
 export { DESIGN_OAUTH_SCOPES }
 
@@ -47,6 +48,30 @@ export const DESIGN_TEXT_EXTENSIONS = new Set([
   'toml',
 ])
 
-export function designBaseURL(): string {
+export function designBaseURL(
+  environment: NodeJS.ProcessEnv = process.env,
+): string {
+  const hostedBase = environment.CLAUDE_CODE_DESIGN_API_URL?.trim()
+  if (
+    hostedBase &&
+    isEnvTruthy(environment.CLAUDE_CODE_REMOTE) &&
+    environment.CLAUDE_CODE_REMOTE_SESSION_ID?.trim()
+  ) {
+    try {
+      const parsed = new URL(hostedBase)
+      if (
+        (parsed.protocol === 'http:' || parsed.protocol === 'https:') &&
+        !parsed.username &&
+        !parsed.password &&
+        !parsed.search &&
+        !parsed.hash &&
+        (parsed.pathname === '' || parsed.pathname === '/')
+      ) {
+        return parsed.origin
+      }
+    } catch {
+      // Ignore malformed host-owned configuration and keep the public route.
+    }
+  }
   return getOauthConfig().BASE_API_URL.replace(/\/$/, '')
 }
