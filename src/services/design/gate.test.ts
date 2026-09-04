@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test } from 'bun:test'
 import {
   designGateFailureWithDependencies,
   type DesignGateDependencies,
+  warmDesignGateForHeadlessWithDependencies,
 } from './gate.js'
 
 let allowDesignSync = true
@@ -58,5 +59,35 @@ describe('Claude Design feature gate', () => {
   test('blocks nonessential traffic before any Design request', () => {
     essentialOnly = true
     expect(failure()).toBe('essential_traffic_only')
+  })
+
+  test('warms feature values before a policy-enabled headless snapshot', async () => {
+    let initializations = 0
+    const dependencies = {
+      allowDesignSync: () => true,
+      initializeFeatureValues: async () => {
+        initializations += 1
+      },
+    }
+
+    await warmDesignGateForHeadlessWithDependencies(true, dependencies)
+    expect(initializations).toBe(1)
+  })
+
+  test('does not warm outside headless mode or when policy disables Design', async () => {
+    let initializations = 0
+    const initializeFeatureValues = async () => {
+      initializations += 1
+    }
+
+    await warmDesignGateForHeadlessWithDependencies(false, {
+      allowDesignSync: () => true,
+      initializeFeatureValues,
+    })
+    await warmDesignGateForHeadlessWithDependencies(true, {
+      allowDesignSync: () => false,
+      initializeFeatureValues,
+    })
+    expect(initializations).toBe(0)
   })
 })

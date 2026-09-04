@@ -5,7 +5,10 @@ import {
 } from '../../utils/model/providers.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { getSettingsForSource } from '../../utils/settings/settings.js'
-import { getFeatureValue_CACHED_MAY_BE_STALE } from '../analytics/growthbook.js'
+import {
+  getFeatureValue_CACHED_MAY_BE_STALE,
+  initializeGrowthBook,
+} from '../analytics/growthbook.js'
 import { DESIGN_FEATURE_FLAG } from './constants.js'
 
 export type DesignGateFailure =
@@ -18,6 +21,37 @@ export type DesignGateDependencies = {
   apiProvider: () => string
   firstPartyAnthropicBaseUrl: () => boolean
   hostManagedExternalInference: () => boolean
+}
+
+export type DesignGateStartupDependencies = {
+  allowDesignSync: () => boolean
+  initializeFeatureValues: () => Promise<unknown>
+}
+
+/**
+ * A headless session snapshots both tools and commands before its first turn.
+ * When Design is allowed by managed policy, wait for GrowthBook before that
+ * snapshot so a cold cache cannot hide the Design surface for the session.
+ */
+export async function warmDesignGateForHeadlessWithDependencies(
+  isHeadless: boolean,
+  dependencies: DesignGateStartupDependencies,
+): Promise<void> {
+  if (!isHeadless || !dependencies.allowDesignSync()) return
+  await dependencies.initializeFeatureValues()
+}
+
+export async function warmDesignGateForHeadless(
+  isHeadless: boolean,
+): Promise<void> {
+  await warmDesignGateForHeadlessWithDependencies(isHeadless, {
+    allowDesignSync: () => {
+      const policy = getSettingsForSource('policySettings') as
+        ({ allow_design_sync?: boolean } & Record<string, unknown>) | null
+      return policy?.allow_design_sync === true
+    },
+    initializeFeatureValues: initializeGrowthBook,
+  })
 }
 
 export function designGateFailureWithDependencies(
