@@ -12,6 +12,8 @@ import {
   generateCodeVerifier,
   generateState,
 } from '../oauth/crypto.js'
+import { getSessionIngressAuthToken } from '../../utils/sessionIngressAuth.js'
+import { isEnvTruthy } from '../../utils/envUtils.js'
 import { DESIGN_LOGIN_TIMEOUT_MS } from './constants.js'
 import { designGateFailure } from './gate.js'
 import type { DesignAuthResult, DesignOAuthSlot } from './types.js'
@@ -37,6 +39,24 @@ const REFRESH_SKEW_MS = 300_000
 
 function designStorage() {
   return getSecureStorage()
+}
+
+/**
+ * Hosted Claude Code Web sessions authenticate native Design calls with the
+ * same short-lived, lease-bound session capability used by session ingress.
+ * The Design owner resolves that capability back to the session account; no
+ * user OAuth credential is copied into the worker workspace or environment.
+ */
+export function getHostedDesignSessionToken(
+  environment: NodeJS.ProcessEnv = process.env,
+): string | null {
+  if (
+    !isEnvTruthy(environment.CLAUDE_CODE_REMOTE) ||
+    !environment.CLAUDE_CODE_REMOTE_SESSION_ID?.trim()
+  ) {
+    return null
+  }
+  return getSessionIngressAuthToken()?.trim() || null
 }
 
 export function getStoredDesignOAuth(): DesignOAuthSlot | null {
@@ -185,6 +205,10 @@ export async function resolveDesignAccessToken(
 ): Promise<DesignAuthResult> {
   const gate = designGateFailure()
   if (gate) return { ok: false, reason: gate }
+  const hostedSessionToken = getHostedDesignSessionToken()
+  if (hostedSessionToken) {
+    return { ok: true, accessToken: hostedSessionToken }
+  }
   const primary = await getClaudeAIOAuthTokensAsync()
   if (
     primary?.accessToken &&
@@ -216,6 +240,10 @@ export async function refreshDesignAccessTokenAfter401(
   failedToken: string,
   signal?: AbortSignal,
 ): Promise<string | null> {
+  const hostedSessionToken = getHostedDesignSessionToken()
+  if (hostedSessionToken) {
+    return hostedSessionToken !== failedToken ? hostedSessionToken : null
+  }
   const primary = await getClaudeAIOAuthTokensAsync()
   if (
     primary?.accessToken === failedToken &&
@@ -326,7 +354,7 @@ export function describeDesignAuthFailure(
   switch (result.reason) {
     case 'needs_design_login':
       return nonInteractive
-        ? 'DesignSync needs design-system authorization, but /design-login requires an interactive terminal and is not available in this environment. If this is claude.ai/code, ask the user to use Claude Design\'s "Send to Claude Code Web" (which seeds the project into the workspace) or to provide the project files directly.'
+        ? 'DesignSync needs Design authorization, but this non-interactive session has no Design-capable credential. In Claude Code Web, restart the session so its hosted Design capability can be attached; in a local terminal, run /design-login.'
         : 'DesignSync needs design-system authorization. Run /design-login to authorize it with your claude.ai account — this works even when this session authenticates with an API key or a provider token.'
     case 'design_refresh_failed':
       return nonInteractive

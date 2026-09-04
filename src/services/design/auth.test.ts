@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test'
 import {
   beginDesignOAuth,
   completeDesignOAuthWithDependencies,
+  getHostedDesignSessionToken,
 } from './auth.js'
 import type { DesignOAuthSlot } from './types.js'
 
@@ -10,6 +11,9 @@ let saved: DesignOAuthSlot | null = null
 const originalFetch = globalThis.fetch
 const originalOauthBase = process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
 const originalClientId = process.env.CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID
+const originalRemote = process.env.CLAUDE_CODE_REMOTE
+const originalRemoteSessionId = process.env.CLAUDE_CODE_REMOTE_SESSION_ID
+const originalSessionToken = process.env.CLAUDE_CODE_SESSION_ACCESS_TOKEN
 
 beforeEach(() => {
   saved = null
@@ -29,9 +33,27 @@ afterEach(() => {
   } else {
     process.env.CLAUDE_CODE_DESIGN_OAUTH_CLIENT_ID = originalClientId
   }
+  for (const [name, value] of [
+    ['CLAUDE_CODE_REMOTE', originalRemote],
+    ['CLAUDE_CODE_REMOTE_SESSION_ID', originalRemoteSessionId],
+    ['CLAUDE_CODE_SESSION_ACCESS_TOKEN', originalSessionToken],
+  ] as const) {
+    if (value === undefined) delete process.env[name]
+    else process.env[name] = value
+  }
 })
 
 describe('separate Claude Design OAuth', () => {
+  test('uses the lease-bound hosted session capability in Claude Code Web', () => {
+    process.env.CLAUDE_CODE_REMOTE = '1'
+    process.env.CLAUDE_CODE_REMOTE_SESSION_ID = 'cse-web'
+    process.env.CLAUDE_CODE_SESSION_ACCESS_TOKEN = 'worker-session-capability'
+    expect(getHostedDesignSessionToken()).toBe('worker-session-capability')
+
+    delete process.env.CLAUDE_CODE_REMOTE_SESSION_ID
+    expect(getHostedDesignSessionToken()).toBe(null)
+  })
+
   test('requests only the two Design scopes with PKCE and manual redirect', async () => {
     const pending = await beginDesignOAuth()
     const url = new URL(pending.authorizationURL)
