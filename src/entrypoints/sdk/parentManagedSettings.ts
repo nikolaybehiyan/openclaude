@@ -156,6 +156,9 @@ export function buildParentManagedSettingsGuard(
       tier => tier.allowedMcpServers !== undefined,
     )?.allowedMcpServers,
     availableModels: primaryAdmin?.availableModels,
+    allow_design_sync: adminTiers.find(
+      tier => tier.allow_design_sync !== undefined,
+    )?.allow_design_sync,
     sandbox: {
       network: {
         allowManagedDomainsOnly:
@@ -230,6 +233,12 @@ export function restrictParentManagedSettings(
   }
   if (parent.enforceAvailableModels === true) {
     result.enforceAvailableModels = true
+  }
+  if (
+    admin.allow_design_sync === undefined &&
+    typeof parent.allow_design_sync === 'boolean'
+  ) {
+    result.allow_design_sync = parent.allow_design_sync
   }
 
   const parentPermissions = asRecord(parent.permissions)

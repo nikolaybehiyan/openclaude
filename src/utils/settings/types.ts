@@ -383,6 +383,12 @@ export const SettingsSchema = lazySchema(() =>
         .string()
         .optional()
         .describe('Override the default model used by Claude Code'),
+      allow_design_sync: z
+        .boolean()
+        .optional()
+        .describe(
+          'Managed policy gate for the Claude Design and design-system sync surfaces.',
+        ),
       // Enterprise allowlist of models
       availableModels: z
         .array(z.string())

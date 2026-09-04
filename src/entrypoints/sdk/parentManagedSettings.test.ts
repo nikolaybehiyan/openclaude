@@ -3,6 +3,8 @@ import {
   getParentManagedSettings,
   resetStateForTests,
 } from '../../bootstrap/state.js'
+import { getSettingsForSource } from '../../utils/settings/settings.js'
+import { resetSettingsCache } from '../../utils/settings/settingsCache.js'
 import type { SettingsJson } from '../../utils/settings/types.js'
 import {
   buildParentManagedSettingsGuard,
@@ -14,6 +16,7 @@ import {
 
 afterEach(() => {
   resetStateForTests()
+  resetSettingsCache()
 })
 
 describe('--managed-settings compatibility with Claude Code 2.1.221', () => {
@@ -153,11 +156,39 @@ describe('--managed-settings compatibility with Claude Code 2.1.221', () => {
     })
   })
 
+  test('preserves the hidden Design policy gate unless an admin tier owns it', () => {
+    expect(
+      restrictParentManagedSettings(
+        { allow_design_sync: true },
+        null,
+      ),
+    ).toEqual({ allow_design_sync: true })
+    expect(
+      restrictParentManagedSettings(
+        { allow_design_sync: false },
+        null,
+      ),
+    ).toEqual({ allow_design_sync: false })
+    expect(
+      restrictParentManagedSettings(
+        { allow_design_sync: true },
+        { allow_design_sync: false },
+      ),
+    ).toBeNull()
+  })
+
+  test('projects the hidden Design gate into the effective policy tier', () => {
+    loadParentManagedSettingsFromFlag('{"allow_design_sync":true}')
+    resetSettingsCache()
+    expect(getSettingsForSource('policySettings')?.allow_design_sync).toBe(true)
+  })
+
   test('lower-priority admin tiers still lock parent-managed dimensions', () => {
     const guard = buildParentManagedSettingsGuard([
       {
         parentSettingsBehavior: 'merge',
         availableModels: ['primary-model'],
+        allow_design_sync: false,
       },
       {
         forceLoginOrgUUID: 'org-lower-tier',
@@ -175,6 +206,7 @@ describe('--managed-settings compatibility with Claude Code 2.1.221', () => {
       forceLoginOrgUUID: 'org-lower-tier',
       allowedMcpServers: [],
       availableModels: ['primary-model'],
+      allow_design_sync: false,
       sandbox: {
         network: { allowManagedDomainsOnly: true },
         filesystem: { allowManagedReadPathsOnly: true },
