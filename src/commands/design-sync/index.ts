@@ -1,32 +1,42 @@
-import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/index.mjs'
-import type { Command } from '../../commands.js'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { designGateFailure } from '../../services/design/gate.js'
-import { DESIGN_SYNC_PROMPT } from '../../tools/DesignSyncTool/prompt.js'
+import { createBundledSkillCommand } from '../../skills/bundledSkills.js'
+import { parseFrontmatter } from '../../utils/frontmatterParser.js'
 
 const DESCRIPTION =
   'Push a React design system to claude.ai/design. This runs a converter that bundles the real component code (from Storybook or a bare package) and uploads it. Use when the user runs /design-sync or says "sync my design system to Claude Design".'
 
-const command = {
-  type: 'prompt',
+// Keep the converter lazy, like the audited 2.1.221 bundled command. The .mjs
+// files are data assets, not imports to execute inside the CLI process.
+const loadContent = () => import('../../skills/bundled/designSyncContent.js')
+
+const command = createBundledSkillCommand({
   name: 'design-sync',
   description: 'Push your design system components to claude.ai/design',
   argumentHint: '[<project hint, e.g. "Acme DS">]',
-  progressMessage: 'syncing the design system',
-  contentLength: DESIGN_SYNC_PROMPT.length + DESCRIPTION.length,
-  source: 'builtin',
-  allowedTools: ['DesignSync'],
+  whenToUse: DESCRIPTION,
   disableModelInvocation: true,
   userInvocable: true,
   isEnabled: () => designGateFailure() === null,
-  async getPromptForCommand(args: string): Promise<ContentBlockParam[]> {
+  files: async () => (await loadContent()).SKILL_FILES,
+  async getPromptForCommand(args: string) {
+    const { SKILL_MD } = await loadContent()
+    const sections = [parseFrontmatter(SKILL_MD).content.trimStart()]
+    // Only the web link origin is adapted for a host-managed deployment.
+    // Never expose the internal Design RPC base to the model or rewrite the
+    // audited converter assets; the tool still owns transport and auth.
+    const webOrigin = getOauthConfig().CLAUDE_AI_ORIGIN
+    if (webOrigin !== 'https://claude.ai') {
+      sections.unshift(
+        `Deployment link mapping: in the bundled instructions and reference files, ` +
+          `https://claude.ai/design refers to ${webOrigin}/design. ` +
+          `Use this deployment's web origin for project links. Use DesignSync for API calls.`,
+      )
+    }
     const hint = args.trim()
-    return [
-      {
-        type: 'text',
-        text: `${DESCRIPTION}\n\n${DESIGN_SYNC_PROMPT}${hint ? `\n\nProject hint from the user:\n${hint}` : ''}`,
-      },
-    ]
+    if (hint) sections.push(`## Hint\n\n\`\`\`\n${hint}\n\`\`\``)
+    return [{ type: 'text', text: sections.join('\n\n') }]
   },
-} satisfies Command
+})
 
 export default command

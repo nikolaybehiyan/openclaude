@@ -1,0 +1,3 @@
+# Deliberately committed tiny published-package fixture, not product build output.
+!dist/
+!dist/**

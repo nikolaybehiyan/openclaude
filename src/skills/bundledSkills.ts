@@ -33,7 +33,7 @@ export type BundledSkillDefinition = {
    * skill: <dir>" line so the model can Read/Grep these files on demand —
    * same contract as disk-based skills.
    */
-  files?: Record<string, string>
+  files?: Record<string, string> | (() => Promise<Record<string, string>>)
   getPromptForCommand: (
     args: string,
     context: ToolUseContext,
@@ -51,20 +51,30 @@ const bundledSkills: Command[] = []
  * They follow the same pattern as registerPostSamplingHook() for internal features.
  */
 export function registerBundledSkill(definition: BundledSkillDefinition): void {
+  bundledSkills.push(createBundledSkillCommand(definition))
+}
+
+/** Build a bundled command without registering it a second time in commands.ts. */
+export function createBundledSkillCommand(
+  definition: BundledSkillDefinition,
+): Extract<Command, { type: 'prompt' }> {
   const { files } = definition
 
-  let skillRoot: string | undefined
+  const hasFiles =
+    files && (typeof files === 'function' || Object.keys(files).length > 0)
   let getPromptForCommand = definition.getPromptForCommand
 
-  if (files && Object.keys(files).length > 0) {
-    skillRoot = getBundledSkillExtractDir(definition.name)
+  if (hasFiles) {
     // Closure-local memoization: extract once per process.
     // Memoize the promise (not the result) so concurrent callers await
     // the same extraction instead of racing into separate writes.
     let extractionPromise: Promise<string | null> | undefined
     const inner = definition.getPromptForCommand
     getPromptForCommand = async (args, ctx) => {
-      extractionPromise ??= extractBundledSkillFiles(definition.name, files)
+      extractionPromise ??= (async () => {
+        const contents = typeof files === 'function' ? await files() : files
+        return extractBundledSkillFiles(definition.name, contents)
+      })()
       const extractedDir = await extractionPromise
       const blocks = await inner(args, ctx)
       if (extractedDir === null) return blocks
@@ -72,7 +82,7 @@ export function registerBundledSkill(definition: BundledSkillDefinition): void {
     }
   }
 
-  const command: Command = {
+  return {
     type: 'prompt',
     name: definition.name,
     description: definition.description,
@@ -88,7 +98,12 @@ export function registerBundledSkill(definition: BundledSkillDefinition): void {
     source: 'bundled',
     loadedFrom: 'bundled',
     hooks: definition.hooks,
-    skillRoot,
+    // Directly imported bundled commands participate in the commands ↔
+    // filesystem module cycle. Resolve the path at use time, not while
+    // initializing those modules. The root itself is process-memoized.
+    get skillRoot() {
+      return hasFiles ? getBundledSkillExtractDir(definition.name) : undefined
+    },
     context: definition.context,
     agent: definition.agent,
     isEnabled: definition.isEnabled,
@@ -96,7 +111,6 @@ export function registerBundledSkill(definition: BundledSkillDefinition): void {
     progressMessage: 'running',
     getPromptForCommand,
   }
-  bundledSkills.push(command)
 }
 
 /**

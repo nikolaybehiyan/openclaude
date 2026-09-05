@@ -1,0 +1,7 @@
+{
+  "pkg": "@parity/design-sync-fixture",
+  "globalName": "ParityFixture",
+  "shape": "package",
+  "cssEntry": "dist/styles.css",
+  "componentSrcMap": { "ParityButton": "src/ParityButton.tsx" }
+}

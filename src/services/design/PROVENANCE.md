@@ -1,8 +1,9 @@
 # Claude Design 2.1.221 provenance
 
-This implementation is a source-faithful port of the Design surfaces embedded
-in the official Claude Code `2.1.221` Darwin arm64 executable. It is not an
-inference proxy and does not reconstruct a Design protocol from the web app.
+This implementation ports the audited Design surfaces embedded in the official
+Claude Code `2.1.221` Darwin arm64 executable. Evidence below identifies exact
+assets and protocol contracts; it is not a claim that every Web journey has
+passed. It is not an inference proxy.
 
 ## Audited artifact
 
@@ -48,6 +49,35 @@ Design OAuth destination or accept an arbitrary third-party control plane.
 | `/design-sync` is user-only, argument hint `[<project hint, e.g. "Acme DS">]`, and exact menu description | `257704006..257705728`; command strings `147393472..147393584` |
 | Noninteractive Web handoff says the web flow “seeds the project into the workspace” | auth failure string `109874224` |
 
+### `/design-sync` bundled converter (restored 2026-09-05)
+
+The previous command prompt included only the `DesignSync` transport instructions;
+it did **not** ship the converter skill and was incomplete. The audited command
+at `257704006..257705728` lazy-loads the full skill and its files, removes main
+frontmatter, and appends the user's hint in a fenced `## Hint` section. It is
+user-invocable and disables model invocation through the skill router; this does
+not mean that the model cannot execute a user-invoked sync.
+
+`scripts/extract-claude-code-221-design-sync.mjs` verifies the exact binary SHA-256,
+then uses a TypeScript scanner to decode static string/template literals without
+evaluating executable content. The source artifact is opened read-only. Its
+26 outputs (main skill, two source-shape references, 23 scripts) and exact literal
+byte offsets/hashes are in
+`src/skills/bundled/design-sync/claude-code-2.1.221.manifest.json`.
+The `.mjs.txt` suffix keeps executable resources inert in the product bundle;
+the skill extracts them with their original `.mjs` paths on invocation.
+
+The bundled command and files are loaded lazily using the shared bundled-skill
+extraction path. It does not automatically allow the write-capable `DesignSync`
+tool. Audited asset text is unchanged. One explicit deployment adaptation is
+prepended to the prompt on non-Claude hosts: project links use the configured
+public `CLAUDE_AI_ORIGIN`, never the internal RPC origin.
+
+Verification includes byte hashes, lazy/concurrent extraction, a one-component
+React package conversion, CSS import closure, structural validation, and both
+unchanged/changed-bundle diff partitions. The local fixture script explicitly
+labels skipped automated rendering; it does not claim an authenticated Web sync.
+
 ## `ClaudeDesign`
 
 | Contract | 2.1.221 evidence |
@@ -67,7 +97,7 @@ Design OAuth destination or accept an arbitrary third-party control plane.
 
 ## `/design` hub
 
-The built-in prompt is byte-copied semantically from strings
+The built-in prompt is based on strings
 `147378944..147382384`. It first calls `ClaudeDesign({operation:"list"})`, then
 routes free-form briefs through `get_claude_design_prompt`; `import` through
 `get_project`/`list_files`/`read_file`; `export` through
@@ -75,6 +105,10 @@ routes free-form briefs through `get_claude_design_prompt`; `import` through
 `list_design_systems`/`list_projects`. Names, aliases, and argument hint are at
 `147384000..147384336`; the exact menu description is at
 `147385760..147386080`.
+
+The port additionally spells out the `operation`/`arguments` envelope in prompt
+examples. This is a model-guidance clarification, not a new wire requirement:
+an omitted empty `arguments` object is still accepted by the native schema.
 
 This port intentionally contains no Claude Code lifecycle, Remote Code,
 Cowork, Schedule, web-app inference, or minified frontend behavior.
