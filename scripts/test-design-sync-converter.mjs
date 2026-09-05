@@ -72,8 +72,44 @@ diff = JSON.parse(await readFile(join(output, '.sync-diff.json'), 'utf8'))
 assert.equal(diff.upload.any, true)
 assert.equal(diff.upload.bundle, true)
 run('package-validate.mjs', ['ds-bundle', '--no-render-check'])
+
+// Exercise the separate Storybook adapter using a minimal prebuilt index
+// fixture. This does not install/run the Storybook app or grade against it.
+await cp(join(repo, 'test/fixtures/design-sync-storybook'), workspace, { recursive: true })
+const storyBuildArgs = ['--config', '.design-sync/storybook-config.json',
+  '--node-modules', dependencies, '--inputs', workspace,
+  '--entry', './dist/index.js', '--out', './storybook-bundle']
+run('package-build.mjs', storyBuildArgs)
+run('package-validate.mjs', ['storybook-bundle', '--no-render-check'])
+const storyOutput = join(workspace, 'storybook-bundle')
+const storyMeta = JSON.parse(await readFile(join(storyOutput, '.ds-build-meta.json'), 'utf8'))
+assert.equal(storyMeta.shape, 'storybook')
+assert.equal(storyMeta.componentCount, 1)
+const storyMap = JSON.parse(await readFile(join(storyOutput, '.stories-map.json'), 'utf8'))
+assert.equal(storyMap.components.length, 1)
+const storyComponent = storyMap.components[0]
+assert.deepEqual(storyComponent.stories.map(story => [story.exportKey, story.emitted]), [
+  ['Primary', 'Primary'], ['Disabled', 'Disabled'], ['CustomRender', 'CustomRender'],
+])
+assert.ok((await readFile(join(storyOutput, '_vendor/preview-decorators.js'), 'utf8'))
+  .includes('STORYBOOK_PROVIDER_PASS'))
+const storyAnchor = join(workspace, 'last-storybook-upload-anchor.json')
+await cp(join(storyOutput, '_ds_sync.json'), storyAnchor)
+run('lib/remote-diff.mjs', ['--local', storyOutput, '--remote', storyAnchor])
+assert.equal(JSON.parse(await readFile(join(storyOutput, '.sync-diff.json'), 'utf8')).upload.any, false)
+const storyFile = join(workspace, 'stories/ParityButton.stories.tsx')
+await writeFile(storyFile, (await readFile(storyFile, 'utf8'))
+  .replace('STORYBOOK_CUSTOM_PASS', 'STORYBOOK_CUSTOM_UPDATED'))
+run('package-build.mjs', storyBuildArgs)
+run('package-validate.mjs', ['storybook-bundle', '--no-render-check'])
+run('lib/remote-diff.mjs', ['--local', storyOutput, '--remote', storyAnchor])
+const storyDiff = JSON.parse(await readFile(join(storyOutput, '.sync-diff.json'), 'utf8'))
+assert.deepEqual(storyDiff.changed, ['ParityButton'], 'Story source edits must invalidate verification')
+assert.deepEqual(storyDiff.upload.components, ['ParityButton'])
+assert.equal(storyDiff.upload.any, true)
 process.stdout.write(`${JSON.stringify({
-  result: 'LOCAL_CONVERTER_STRUCTURAL_PASS', workspace, output,
-  checked: ['26-asset provenance', 'real React dist bundle', 'CSS import closure', 'component metadata', 'no-change diff', 'changed bundle diff'],
+  result: 'LOCAL_CONVERTER_STRUCTURAL_PASS', workspace, output, storyOutput,
+  checked: ['26-asset provenance', 'real React dist bundle', 'CSS import closure', 'component metadata', 'no-change diff', 'changed bundle diff', 'Storybook index adapter', 'three story export pairings', 'preview decorators', 'story source edit invalidates verification'],
   visualVerification: 'NOT_RUN: open the generated component in IAB',
+  storybookReferenceGrading: 'NOT_RUN: fixture index only; no reference Storybook app',
 }, null, 2)}\n`)

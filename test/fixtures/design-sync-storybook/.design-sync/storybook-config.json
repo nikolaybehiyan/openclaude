@@ -1,0 +1,9 @@
+{
+  "pkg": "@parity/design-sync-fixture",
+  "globalName": "ParityFixture",
+  "shape": "storybook",
+  "storybookConfigDir": ".storybook",
+  "storybookStatic": "storybook-static",
+  "cssEntry": "dist/styles.css",
+  "componentSrcMap": { "ParityButton": "src/ParityButton.tsx" }
+}

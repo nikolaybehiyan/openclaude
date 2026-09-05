@@ -1,0 +1,25 @@
+{
+  "v": 5,
+  "entries": {
+    "controls-paritybutton--primary": {
+      "id": "controls-paritybutton--primary", "type": "story",
+      "title": "Controls/ParityButton", "name": "Primary",
+      "importPath": "./stories/ParityButton.stories.tsx"
+    },
+    "controls-paritybutton--disabled": {
+      "id": "controls-paritybutton--disabled", "type": "story",
+      "title": "Controls/ParityButton", "name": "Disabled",
+      "importPath": "./stories/ParityButton.stories.tsx"
+    },
+    "controls-paritybutton--custom-render": {
+      "id": "controls-paritybutton--custom-render", "type": "story",
+      "title": "Controls/ParityButton", "name": "Custom Render",
+      "importPath": "./stories/ParityButton.stories.tsx"
+    },
+    "controls-paritybutton--docs": {
+      "id": "controls-paritybutton--docs", "type": "docs",
+      "title": "Controls/ParityButton", "name": "Docs",
+      "importPath": "./stories/ParityButton.stories.tsx"
+    }
+  }
+}

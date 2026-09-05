@@ -32,6 +32,17 @@ The protected source binary in `downloaded_builds` was only read.
 - IAB opened the locally served generated `ParityButton.html` and visibly
   rendered a styled green React button with `DESIGN_SYNC_COMPONENT_UPDATED`.
   This was a local render check, not an authenticated Web sync.
+- The separate Storybook adapter passed a minimal, hand-authored prebuilt-index
+  fixture: three story exports paired, docs excluded, preview decorator bundled,
+  and story-local custom-render closure preserved. Structural validation passed
+  before and after editing the story. The unchanged anchor requests no upload;
+  the story edit invalidates `ParityButton` verification and requests upload.
+- IAB rendered that generated Storybook card with `STORYBOOK_PRIMARY_PASS`, a
+  genuinely disabled `STORYBOOK_DISABLED_PASS` button, and the updated custom
+  story `STORYBOOK_CUSTOM_UPDATED`, all with the fixture styling. This tests the
+  converter's Storybook-index path, not a full Storybook build or a comparison
+  against a reference Storybook app. The temporary preview server was stopped
+  after inspection; the production Design tab was left unchanged.
 - The existing authenticated Design project
   `81c23a83-67fa-469c-970f-2338f6fac8ae` still displayed
   `DESIGN_IAB_PASS_20260905` in its preview iframe in IAB. It was created by the
@@ -61,6 +72,7 @@ after a source edit. Observe the model's final response as well as the rendered
 artifact. A new runtime has not passed those steps yet.
 
 The local structural validator explicitly used `--no-render-check`; its skipped
-Playwright validation must not be reported as passed. IAB verified the one
-fixture card separately. Storybook conversion, full visual grading, authenticated
-upload/re-sync, and all other pending parity journeys remain unverified here.
+Playwright validation must not be reported as passed. IAB verified the package
+card and three generated Storybook stories separately. A full Storybook build,
+reference visual grading, authenticated upload/re-sync, and all other pending
+parity journeys remain unverified here.
