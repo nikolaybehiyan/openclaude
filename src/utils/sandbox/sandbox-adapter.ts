@@ -44,6 +44,7 @@ import {
   updateSettingsForSource,
 } from '../settings/settings.js'
 import type { SettingsJson } from '../settings/types.js'
+import { getUpstreamProxySandboxNetwork } from '../subprocessEnv.js'
 
 // ============================================================================
 // Settings Converter
@@ -390,6 +391,7 @@ export function convertToSandboxRuntimeConfig(
       allowLocalBinding: settings.sandbox?.network?.allowLocalBinding,
       httpProxyPort: settings.sandbox?.network?.httpProxyPort,
       socksProxyPort: settings.sandbox?.network?.socksProxyPort,
+      ...getUpstreamProxySandboxNetwork(),
     },
     filesystem: {
       denyRead,

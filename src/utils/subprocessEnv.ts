@@ -76,6 +76,41 @@ export function registerUpstreamProxyEnvFn(
   _getUpstreamProxyEnv = fn
 }
 
+/** Route sandbox traffic through the same hosted relay as other subprocesses.
+ * SRT otherwise replaces HTTPS_PROXY with its own direct-connect proxy.
+ * The server relay remains the owner of host, method and credential policy.
+ * Ordinary/local sessions have no registered hosted relay and are unchanged.
+ */
+export function getUpstreamProxySandboxNetwork(): {
+  httpProxyPort: number
+  socksProxyPort: undefined
+  parentProxy: { http: string; https: string; noProxy: string }
+} | undefined {
+  if (!isEnvTruthy(process.env.CCR_UPSTREAM_PROXY_ENABLED) ||
+      !isEnvTruthy(process.env.CLAUDE_CODE_REMOTE) || !_getUpstreamProxyEnv) {
+    return undefined
+  }
+  const env = _getUpstreamProxyEnv()
+  const endpoint = env.HTTPS_PROXY
+  if (!endpoint || !env.SSL_CERT_FILE) {
+    throw new Error('Hosted sandbox upstream relay is unavailable')
+  }
+  const url = new URL(endpoint)
+  const port = Number(url.port)
+  if (url.protocol !== 'http:' || url.hostname !== '127.0.0.1' ||
+      !Number.isInteger(port) || port < 1 || port > 65535 ||
+      url.username || url.password || url.pathname !== '/' || url.search || url.hash) {
+    throw new Error('Hosted sandbox upstream relay must be a local listener')
+  }
+  return {
+    httpProxyPort: port,
+    socksProxyPort: undefined,
+    // SRT's SOCKS listener must also chain through the relay, not connect
+    // directly to a host that requires server-side credential/policy checks.
+    parentProxy: { http: endpoint, https: endpoint, noProxy: '' },
+  }
+}
+
 export function subprocessEnv(): NodeJS.ProcessEnv {
   // CCR upstreamproxy: inject HTTPS_PROXY + CA bundle vars so curl/gh/python
   // in agent subprocesses route through the local relay. Returns {} when the
