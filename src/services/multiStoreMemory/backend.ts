@@ -145,14 +145,28 @@ export class MemoryServiceBackend {
   readonly label: string
   private readonly memoriesUrl: string
   private readonly exportUrl: string
+  private readonly usesSessionControlAPI: boolean
 
   constructor(readonly store: MemoryStoreConfig) {
     this.mode = store.mode
     this.partitionId = store.path.replace(/\/+$/, '')
     this.label = store.mount
-    const base = getOauthConfig().BASE_API_URL.replace(/\/+$/, '')
+    // Hosted Code has a separate, supervisor-owned control origin. Memory
+    // belongs to that owner, just like session references, not the public
+    // OAuth/UI origin (which may not be reachable from a worker sandbox).
+    // With no hosted origin, retain the native OAuth transport unchanged.
+    const controlBase = process.env.CLAUDE_CODE_API_BASE_URL?.trim()
+    this.usesSessionControlAPI = Boolean(controlBase)
+    const base = (controlBase || getOauthConfig().BASE_API_URL).replace(/\/+$/, '')
+    const baseUrl = new URL(base)
+    if (
+      !['http:', 'https:'].includes(baseUrl.protocol) ||
+      baseUrl.username || baseUrl.password || baseUrl.search || baseUrl.hash
+    ) {
+      throw new MemoryServiceError('invalid memory API origin', undefined, true)
+    }
     const partitionUrl = new URL(this.partitionId, base)
-    if (partitionUrl.origin !== new URL(base).origin) {
+    if (partitionUrl.origin !== baseUrl.origin) {
       throw new MemoryServiceError(
         `memory store ${store.mount} overrides the configured API host`,
         undefined,
@@ -166,6 +180,10 @@ export class MemoryServiceBackend {
   private authHeaders(): Record<string, string> {
     const sessionHeaders = getSessionIngressAuthHeaders()
     if (Object.keys(sessionHeaders).length > 0) return sessionHeaders
+    if (this.usesSessionControlAPI) {
+      // Never send a personal OAuth credential to a hosted worker endpoint.
+      throw new MemoryServiceError('hosted memory requires session ingress authentication')
+    }
     const oauth = getClaudeAIOAuthTokens()
     return oauth?.accessToken
       ? { Authorization: `Bearer ${oauth.accessToken}` }
@@ -184,6 +202,7 @@ export class MemoryServiceBackend {
           ...config.headers,
         },
         timeout: REQUEST_TIMEOUT_MS,
+        ...(this.usesSessionControlAPI && { maxRedirects: 0 }),
         validateStatus: () => true,
       })
     } catch (error) {

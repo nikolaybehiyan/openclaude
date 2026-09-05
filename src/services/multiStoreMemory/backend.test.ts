@@ -11,6 +11,7 @@ import type { MemoryStoreConfig } from './config.js'
 const originalRequest = axios.request
 const originalOauthUrl = process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
 const originalSessionToken = process.env.CLAUDE_CODE_SESSION_ACCESS_TOKEN
+const originalControlUrl = process.env.CLAUDE_CODE_API_BASE_URL
 
 const rwStore: MemoryStoreConfig = {
   path: '/v1/code/memory/partitions/team',
@@ -21,6 +22,8 @@ const rwStore: MemoryStoreConfig = {
 
 afterEach(() => {
   axios.request = originalRequest
+  if (originalControlUrl === undefined) delete process.env.CLAUDE_CODE_API_BASE_URL
+  else process.env.CLAUDE_CODE_API_BASE_URL = originalControlUrl
   if (originalOauthUrl === undefined) {
     delete process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL
   } else {
@@ -34,12 +37,37 @@ afterEach(() => {
 })
 
 function setupBackend(): MemoryServiceBackend {
+  delete process.env.CLAUDE_CODE_API_BASE_URL
   process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = 'https://ai.darbmind.ru'
   process.env.CLAUDE_CODE_SESSION_ACCESS_TOKEN = 'test-session-token'
   return new MemoryServiceBackend(rwStore)
 }
 
 describe('Claude Tag memory service backend', () => {
+  test('uses the hosted control owner with ingress auth instead of the public OAuth origin', async () => {
+    setupBackend()
+    process.env.CLAUDE_CODE_API_BASE_URL = 'http://code-service.code-service.svc.cluster.local/'
+    let request: AxiosRequestConfig | undefined
+    axios.request = (async (config: AxiosRequestConfig) => {
+      request = config
+      return { status: 200, data: { data: [] } }
+    }) as typeof axios.request
+    await new MemoryServiceBackend(rwStore).list()
+    expect(request?.url).toBe('http://code-service.code-service.svc.cluster.local/v1/code/memory/partitions/team/memories')
+    expect(request?.headers).toMatchObject({ Authorization: 'Bearer test-session-token' })
+    expect(request?.maxRedirects).toBe(0)
+  })
+
+  test('rejects unsafe control URLs and cross-origin store paths', () => {
+    setupBackend()
+    for (const invalid of ['file:///tmp/memory', 'https://user:pass@example.test', 'https://example.test?key=value', 'https://example.test#fragment']) {
+      process.env.CLAUDE_CODE_API_BASE_URL = invalid
+      expect(() => new MemoryServiceBackend(rwStore)).toThrow('invalid memory API origin')
+    }
+    process.env.CLAUDE_CODE_API_BASE_URL = 'https://control.example.test'
+    expect(() => new MemoryServiceBackend({ ...rwStore, path: 'https://different.example.test/memory' })).toThrow('overrides the configured API host')
+  })
+
   test('paginates list requests and keeps session ingress auth', async () => {
     const requests: AxiosRequestConfig[] = []
     axios.request = (async (config: AxiosRequestConfig) => {
