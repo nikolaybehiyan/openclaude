@@ -191,6 +191,13 @@ export const init = memoize(async (): Promise<void> => {
       )
       await startRemoteSkillSync()
     }
+    if (isEnvTruthy(process.env.CLAUDE_CODE_SYNC_SESSION_REFS) &&
+        isEnvTruthy(process.env.CLAUDE_CODE_SYNC_PLUGINS)) {
+      const { startRemotePluginSync } = await import(
+        '../utils/skills/remoteSkillSync.js'
+      )
+      await startRemotePluginSync()
+    }
 
     // Set up git-bash if relevant
     setShellIfWindows()

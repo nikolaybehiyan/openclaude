@@ -12,7 +12,7 @@ import { basename, dirname, join, relative, sep } from 'node:path'
 import { registerCleanup } from '../cleanupRegistry.js'
 import { logForDebugging } from '../debug.js'
 import { getClaudeConfigHomeDir, isEnvTruthy } from '../envUtils.js'
-import { unzipFile } from '../dxt/zip.js'
+import { parseZipModes, unzipFile } from '../dxt/zip.js'
 
 const DEFAULT_SYNC_INTERVAL_MS = 10 * 60 * 1000
 const DEFAULT_INITIAL_WAIT_MS = 5 * 1000
@@ -34,7 +34,7 @@ export type RemoteSkillReference = {
 
 type RemoteSkillManifest = {
   skills: RemoteSkillReference[]
-  plugins?: unknown[]
+  plugins?: RemoteSkillReference[]
 }
 
 type InstalledSkill = {
@@ -118,15 +118,51 @@ export async function startRemoteSkillSync(): Promise<void> {
 export async function syncRemoteSkillsOnce(
   options: RemoteSkillSyncOptions,
 ): Promise<void> {
+  await syncRemoteExtensionsOnce(options, 'skills')
+}
+
+// 2.1.221's session manifest carries plugin references separately. Keep native
+// plugin roots intact: commands, agents, hooks and settings belong to the
+// plugin loader, not to the standalone SKILL.md projection.
+export async function syncRemotePluginsOnce(
+  options: RemoteSkillSyncOptions,
+): Promise<string[]> {
+  return syncRemoteExtensionsOnce(options, 'plugins')
+}
+
+export async function startRemotePluginSync(): Promise<void> {
+  if (!isEnvTruthy(process.env.CLAUDE_CODE_SYNC_SESSION_REFS) ||
+      !isEnvTruthy(process.env.CLAUDE_CODE_SYNC_PLUGINS)) return
+  const options = remoteSkillSyncOptionsFromEnvironment()
+  if (!options) return
+  const paths = await syncRemotePluginsOnce(options)
+  const { setSyncedPluginDirs } = await import('../../bootstrap/state.js')
+  setSyncedPluginDirs(paths)
+}
+
+async function syncRemoteExtensionsOnce(
+  options: RemoteSkillSyncOptions,
+  kind: 'skills' | 'plugins',
+): Promise<string[]> {
   validateSyncOptions(options)
   const fetchImpl = options.fetchImpl ?? fetch
-  const skillsRoot = join(options.configDir, 'skills')
+  const skillsRoot = kind === 'plugins'
+    ? join(options.configDir, 'plugins', 'synced')
+    : join(options.configDir, 'skills')
   const stagingRoot = join(skillsRoot, STAGING_DIRECTORY)
+  if (kind === 'plugins') {
+    await mkdir(join(options.configDir, 'plugins'), { recursive: true, mode: 0o700 })
+    await requireRegularDirectory(join(options.configDir, 'plugins'))
+  }
+  await mkdir(skillsRoot, { recursive: true, mode: 0o700 })
+  await requireRegularDirectory(skillsRoot)
   await mkdir(stagingRoot, { recursive: true, mode: 0o700 })
+  await requireRegularDirectory(stagingRoot)
   await chmod(skillsRoot, 0o700).catch(() => {})
   await chmod(stagingRoot, 0o700).catch(() => {})
 
-  const desired = await fetchRemoteSkillManifest(options, fetchImpl)
+  const manifest = await fetchRemoteSkillManifest(options, fetchImpl)
+  const desired = { skills: kind === 'plugins' ? manifest.plugins ?? [] : manifest.skills }
   const installed = await readInstalledManifest(skillsRoot)
   validateDesiredManifest(desired)
 
@@ -147,7 +183,7 @@ export async function syncRemoteSkillsOnce(
     const target = join(skillsRoot, skill.directory)
     const current = installedByID.get(skill.id)
     if (current?.version === skill.version && current.directory === skill.directory) {
-      await requireRegularSkillDirectory(target)
+      await requireRegularExtensionDirectory(target, kind)
       continue
     }
     if (
@@ -172,9 +208,10 @@ export async function syncRemoteSkillsOnce(
         options,
         fetchImpl,
         reference,
+        kind,
       )
       const path = join(transactionRoot, reference.directory)
-      await extractSkillArchive(archive, path)
+      await extractSkillArchive(archive, path, kind)
       return { reference, path }
     },
   ).catch(async error => {
@@ -221,8 +258,9 @@ export async function syncRemoteSkillsOnce(
       await rm(backup, { recursive: true, force: true })
     }
     logForDebugging(
-      `[remote-skills] synchronized ${nextManifest.skills.length} account skills`,
+      `[remote-${kind}] synchronized ${nextManifest.skills.length} session extensions`,
     )
+    return nextManifest.skills.map(item => join(skillsRoot, item.directory))
   } catch (error) {
     for (const target of installedTargets.reverse()) {
       await rm(target, { recursive: true, force: true }).catch(() => {})
@@ -289,21 +327,23 @@ async function fetchRemoteSkillManifest(
     throw new Error('Remote skill manifest exceeds its size limit')
   }
   const parsed = JSON.parse(raw.toString('utf8')) as RemoteSkillManifest
-  if (!parsed || !Array.isArray(parsed.skills)) {
+  if (!parsed || !Array.isArray(parsed.skills) ||
+      (parsed.plugins !== undefined && !Array.isArray(parsed.plugins))) {
     throw new Error('Remote skill manifest is invalid')
   }
-  return { skills: parsed.skills, plugins: [] }
+  return parsed
 }
 
 async function downloadRemoteSkill(
   options: RemoteSkillSyncOptions,
   fetchImpl: typeof fetch,
   skill: RemoteSkillReference,
+  kind: 'skills' | 'plugins',
 ): Promise<Buffer> {
   const response = await boundedFetch(
     options,
     fetchImpl,
-    workerURL(options, `skills/${encodeURIComponent(skill.id)}/download`),
+    workerURL(options, `${kind}/${encodeURIComponent(skill.id)}/download`),
   )
   if (!response.ok) {
     throw new Error(
@@ -336,7 +376,7 @@ async function boundedFetch(
     options.installTimeoutMs ?? DEFAULT_INSTALL_TIMEOUT_MS,
   )
   try {
-    return await fetchImpl(url, {
+    const response = await fetchImpl(url, {
       method: 'GET',
       headers: {
         Authorization: `Bearer ${process.env.CLAUDE_CODE_SESSION_ACCESS_TOKEN ?? options.token}`,
@@ -344,6 +384,28 @@ async function boundedFetch(
       },
       signal: controller.signal,
     })
+    if (!response.ok || !response.body) return response
+    const limit = url.endsWith('/skill-manifest') ? MAX_MANIFEST_BYTES : MAX_ARCHIVE_BYTES
+    const reader = response.body.getReader()
+    const abort = () => { void reader.cancel().catch(() => {}) }
+    controller.signal.addEventListener('abort', abort, { once: true })
+    const chunks: Uint8Array[] = []
+    let length = 0
+    try {
+      while (true) {
+        controller.signal.throwIfAborted()
+        const {value, done} = await reader.read()
+        controller.signal.throwIfAborted()
+        if (done) break
+        length += value.length
+        if (length > limit) throw new Error('Remote extension response exceeds its size limit')
+        chunks.push(value)
+      }
+      return new Response(Buffer.concat(chunks, length), {status: response.status, headers: response.headers})
+    } finally {
+      controller.signal.removeEventListener('abort', abort)
+      await reader.cancel().catch(() => {})
+    }
   } finally {
     clearTimeout(timeout)
   }
@@ -385,10 +447,16 @@ function validateDesiredManifest(manifest: RemoteSkillManifest): void {
 async function extractSkillArchive(
   archive: Buffer,
   destination: string,
+  kind: 'skills' | 'plugins',
 ): Promise<void> {
   const entries = await unzipFile(archive)
   const files = Object.keys(entries).filter(path => !path.endsWith('/'))
-  const wrapper = skillArchiveWrapper(files)
+  const marker = kind === 'plugins' ? '.claude-plugin/plugin.json' : 'SKILL.md'
+  const wrapper = skillArchiveWrapper(files, marker)
+  const modes = kind === 'plugins' ? parseZipModes(archive) : {}
+  if (Object.values(modes).some(mode => ![0, 0o040000, 0o100000].includes(mode & 0o170000))) {
+    throw new Error('Remote plugin archive contains a symlink or special file')
+  }
   await mkdir(destination, { recursive: true, mode: 0o700 })
   for (const archivePath of files) {
     const relativePath = wrapper
@@ -400,20 +468,21 @@ async function extractSkillArchive(
       throw new Error('Remote skill archive escaped its destination')
     }
     await mkdir(dirname(output), { recursive: true, mode: 0o700 })
-    await writeFile(output, entries[archivePath], { mode: 0o600 })
+    const mode = kind === 'plugins' && ((modes[archivePath] ?? 0) & 0o111) ? 0o700 : 0o600
+    await writeFile(output, entries[archivePath], { mode })
   }
-  await requireRegularSkillDirectory(destination)
+  await requireRegularExtensionDirectory(destination, kind)
 }
 
-function skillArchiveWrapper(files: string[]): string | undefined {
-  if (files.includes('SKILL.md')) return undefined
+function skillArchiveWrapper(files: string[], marker: string): string | undefined {
+  if (files.includes(marker)) return undefined
   const roots = new Set(files.map(path => path.split('/')[0]).filter(Boolean))
   if (roots.size !== 1) {
     throw new Error('Remote skill archive must contain one skill root')
   }
   const root = [...roots][0]!
-  if (!files.includes(`${root}/SKILL.md`)) {
-    throw new Error('Remote skill archive does not contain SKILL.md')
+  if (!files.includes(`${root}/${marker}`)) {
+    throw new Error(`Remote extension archive does not contain ${marker}`)
   }
   if (files.some(path => path !== root && !path.startsWith(`${root}/`))) {
     throw new Error('Remote skill archive contains files outside its skill root')
@@ -475,11 +544,19 @@ async function removeManagedSkillDirectory(
   await rm(target, { recursive: true, force: true })
 }
 
-async function requireRegularSkillDirectory(path: string): Promise<void> {
+async function requireRegularExtensionDirectory(path: string, kind: 'skills' | 'plugins'): Promise<void> {
   await requireRegularDirectory(path)
-  const skillFile = await lstat(join(path, 'SKILL.md'))
+  const marker = kind === 'plugins' ? '.claude-plugin/plugin.json' : 'SKILL.md'
+  if (kind === 'plugins') await requireRegularDirectory(join(path, '.claude-plugin'))
+  const skillFile = await lstat(join(path, marker))
   if (!skillFile.isFile() || skillFile.isSymbolicLink()) {
-    throw new Error(`Remote skill ${basename(path)} has invalid SKILL.md`)
+    throw new Error(`Remote extension ${basename(path)} has invalid ${marker}`)
+  }
+  if (kind === 'plugins') {
+    const manifest = JSON.parse(await readFile(join(path, marker), 'utf8'))
+    if (typeof manifest.name !== 'string' || !manifest.name.trim()) {
+      throw new Error(`Remote plugin ${basename(path)} has no name`)
+    }
   }
 }
 

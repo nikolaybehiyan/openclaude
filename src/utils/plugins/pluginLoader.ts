@@ -46,7 +46,7 @@ import {
 } from 'fs/promises'
 import memoize from 'lodash-es/memoize.js'
 import { basename, dirname, join, relative, resolve, sep } from 'path'
-import { getInlinePlugins } from '../../bootstrap/state.js'
+import { getInlinePlugins, getSyncedPluginDirs } from '../../bootstrap/state.js'
 import {
   BUILTIN_MARKETPLACE_NAME,
   getBuiltinPlugins,
@@ -2934,6 +2934,7 @@ async function finishLoadingPluginFromPath(
  */
 async function loadSessionOnlyPlugins(
   sessionPluginPaths: Array<string>,
+  source: 'inline' | 'synced' = 'inline',
 ): Promise<{ plugins: LoadedPlugin[]; errors: PluginError[] }> {
   if (sessionPluginPaths.length === 0) {
     return { plugins: [], errors: [] }
@@ -2963,14 +2964,14 @@ async function loadSessionOnlyPlugins(
       const dirName = basename(resolvedPath)
       const { plugin, errors: pluginErrors } = await createPluginFromPath(
         resolvedPath,
-        `${dirName}@inline`, // temporary, will be updated after we know the real name
+        `${dirName}@${source}`, // temporary, will be updated after we know the real name
         true, // always enabled
         dirName,
       )
 
       // Update source to use the actual plugin name from manifest
-      plugin.source = `${plugin.name}@inline`
-      plugin.repository = `${plugin.name}@inline`
+      plugin.source = `${plugin.name}@${source}`
+      plugin.repository = `${plugin.name}@${source}`
 
       plugins.push(plugin)
       errors.push(...pluginErrors)
@@ -3208,11 +3209,12 @@ async function assemblePluginLoadResult(
   // getInlinePlugins() is a synchronous state read with no dependency on
   // marketplace loading, so these two sources can be fetched concurrently.
   const inlinePlugins = getInlinePlugins()
-  const [marketplaceResult, sessionResult] = await Promise.all([
+  const [marketplaceResult, sessionResult, syncedResult] = await Promise.all([
     marketplaceLoader(),
     inlinePlugins.length > 0
       ? loadSessionOnlyPlugins(inlinePlugins)
       : Promise.resolve({ plugins: [], errors: [] }),
+    loadSessionOnlyPlugins(getSyncedPluginDirs(), 'synced'),
   ])
   // 3. Load built-in plugins that ship with the CLI
   const builtinResult = getBuiltinPlugins()
@@ -3221,7 +3223,7 @@ async function assemblePluginLoadResult(
   // UNLESS the installed plugin is locked by managed settings
   // (policySettings). See mergePluginSources() for details.
   const { plugins: allPlugins, errors: mergeErrors } = mergePluginSources({
-    session: sessionResult.plugins,
+    session: [...sessionResult.plugins, ...syncedResult.plugins],
     marketplace: marketplaceResult.plugins,
     builtin: [...builtinResult.enabled, ...builtinResult.disabled],
     managedNames: getManagedPluginNames(),
@@ -3229,6 +3231,7 @@ async function assemblePluginLoadResult(
   const allErrors = [
     ...marketplaceResult.errors,
     ...sessionResult.errors,
+    ...syncedResult.errors,
     ...mergeErrors,
   ]
 
