@@ -160,6 +160,8 @@ describe('package consumer types', () => {
         `const _messages: SDKMessage[] = session.getMessages()`,
         `const _multipartQuery: QueryOptions = { cwd: '/workspace', systemPrompt: ['BASE', 'BOUNDARY', 'CONTEXT'] }`,
         `const _multipartSession: SDKSessionOptions = { cwd: '/workspace', systemPrompt: ['BASE', 'CONTEXT'] }`,
+        `const _coworkQuery: QueryOptions = { cwd: '/workspace', appendSubagentSystemPrompt: 'DEVICE', toolAliases: { Bash: 'mcp__device__shell' }, planModeInstructions: 'COWORK_PLAN' }`,
+        `const _coworkSession: SDKSessionOptions = { cwd: '/workspace', appendSubagentSystemPrompt: 'DEVICE', toolAliases: { Bash: 'mcp__device__shell' }, planModeInstructions: 'COWORK_PLAN' }`,
       ].join('\n'),
     )
 

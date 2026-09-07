@@ -155,6 +155,12 @@ export type QueryOptions = {
     | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Extra Task-child guidance (gated by CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT). */
+  appendSubagentSystemPrompt?: string
+  /** Replaces the plan workflow body, not read-only enforcement or approval. */
+  planModeInstructions?: string
+  /** Single-hop execution redirects; policy checks still apply to the target. */
+  toolAliases?: Record<string, string>
   /** Agent definitions to register with the query engine. */
   agents?: Record<string, {
     description: string
@@ -702,6 +708,7 @@ class QueryImpl implements Query {
       allowDangerouslySkipPermissions: this.permissionContext.isBypassPermissionsModeAvailable,
       allowedTools: [...(this.permissionContext.alwaysAllowRules.cliArg ?? [])],
       disallowedTools: [...(this.permissionContext.alwaysDenyRules.cliArg ?? [])],
+      toolAliases: this.permissionContext.toolAliases,
     })
     this.permissionContext = newPermissionContext
     this.appStateStore.setState(prev => ({
@@ -1067,6 +1074,9 @@ export function query(params: {
     readFileCache,
     customSystemPrompt,
     appendSystemPrompt,
+    appendSubagentSystemPrompt: options.appendSubagentSystemPrompt,
+    planModeInstructions: options.planModeInstructions,
+    toolAliases: options.toolAliases,
     userSpecifiedModel: model,
     abortController: ac,
     includePartialMessages: options.includePartialMessages ?? false,

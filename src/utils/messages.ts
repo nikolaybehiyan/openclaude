@@ -3143,6 +3143,7 @@ export function wrapMessagesInSystemReminder(
 
 function getPlanModeInstructions(attachment: {
   reminderType: 'full' | 'sparse'
+  customInstructions?: string
   isSubAgent?: boolean
   planFilePath: string
   planExists: boolean
@@ -3216,9 +3217,16 @@ function getPlanModeV2Instructions(attachment: {
   isSubAgent?: boolean
   planFilePath?: string
   planExists?: boolean
+  customInstructions?: string
 }): UserMessage[] {
   if (attachment.isSubAgent) {
     return []
+  }
+
+  // 2.1.221: the host replaces only the product workflow, never the plan
+  // boundary or ExitPlanMode approval protocol. Empty string uses the default.
+  if (attachment.customInstructions) {
+    return getCustomPlanModeInstructions({ ...attachment, customInstructions: attachment.customInstructions })
   }
 
   // When interview phase is enabled, use the iterative workflow.
@@ -3302,6 +3310,33 @@ NOTE: At any point in time through this workflow you should feel free to ask the
   return wrapMessagesInSystemReminder([
     createUserMessage({ content, isMeta: true }),
   ])
+}
+
+function getCustomPlanModeInstructions(attachment: {
+  planFilePath?: string
+  planExists?: boolean
+  customInstructions: string
+}): UserMessage[] {
+  const planFileInfo = attachment.planExists
+    ? `A plan file already exists at ${attachment.planFilePath}. You can read it and make incremental edits using the ${FileEditTool.name} tool.`
+    : `No plan file exists yet. You should create your plan at ${attachment.planFilePath} using the ${FileWriteTool.name} tool.`
+  const content = `Plan mode is active. The user indicated that they do not want you to execute yet -- you MUST NOT make any edits (with the exception of the plan file mentioned below), run any non-readonly tools (including changing configs or making commits), or otherwise make any changes to the system. This supercedes any other instructions you have received.
+
+## Plan File Info:
+${planFileInfo}
+You should build your plan incrementally by writing to or editing this file. NOTE that this is the only file you are allowed to edit - other than this you are only allowed to take READ-ONLY actions.
+
+## Plan Workflow
+
+${attachment.customInstructions}
+
+### Call ${ExitPlanModeV2Tool.name}
+At the very end of your turn, once you have asked the user questions and are happy with your final plan file - you should always call ${ExitPlanModeV2Tool.name} to indicate to the user that you are done planning.
+This is critical - your turn should only end with either using the ${ASK_USER_QUESTION_TOOL_NAME} tool OR calling ${ExitPlanModeV2Tool.name}. Do not stop unless it's for these 2 reasons
+
+**Important:** Use ${ASK_USER_QUESTION_TOOL_NAME} ONLY to clarify requirements or choose between approaches. Use ${ExitPlanModeV2Tool.name} to request plan approval. Do NOT ask about plan approval in any other way - no text questions, no AskUserQuestion. Phrases like "Is this plan okay?", "Should I proceed?", "How does this plan look?", "Any changes before we start?", or similar MUST use ${ExitPlanModeV2Tool.name}.`
+
+  return wrapMessagesInSystemReminder([createUserMessage({ content, isMeta: true })])
 }
 
 function getReadOnlyToolNames(): string {
@@ -3392,8 +3427,11 @@ Your turn should only end by either:
 
 function getPlanModeV2SparseInstructions(attachment: {
   planFilePath: string
+  customInstructions?: string
 }): UserMessage[] {
-  const workflowDescription = isPlanModeInterviewPhaseEnabled()
+  const workflowDescription = attachment.customInstructions
+    ? 'Follow the plan workflow described earlier.'
+    : isPlanModeInterviewPhaseEnabled()
     ? 'Follow iterative workflow: explore codebase, interview user, write to plan incrementally.'
     : 'Follow 5-phase workflow.'
 

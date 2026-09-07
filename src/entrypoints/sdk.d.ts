@@ -375,6 +375,11 @@ export type QueryOptions = {
     | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
+  /** Extra Task-child guidance (gated by CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT). */
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  /** Single-hop execution redirects; policy checks still apply to the target. */
+  toolAliases?: Record<string, string>
   /** Agent definitions to register with the query engine. */
   agents?: Record<string, {
     description: string
@@ -473,6 +478,9 @@ export type SDKSessionOptions = {
     | { type: 'custom'; content: string }
   /** Additional system prompt text appended after the selected base/custom prompt. */
   appendSystemPrompt?: string
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  toolAliases?: Record<string, string>
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
   /** Override max output tokens for the model request. */

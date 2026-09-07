@@ -95,6 +95,9 @@ export async function buildSideQuestionFallbackParams({
   setAppState,
   customSystemPrompt,
   appendSystemPrompt,
+  appendSubagentSystemPrompt,
+  planModeInstructions,
+  toolAliases,
   thinkingConfig,
   agents,
 }: {
@@ -107,6 +110,9 @@ export async function buildSideQuestionFallbackParams({
   setAppState: (f: (prev: AppState) => AppState) => void
   customSystemPrompt: string | string[] | undefined
   appendSystemPrompt: string | undefined
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  toolAliases?: Readonly<Record<string, string>>
   thinkingConfig: ThinkingConfig | undefined
   agents: AgentDefinition[]
 }): Promise<CacheSafeParams> {
@@ -155,6 +161,9 @@ export async function buildSideQuestionFallbackParams({
       agentDefinitions: { activeAgents: agents, allAgents: [] },
       customSystemPrompt,
       appendSystemPrompt,
+      appendSubagentSystemPrompt,
+      planModeInstructions,
+      toolAliases,
     },
     abortController: createAbortController(),
     readFileState,

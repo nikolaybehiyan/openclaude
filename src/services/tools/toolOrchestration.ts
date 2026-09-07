@@ -93,7 +93,7 @@ function partitionToolCalls(
   toolUseContext: ToolUseContext,
 ): Batch[] {
   return toolUseMessages.reduce((acc: Batch[], toolUse) => {
-    const tool = findToolByName(toolUseContext.options.tools, toolUse.name)
+    const tool = findToolByName(toolUseContext.options.tools, toolUse.name, toolUseContext.options.toolAliases)
     const parsedInput = tool?.inputSchema.safeParse(toolUse.input)
     const isConcurrencySafe = parsedInput?.success
       ? (() => {

@@ -69,12 +69,46 @@ type now uses the existing public permission callback type via
 Total: 43 focused tests, no live deployment, no paid/model E2E, no Docker build.
 This is not a full repository typecheck or complete protocol parity claim.
 
+## Second port: host workflow and tool dispatch
+
+The next source port adds the following SDK/initialize fields through the
+headless engine and persistent/query entrypoints:
+
+- `appendSubagentSystemPrompt`: appends one ordered section only when
+  `CLAUDE_CODE_ENABLE_APPEND_SUBAGENT_PROMPT` is truthy. Exact-tools forks retain
+  the parent prefix; nested agents retain the option.
+- `planModeInstructions`: replaces the plan workflow body, retaining the
+  read-only preamble, plan-file boundary and ExitPlanMode approval footer.
+  Sparse and post-compaction reminders preserve that choice. Subagents retain
+  their independent read-only reminder. An empty custom body uses the default.
+- `toolAliases`: explicit own-property, single-hop redirects take precedence
+  over builtin names, including serial and streaming execution. Policy checks
+  use the real target, while applicable session/policy rules can follow the
+  redirect. CLI tool narrowing is not converted into a new MCP grant. Alias
+  state is session-owned and not persisted as authorization.
+
+Reference consumers were inspected in the pinned binary, not inferred from
+field names. No feature gates were globally enabled and no tools were invented.
+
+Second-port verification (2026-09-07): 128 tests, 278 assertions, zero failures
+across subagent prompt, alias resolution/actual execution, custom plan workflow,
+SDK permissions/query/v2 lifecycle, multipart prompt and generated-schema tests.
+Execution tests use inert tools through the actual serial/streaming dispatchers;
+they make no shell, model or connector calls. The external consumer type tests
+also pass with `skipLibCheck:false` (3 tests).
+
+A larger combined run including the identity tests exposed an existing-style
+test-isolation question: the v2 immediate-abort test returns an error result
+instead of rejecting when another test installs global `MACRO`. Its isolated
+run and the 128-test group pass. The broader suite is **not** claimed green;
+baseline causality remains to be established.
+
 ## Still to port/verify separately
 
-- Subagent prompt propagation and its reference environment gate.
-- Plan workflow customization while retaining read-only/exit-plan enforcement.
-- Single-hop tool aliases through execution **and** permissions, not only model
-  display names.
+- CLI `--plan-mode-instructions` (SDK/initialize is implemented).
+- Full wildcard tool-name policy matching. Current coverage is exact names,
+  MCP-server rules and existing input-pattern rules. An explicit redirect to
+  an unavailable target fails closed instead of attempting legacy fallback.
 - Dynamic-section exclusion/reinjection for preset prompts; reference says it
   has no effect on a fully custom prompt.
 - Real cloud file delivery, artifacts, scheduling and device adapters, bound to

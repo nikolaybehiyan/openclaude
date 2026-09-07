@@ -138,6 +138,9 @@ export type QueryEngineConfig = {
   readFileCache: FileStateCache
   customSystemPrompt?: string | string[]
   appendSystemPrompt?: string
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  toolAliases?: Readonly<Record<string, string>>
   userSpecifiedModel?: string
   fallbackModel?: string
   thinkingConfig?: ThinkingConfig
@@ -234,6 +237,9 @@ export class QueryEngine {
       canUseTool,
       customSystemPrompt,
       appendSystemPrompt,
+      appendSubagentSystemPrompt,
+      planModeInstructions,
+      toolAliases,
       userSpecifiedModel,
       fallbackModel,
       jsonSchema,
@@ -283,6 +289,12 @@ export class QueryEngine {
       return result
     }
 
+    if (toolAliases !== undefined) {
+      setAppState(prev => ({
+        ...prev,
+        toolPermissionContext: { ...prev.toolPermissionContext, toolAliases: { ...toolAliases } },
+      }))
+    }
     const initialAppState = getAppState()
     const initialMainLoopModel = userSpecifiedModel
       ? parseUserSpecifiedModel(userSpecifiedModel)
@@ -372,6 +384,9 @@ export class QueryEngine {
         isNonInteractiveSession: true,
         customSystemPrompt,
         appendSystemPrompt,
+        appendSubagentSystemPrompt,
+        planModeInstructions,
+        toolAliases,
         agentDefinitions: { activeAgents: agents, allAgents: agents },
         theme: resolveThemeSetting(getGlobalConfig().theme),
         maxBudgetUsd,
@@ -532,6 +547,9 @@ export class QueryEngine {
         isNonInteractiveSession: true,
         customSystemPrompt,
         appendSystemPrompt,
+        appendSubagentSystemPrompt,
+        planModeInstructions,
+        toolAliases,
         theme: resolveThemeSetting(getGlobalConfig().theme),
         agentDefinitions: { activeAgents: agents, allAgents: agents },
         maxBudgetUsd,
@@ -1371,6 +1389,9 @@ export async function* ask({
   setReadFileCache,
   customSystemPrompt,
   appendSystemPrompt,
+  appendSubagentSystemPrompt,
+  planModeInstructions,
+  toolAliases,
   userSpecifiedModel,
   fallbackModel,
   jsonSchema,
@@ -1404,6 +1425,9 @@ export async function* ask({
   mutableMessages?: Message[]
   customSystemPrompt?: string | string[]
   appendSystemPrompt?: string
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  toolAliases?: Readonly<Record<string, string>>
   userSpecifiedModel?: string
   fallbackModel?: string
   jsonSchema?: Record<string, unknown>
@@ -1432,6 +1456,9 @@ export async function* ask({
     readFileCache: cloneFileStateCache(getReadFileCache()),
     customSystemPrompt,
     appendSystemPrompt,
+    appendSubagentSystemPrompt,
+    planModeInstructions,
+    toolAliases,
     userSpecifiedModel,
     fallbackModel,
     thinkingConfig,

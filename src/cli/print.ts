@@ -516,6 +516,9 @@ export async function runHeadless(
     taskBudget: { total: number } | undefined
     systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
+    appendSubagentSystemPrompt?: string
+    planModeInstructions?: string
+    toolAliases?: Record<string, string>
     userSpecifiedModel: string | undefined
     fallbackModel: string | undefined
     teleport: string | true | null | undefined
@@ -1036,6 +1039,9 @@ function runHeadlessStreaming(
     taskBudget: { total: number } | undefined
     systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
+    appendSubagentSystemPrompt?: string
+    planModeInstructions?: string
+    toolAliases?: Record<string, string>
     userSpecifiedModel: string | undefined
     fallbackModel: string | undefined
     replayUserMessages?: boolean | undefined
@@ -2232,6 +2238,9 @@ function runHeadlessStreaming(
                 },
                 customSystemPrompt: options.systemPrompt,
                 appendSystemPrompt: options.appendSystemPrompt,
+                appendSubagentSystemPrompt: options.appendSubagentSystemPrompt,
+                planModeInstructions: options.planModeInstructions,
+                toolAliases: options.toolAliases,
                 getAppState,
                 setAppState,
                 abortController,
@@ -2939,6 +2948,7 @@ function runHeadlessStreaming(
             options,
             agents,
             getAppState,
+            setAppState,
           )
 
           // Enable prompt suggestions in AppState when SDK consumer opts in.
@@ -3948,6 +3958,9 @@ function runHeadlessStreaming(
                     setAppState,
                     customSystemPrompt: options.systemPrompt,
                     appendSystemPrompt: options.appendSystemPrompt,
+                    appendSubagentSystemPrompt: options.appendSubagentSystemPrompt,
+                    planModeInstructions: options.planModeInstructions,
+                    toolAliases: options.toolAliases,
                     thinkingConfig: options.thinkingConfig,
                     agents: currentAgents,
                   })
@@ -4452,12 +4465,16 @@ async function handleInitializeRequest(
   options: {
     systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
+    appendSubagentSystemPrompt?: string
+    planModeInstructions?: string
+    toolAliases?: Record<string, string>
     agent?: string | undefined
     userSpecifiedModel?: string | undefined
     [key: string]: unknown
   },
   agents: AgentDefinition[],
   getAppState: () => AppState,
+  setAppState: (f: (prev: AppState) => AppState) => void,
 ): Promise<void> {
   if (initialized) {
     output.enqueue({
@@ -4479,6 +4496,19 @@ async function handleInitializeRequest(
   }
   if (request.appendSystemPrompt !== undefined) {
     options.appendSystemPrompt = request.appendSystemPrompt
+  }
+  if (request.appendSubagentSystemPrompt !== undefined) {
+    options.appendSubagentSystemPrompt = request.appendSubagentSystemPrompt
+  }
+  if (request.planModeInstructions !== undefined) {
+    options.planModeInstructions = request.planModeInstructions
+  }
+  if (request.toolAliases !== undefined) {
+    options.toolAliases = { ...request.toolAliases }
+    setAppState(prev => ({
+      ...prev,
+      toolPermissionContext: { ...prev.toolPermissionContext, toolAliases: options.toolAliases },
+    }))
   }
   if (request.promptSuggestions !== undefined) {
     options.promptSuggestions = request.promptSuggestions

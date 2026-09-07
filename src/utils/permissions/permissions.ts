@@ -238,6 +238,7 @@ export function getAskRules(context: ToolPermissionContext): PermissionRule[] {
 function toolMatchesRule(
   tool: Pick<Tool, 'name' | 'mcpInfo'>,
   rule: PermissionRule,
+  toolAliases?: Readonly<Record<string, string>>,
 ): boolean {
   // Rule must not have content to match the entire tool
   if (rule.ruleValue.ruleContent !== undefined) {
@@ -252,6 +253,16 @@ function toolMatchesRule(
 
   // Direct tool name match
   if (rule.ruleValue.toolName === nameForRuleMatch) {
+    return true
+  }
+
+  // 2.1.221 expands policy/session rules through an explicit SDK redirect,
+  // but not CLI narrowing rules: --tools/--allowedTools still name real tools.
+  if (
+    rule.source !== 'cliArg' && toolAliases &&
+    Object.hasOwn(toolAliases, rule.ruleValue.toolName) &&
+    toolAliases[rule.ruleValue.toolName] === nameForRuleMatch
+  ) {
     return true
   }
 
@@ -277,7 +288,7 @@ export function toolAlwaysAllowedRule(
   tool: Pick<Tool, 'name' | 'mcpInfo'>,
 ): PermissionRule | null {
   return (
-    getAllowRules(context).find(rule => toolMatchesRule(tool, rule)) || null
+    getAllowRules(context).find(rule => toolMatchesRule(tool, rule, context.toolAliases)) || null
   )
 }
 
@@ -288,7 +299,7 @@ export function getDenyRuleForTool(
   context: ToolPermissionContext,
   tool: Pick<Tool, 'name' | 'mcpInfo'>,
 ): PermissionRule | null {
-  return getDenyRules(context).find(rule => toolMatchesRule(tool, rule)) || null
+  return getDenyRules(context).find(rule => toolMatchesRule(tool, rule, context.toolAliases)) || null
 }
 
 /**
@@ -298,7 +309,7 @@ export function getAskRuleForTool(
   context: ToolPermissionContext,
   tool: Pick<Tool, 'name' | 'mcpInfo'>,
 ): PermissionRule | null {
-  return getAskRules(context).find(rule => toolMatchesRule(tool, rule)) || null
+  return getAskRules(context).find(rule => toolMatchesRule(tool, rule, context.toolAliases)) || null
 }
 
 /**
@@ -415,7 +426,10 @@ export function getInputParamRule(
   behavior: PermissionBehavior,
 ): PermissionRule | null {
   const canonicalName = getToolNameForPermissionCheck(tool)
-  const names = [canonicalName, ...(tool.aliases ?? [])]
+  const redirectedNames = Object.entries(context.toolAliases ?? {})
+    .filter(([, target]) => target === canonicalName)
+    .map(([name]) => name)
+  const names = new Set([canonicalName, ...(tool.aliases ?? []), ...redirectedNames])
   for (const name of names) {
     for (const [content, rule] of getRuleByContentsForToolName(
       context,

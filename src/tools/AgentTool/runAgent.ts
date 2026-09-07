@@ -83,6 +83,7 @@ import type { ContentReplacementState } from '../../utils/toolResultStorage.js'
 import { createAgentId } from '../../utils/uuid.js'
 import { resolveAgentTools } from './agentToolUtils.js'
 import { type AgentDefinition, isBuiltInAgent } from './loadAgentsDir.js'
+import { appendSubagentPrompt } from './subagentPrompt.js'
 
 /**
  * Initialize agent-specific MCP servers
@@ -518,7 +519,7 @@ export async function* runAgent({
     appState.toolPermissionContext.additionalWorkingDirectories.keys(),
   )
 
-  const agentSystemPrompt = override?.systemPrompt
+  const baseAgentSystemPrompt = override?.systemPrompt
     ? override.systemPrompt
     : asSystemPrompt(
         await getAgentSystemPrompt(
@@ -529,6 +530,10 @@ export async function* runAgent({
           resolvedTools,
         ),
       )
+
+  const agentSystemPrompt = appendSubagentPrompt(
+    baseAgentSystemPrompt, toolUseContext.options.appendSubagentSystemPrompt, useExactTools ?? false,
+  )
 
   // Determine abortController:
   // - Override takes precedence
@@ -684,6 +689,8 @@ export async function* runAgent({
         ? true
         : (toolUseContext.options.isNonInteractiveSession ?? false),
     appendSystemPrompt: toolUseContext.options.appendSystemPrompt,
+    appendSubagentSystemPrompt: toolUseContext.options.appendSubagentSystemPrompt,
+    toolAliases: toolUseContext.options.toolAliases,
     tools: allTools,
     commands: [],
     debug: toolUseContext.options.debug,

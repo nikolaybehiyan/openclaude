@@ -843,6 +843,7 @@ async function* queryLoop(
                   const tool = findToolByName(
                     toolUseContext.options.tools,
                     block.name,
+                    toolUseContext.options.toolAliases,
                   )
                   if (tool?.backfillObservableInput) {
                     const originalInput = block.input as Record<string, unknown>

@@ -74,7 +74,7 @@ export class StreamingToolExecutor {
    * Add a tool to the execution queue. Will start executing immediately if conditions allow.
    */
   addTool(block: ToolUseBlock, assistantMessage: AssistantMessage): void {
-    const toolDefinition = findToolByName(this.toolDefinitions, block.name)
+    const toolDefinition = findToolByName(this.toolDefinitions, block.name, this.toolUseContext.options.toolAliases)
     if (!toolDefinition) {
       this.tools.push({
         id: block.id,
@@ -231,7 +231,7 @@ export class StreamingToolExecutor {
   }
 
   private getToolInterruptBehavior(tool: TrackedTool): 'cancel' | 'block' {
-    const definition = findToolByName(this.toolDefinitions, tool.block.name)
+    const definition = findToolByName(this.toolDefinitions, tool.block.name, this.toolUseContext.options.toolAliases)
     if (!definition?.interruptBehavior) return 'block'
     try {
       return definition.interruptBehavior()

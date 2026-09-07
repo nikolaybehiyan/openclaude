@@ -126,6 +126,8 @@ export type ToolPermissionContext = DeepImmutable<{
   alwaysAllowRules: ToolPermissionRulesBySource
   alwaysDenyRules: ToolPermissionRulesBySource
   alwaysAskRules: ToolPermissionRulesBySource
+  /** Session-owned, single-hop SDK tool redirects; never persisted as grants. */
+  toolAliases?: Record<string, string>
   isBypassPermissionsModeAvailable: boolean
   isAutoModeAvailable?: boolean
   strippedDangerousRules?: ToolPermissionRulesBySource
@@ -172,6 +174,9 @@ export type ToolUseContext = {
     customSystemPrompt?: string | string[]
     /** Additional system prompt appended after the main system prompt */
     appendSystemPrompt?: string
+    appendSubagentSystemPrompt?: string
+    planModeInstructions?: string
+    toolAliases?: Readonly<Record<string, string>>
     /** Override querySource for analytics tracking */
     querySource?: QuerySource
     /** Optional callback to get the latest tools (e.g., after MCP servers connect mid-query) */
@@ -370,8 +375,17 @@ export function toolMatchesName(
 /**
  * Finds a tool by name or alias from a list of tools.
  */
-export function findToolByName(tools: Tools, name: string): Tool | undefined {
-  return tools.find(t => toolMatchesName(t, name))
+export function findToolByName(
+  tools: Tools,
+  name: string,
+  toolAliases?: Readonly<Record<string, string>>,
+): Tool | undefined {
+  // SDK redirects take precedence over builtin names. Resolve exactly once:
+  // aliases A -> B -> C must not silently execute C (or recurse on cycles).
+  const resolved = toolAliases && Object.hasOwn(toolAliases, name)
+    ? toolAliases[name] ?? name
+    : name
+  return tools.find(t => toolMatchesName(t, resolved))
 }
 
 export type Tool<

@@ -567,6 +567,7 @@ export type Attachment =
   | {
       type: 'plan_mode'
       reminderType: 'full' | 'sparse'
+      customInstructions?: string
       isSubAgent?: boolean
       planFilePath: string
       planExists: boolean
@@ -1237,6 +1238,7 @@ async function getPlanModeAttachments(
   attachments.push({
     type: 'plan_mode',
     reminderType,
+    customInstructions: toolUseContext.options.planModeInstructions,
     isSubAgent: !!toolUseContext.agentId,
     planFilePath,
     planExists: existingPlan !== null,

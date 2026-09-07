@@ -48,6 +48,16 @@ afterEach(() => {
 })
 
 describe('V2: session creation', () => {
+  test('createSession retains Cowork execution and permission redirects', () => {
+    const toolAliases = { Bash: 'mcp__device__shell' }
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(), appendSubagentSystemPrompt: 'DEVICE_BOUNDARY', toolAliases, planModeInstructions: 'COWORK_PLAN',
+    })
+    expect((session as any)._engine.config.appendSubagentSystemPrompt).toBe('DEVICE_BOUNDARY')
+    expect((session as any)._engine.config.planModeInstructions).toBe('COWORK_PLAN')
+    expect((session as any)._engine.config.toolAliases).toEqual(toolAliases)
+    expect((session as any)._appStateStore.getState().toolPermissionContext.toolAliases).toEqual(toolAliases)
+  })
   test('createSession() returns SDKSession with valid sessionId', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),

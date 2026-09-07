@@ -188,6 +188,9 @@ export type SDKSessionOptions = {
     | { type: 'custom'; content: string }
   /** Additional system prompt text appended after the selected base/custom prompt. */
   appendSystemPrompt?: string
+  appendSubagentSystemPrompt?: string
+  planModeInstructions?: string
+  toolAliases?: Record<string, string>
   /** Thinking configuration for persistent SDK sessions. */
   thinkingConfig?: ThinkingConfig
   /** Session-scoped model effort selected by a managed host. */
@@ -1782,6 +1785,9 @@ function createEngineFromOptions(
     readFileCache,
     customSystemPrompt,
     appendSystemPrompt,
+    appendSubagentSystemPrompt: options.appendSubagentSystemPrompt,
+    planModeInstructions: options.planModeInstructions,
+    toolAliases: options.toolAliases,
     userSpecifiedModel: model,
     abortController: ac,
     thinkingConfig,
@@ -1971,6 +1977,7 @@ function sdkVisiblePermissionContext(options: SDKSessionOptions): ToolPermission
     additionalDirectories: options.additionalDirectories,
     allowedTools: options.allowedTools,
     disallowedTools: options.disallowedTools,
+    toolAliases: options.toolAliases,
   }), options.tools, getToolsForDefaultPreset())
 }
 

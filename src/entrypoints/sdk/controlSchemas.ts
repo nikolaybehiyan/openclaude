@@ -67,6 +67,9 @@ export const SDKControlInitializeRequestSchema = lazySchema(() =>
       // for existing OpenClaude SDK clients; never join cache-boundary sections.
       systemPrompt: z.union([z.string(), z.array(z.string())]).optional(),
       appendSystemPrompt: z.string().optional(),
+      appendSubagentSystemPrompt: z.string().optional(),
+      planModeInstructions: z.string().optional(),
+      toolAliases: z.record(z.string(), z.string()).optional(),
       agents: z.record(z.string(), AgentDefinitionSchema()).optional(),
       promptSuggestions: z.boolean().optional(),
       agentProgressSummaries: z.boolean().optional(),

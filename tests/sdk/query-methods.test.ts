@@ -17,6 +17,21 @@ afterAll(() => {
 })
 
 describe('QueryImpl multipart system prompt', () => {
+  test('Cowork execution options survive permission mode changes', async () => {
+    const toolAliases = { Bash: 'mcp__device__shell' }
+    const q = query({ prompt: 'test', options: {
+      cwd: process.cwd(), appendSubagentSystemPrompt: 'DEVICE_BOUNDARY', toolAliases, planModeInstructions: 'COWORK_PLAN',
+    } })
+    try {
+      expect((q as any)._engine.config.appendSubagentSystemPrompt).toBe('DEVICE_BOUNDARY')
+      expect((q as any)._engine.config.planModeInstructions).toBe('COWORK_PLAN')
+      expect((q as any)._engine.config.toolAliases).toEqual(toolAliases)
+      for (const mode of ['plan', 'default'] as const) {
+        await q.setPermissionMode(mode)
+        expect((q as any).appStateStore.getState().toolPermissionContext.toolAliases).toEqual(toolAliases)
+      }
+    } finally { q.interrupt() }
+  })
   for (const sections of [[], ['COWORK_BASE', 'CACHE_BOUNDARY', 'DEVICE_CONTEXT']]) {
     test(`query preserves ${sections.length} custom sections`, () => {
       const q = query({ prompt: 'test', options: { cwd: process.cwd(), systemPrompt: sections } })

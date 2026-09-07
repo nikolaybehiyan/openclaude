@@ -54,6 +54,7 @@ export interface PermissionContextOptions {
   allowDangerouslySkipPermissions?: boolean
   allowedTools?: string[]
   disallowedTools?: string[]
+  toolAliases?: Readonly<Record<string, string>>
 }
 
 export function buildPermissionContext(options: PermissionContextOptions): ToolPermissionContext {
@@ -95,6 +96,7 @@ export function buildPermissionContext(options: PermissionContextOptions): ToolP
   return {
     ...base,
     mode: internalMode as ToolPermissionContext['mode'],
+    ...(options.toolAliases !== undefined && { toolAliases: { ...options.toolAliases } }),
     isBypassPermissionsModeAvailable:
       mode === 'bypass-permissions' || mode === 'bypassPermissions' || options.allowDangerouslySkipPermissions === true,
     alwaysAllowRules: {

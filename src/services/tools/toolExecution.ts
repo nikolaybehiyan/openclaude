@@ -343,12 +343,12 @@ export async function* runToolUse(
 ): AsyncGenerator<MessageUpdateLazy, void> {
   const toolName = toolUse.name
   // First try to find in the available tools (what the model sees)
-  let tool = findToolByName(toolUseContext.options.tools, toolName)
+  let tool = findToolByName(toolUseContext.options.tools, toolName, toolUseContext.options.toolAliases)
 
   // If not found, check if it's a deprecated tool being called by alias
   // (e.g., old transcripts calling "KillShell" which is now an alias for "TaskStop")
   // Only fall back for tools where the name matches an alias, not the primary name
-  if (!tool) {
+  if (!tool && !Object.hasOwn(toolUseContext.options.toolAliases ?? {}, toolName)) {
     const fallbackTool = findToolByName(getAllBaseTools(), toolName)
     // Only use fallback if the tool was found via alias (deprecated name)
     if (fallbackTool && fallbackTool.aliases?.includes(toolName)) {
