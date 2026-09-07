@@ -514,7 +514,7 @@ export async function runHeadless(
     maxTurns: number | undefined
     maxBudgetUsd: number | undefined
     taskBudget: { total: number } | undefined
-    systemPrompt: string | undefined
+    systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
     userSpecifiedModel: string | undefined
     fallbackModel: string | undefined
@@ -1034,7 +1034,7 @@ function runHeadlessStreaming(
     maxTurns: number | undefined
     maxBudgetUsd: number | undefined
     taskBudget: { total: number } | undefined
-    systemPrompt: string | undefined
+    systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
     userSpecifiedModel: string | undefined
     fallbackModel: string | undefined
@@ -4450,7 +4450,7 @@ async function handleInitializeRequest(
   structuredIO: StructuredIO,
   enableAuthStatus: boolean,
   options: {
-    systemPrompt: string | undefined
+    systemPrompt: string | string[] | undefined
     appendSystemPrompt: string | undefined
     agent?: string | undefined
     userSpecifiedModel?: string | undefined

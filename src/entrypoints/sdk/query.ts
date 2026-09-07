@@ -152,6 +152,7 @@ export type QueryOptions = {
   /** System prompt override. */
   systemPrompt?:
     | string
+    | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
   /** Agent definitions to register with the query engine. */
@@ -1024,9 +1025,9 @@ export function query(params: {
   const defaultCanUseTool = createDefaultCanUseTool(permissionContext)
 
   // Determine custom system prompt
-  let customSystemPrompt: string | undefined
+  let customSystemPrompt: string | string[] | undefined
   let appendSystemPrompt: string | undefined
-  if (typeof systemPrompt === 'string') {
+  if (typeof systemPrompt === 'string' || Array.isArray(systemPrompt)) {
     customSystemPrompt = systemPrompt
   } else if (systemPrompt?.type === 'custom') {
     customSystemPrompt = systemPrompt.content

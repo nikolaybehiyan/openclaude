@@ -16,6 +16,16 @@ afterAll(() => {
   else process.env[AUTH_KEY] = savedApiKey
 })
 
+describe('QueryImpl multipart system prompt', () => {
+  for (const sections of [[], ['COWORK_BASE', 'CACHE_BOUNDARY', 'DEVICE_CONTEXT']]) {
+    test(`query preserves ${sections.length} custom sections`, () => {
+      const q = query({ prompt: 'test', options: { cwd: process.cwd(), systemPrompt: sections } })
+      expect((q as any)._engine.config.customSystemPrompt).toEqual(sections)
+      q.interrupt()
+    })
+  }
+})
+
 describe('QueryImpl.setModel', () => {
   test('updates model in app state', async () => {
     const q = query({ prompt: 'test', options: { cwd: process.cwd() } })

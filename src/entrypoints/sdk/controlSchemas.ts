@@ -63,7 +63,9 @@ export const SDKControlInitializeRequestSchema = lazySchema(() =>
         .optional(),
       sdkMcpServers: z.array(z.string()).optional(),
       jsonSchema: z.record(z.string(), z.unknown()).optional(),
-      systemPrompt: z.string().optional(),
+      // 2.1.221 sends sections over initialize. Retain the legacy string form
+      // for existing OpenClaude SDK clients; never join cache-boundary sections.
+      systemPrompt: z.union([z.string(), z.array(z.string())]).optional(),
       appendSystemPrompt: z.string().optional(),
       agents: z.record(z.string(), AgentDefinitionSchema()).optional(),
       promptSuggestions: z.boolean().optional(),

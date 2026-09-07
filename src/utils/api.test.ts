@@ -2,7 +2,24 @@ import { expect, test } from 'bun:test'
 import { z } from 'zod/v4'
 import { getEmptyToolPermissionContext, type Tool, type Tools } from '../Tool.js'
 import { SkillTool } from '../tools/SkillTool/SkillTool.js'
-import { toolToAPISchema } from './api.js'
+import { splitSysPromptPrefix, toolToAPISchema } from './api.js'
+import { SYSTEM_PROMPT_DYNAMIC_BOUNDARY } from '../constants/prompts.js'
+import { asSystemPrompt, selectSystemPromptSections } from './systemPromptType.js'
+
+test('SDK multipart system prompt reaches API blocks without nested arrays or boundary text', () => {
+  const sections = ['COWORK_STATIC', SYSTEM_PROMPT_DYNAMIC_BOUNDARY, 'DEVICE_DYNAMIC']
+  const prompt = asSystemPrompt([...selectSystemPromptSections(sections, ['CODE_DEFAULT']), 'PROJECT'])
+  const blocks = splitSysPromptPrefix(prompt)
+  expect(blocks.every(block => typeof block.text === 'string')).toBe(true)
+  const text = blocks.map(block => block.text).join('\n\n')
+  expect(text).toContain('COWORK_STATIC')
+  expect(text).toContain('DEVICE_DYNAMIC')
+  expect(text).toContain('PROJECT')
+  expect(text).not.toContain('CODE_DEFAULT')
+  expect(text).not.toContain(SYSTEM_PROMPT_DYNAMIC_BOUNDARY)
+  expect(text.indexOf('COWORK_STATIC')).toBeLessThan(text.indexOf('DEVICE_DYNAMIC'))
+  expect(text.indexOf('DEVICE_DYNAMIC')).toBeLessThan(text.indexOf('PROJECT'))
+})
 
 test('toolToAPISchema preserves provider-specific schema keywords in input_schema', async () => {
   const schema = await toolToAPISchema(

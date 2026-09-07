@@ -7,7 +7,7 @@ import type { ToolUseContext } from '../Tool.js'
 import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js'
 import { isBuiltInAgent } from '../tools/AgentTool/loadAgentsDir.js'
 import { isEnvTruthy } from './envUtils.js'
-import { asSystemPrompt, type SystemPrompt } from './systemPromptType.js'
+import { asSystemPrompt, selectSystemPromptSections, type SystemPrompt } from './systemPromptType.js'
 
 export { asSystemPrompt, type SystemPrompt } from './systemPromptType.js'
 
@@ -48,7 +48,7 @@ export function buildEffectiveSystemPrompt({
 }: {
   mainThreadAgentDefinition: AgentDefinition | undefined
   toolUseContext: Pick<ToolUseContext, 'options'>
-  customSystemPrompt: string | undefined
+  customSystemPrompt: string | string[] | undefined
   defaultSystemPrompt: string[]
   appendSystemPrompt: string | undefined
   overrideSystemPrompt?: string | null
@@ -115,9 +115,7 @@ export function buildEffectiveSystemPrompt({
   return asSystemPrompt([
     ...(agentSystemPrompt
       ? [agentSystemPrompt]
-      : customSystemPrompt
-        ? [customSystemPrompt]
-        : defaultSystemPrompt),
+      : selectSystemPromptSections(customSystemPrompt, defaultSystemPrompt)),
     ...(appendSystemPrompt ? [appendSystemPrompt] : []),
   ])
 }

@@ -92,12 +92,17 @@ function setupConsumerProject(name: string): string {
 
 /** Compile consumer.ts in the given tmpDir. Returns stdout (empty = success). */
 function tsc(tmpDir: string): string {
-  return execSync('npx tsc -p tsconfig.json --pretty false', {
-    cwd: tmpDir,
-    encoding: 'utf-8',
-    timeout: 60000,
-    stdio: ['pipe', 'pipe', 'pipe'],
-  }).trim()
+  try {
+    return execSync('npx tsc -p tsconfig.json --pretty false', {
+      cwd: tmpDir,
+      encoding: 'utf-8',
+      timeout: 60000,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim()
+  } catch (error) {
+    const diagnostics = error as { stdout?: string; stderr?: string }
+    throw new Error(`${diagnostics.stdout ?? ''}${diagnostics.stderr ?? ''}`, { cause: error })
+  }
 }
 
 function ensureBuildArtifacts(): void {
@@ -136,6 +141,7 @@ describe('package consumer types', () => {
         `  SDKResultMessage,`,
         `  SDKRateLimitError,`,
         `  QueryOptions,`,
+        `  SDKSessionOptions,`,
         `  SDKSession,`,
         `} from '@gitlawb/openclaude/sdk'`,
         ``,
@@ -152,6 +158,8 @@ describe('package consumer types', () => {
         `// Verify session types`,
         `declare const session: SDKSession`,
         `const _messages: SDKMessage[] = session.getMessages()`,
+        `const _multipartQuery: QueryOptions = { cwd: '/workspace', systemPrompt: ['BASE', 'BOUNDARY', 'CONTEXT'] }`,
+        `const _multipartSession: SDKSessionOptions = { cwd: '/workspace', systemPrompt: ['BASE', 'CONTEXT'] }`,
       ].join('\n'),
     )
 

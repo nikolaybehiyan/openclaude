@@ -372,6 +372,7 @@ export type QueryOptions = {
   ) => Promise<{ behavior: 'allow' | 'deny'; message?: string; updatedInput?: unknown }>
   systemPrompt?:
     | string
+    | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
   /** Agent definitions to register with the query engine. */
@@ -467,6 +468,7 @@ export type SDKSessionOptions = {
   /** Custom system prompt for persistent SDK sessions. */
   systemPrompt?:
     | string
+    | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
   /** Additional system prompt text appended after the selected base/custom prompt. */
@@ -813,7 +815,7 @@ export function unstable_didAutoDreamFireSince(sinceMs: number): Promise<boolean
 export function unstable_createAutoMemoryCanUseTool(
   memoryDir: string,
   options?: AutoMemoryCanUseToolOptions,
-): CanUseToolCallback
+): NonNullable<QueryOptions['canUseTool']>
 
 export function unstable_initAutoMemoryLifecycle(): void
 

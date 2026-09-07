@@ -183,6 +183,7 @@ export type SDKSessionOptions = {
   /** Custom system prompt for persistent SDK sessions. */
   systemPrompt?:
     | string
+    | string[]
     | { type: 'preset'; preset: string; append?: string }
     | { type: 'custom'; content: string }
   /** Additional system prompt text appended after the selected base/custom prompt. */
@@ -1749,9 +1750,9 @@ function createEngineFromOptions(
     defaultCanUseTool,
   )
 
-  let customSystemPrompt: string | undefined
+  let customSystemPrompt: string | string[] | undefined
   let appendSystemPrompt: string | undefined
-  if (typeof options.systemPrompt === 'string') {
+  if (typeof options.systemPrompt === 'string' || Array.isArray(options.systemPrompt)) {
     customSystemPrompt = options.systemPrompt
   } else if (options.systemPrompt?.type === 'custom') {
     customSystemPrompt = options.systemPrompt.content

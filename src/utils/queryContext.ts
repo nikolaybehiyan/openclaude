@@ -21,7 +21,7 @@ import { createAbortController } from './abortController.js'
 import type { FileStateCache } from './fileStateCache.js'
 import type { CacheSafeParams } from './forkedAgent.js'
 import { getMainLoopModel } from './model/model.js'
-import { asSystemPrompt } from './systemPromptType.js'
+import { asSystemPrompt, selectSystemPromptSections } from './systemPromptType.js'
 import {
   shouldEnableThinkingByDefault,
   type ThinkingConfig,
@@ -52,7 +52,7 @@ export async function fetchSystemPromptParts({
   mainLoopModel: string
   additionalWorkingDirectories: string[]
   mcpClients: MCPServerConnection[]
-  customSystemPrompt: string | undefined
+  customSystemPrompt: string | string[] | undefined
 }): Promise<{
   defaultSystemPrompt: string[]
   userContext: { [k: string]: string }
@@ -105,7 +105,7 @@ export async function buildSideQuestionFallbackParams({
   readFileState: FileStateCache
   getAppState: () => AppState
   setAppState: (f: (prev: AppState) => AppState) => void
-  customSystemPrompt: string | undefined
+  customSystemPrompt: string | string[] | undefined
   appendSystemPrompt: string | undefined
   thinkingConfig: ThinkingConfig | undefined
   agents: AgentDefinition[]
@@ -125,9 +125,7 @@ export async function buildSideQuestionFallbackParams({
     })
 
   const systemPrompt = asSystemPrompt([
-    ...(customSystemPrompt !== undefined
-      ? [customSystemPrompt]
-      : defaultSystemPrompt),
+    ...selectSystemPromptSections(customSystemPrompt, defaultSystemPrompt),
     ...(appendSystemPrompt ? [appendSystemPrompt] : []),
   ])
 

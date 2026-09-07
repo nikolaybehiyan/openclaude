@@ -97,6 +97,16 @@ describe('V2: session creation', () => {
     expect((session as any)._engine?.config?.customSystemPrompt).toBe('Use the project voice')
   })
 
+  test('createSession() preserves multipart system prompt and separate append', () => {
+    const sections = ['COWORK_BASE', 'CACHE_BOUNDARY', 'DEVICE_CONTEXT']
+    const session = unstable_v2_createSession({
+      cwd: process.cwd(), systemPrompt: sections, appendSystemPrompt: 'PROJECT_CONTEXT',
+    })
+    expect((session as any)._engine.config.customSystemPrompt).toEqual(sections)
+    expect((session as any)._engine.config.appendSystemPrompt).toBe('PROJECT_CONTEXT')
+    session.interrupt()
+  })
+
   test('createSession() accepts explicit thinking config for persistent hosts', () => {
     const session = unstable_v2_createSession({
       cwd: process.cwd(),

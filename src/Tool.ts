@@ -169,7 +169,7 @@ export type ToolUseContext = {
     agentDefinitions: AgentDefinitionsResult
     maxBudgetUsd?: number
     /** Custom system prompt that replaces the default system prompt */
-    customSystemPrompt?: string
+    customSystemPrompt?: string | string[]
     /** Additional system prompt appended after the main system prompt */
     appendSystemPrompt?: string
     /** Override querySource for analytics tracking */

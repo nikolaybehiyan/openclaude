@@ -78,7 +78,7 @@ import {
   flushSessionStorage,
   recordTranscript,
 } from './utils/sessionStorage.js'
-import { asSystemPrompt } from './utils/systemPromptType.js'
+import { asSystemPrompt, selectSystemPromptSections } from './utils/systemPromptType.js'
 import { resolveThemeSetting } from './utils/systemTheme.js'
 import {
   shouldEnableThinkingByDefault,
@@ -136,7 +136,7 @@ export type QueryEngineConfig = {
   setAppState: (f: (prev: AppState) => AppState) => void
   initialMessages?: Message[]
   readFileCache: FileStateCache
-  customSystemPrompt?: string
+  customSystemPrompt?: string | string[]
   appendSystemPrompt?: string
   userSpecifiedModel?: string
   fallbackModel?: string
@@ -295,9 +295,9 @@ export class QueryEngine {
         : { type: 'disabled' }
 
     headlessProfilerCheckpoint('before_getSystemPrompt')
-    // Narrow once so TS tracks the type through the conditionals below.
-    const customPrompt =
-      typeof customSystemPrompt === 'string' ? customSystemPrompt : undefined
+    // The Desktop SDK sends ordered sections, including its cache boundary.
+    // An array is a complete custom prompt, just like the CLI string form.
+    const customPrompt = customSystemPrompt
     const {
       defaultSystemPrompt,
       userContext: baseUserContext,
@@ -332,7 +332,7 @@ export class QueryEngine {
         : null
 
     const systemPrompt = asSystemPrompt([
-      ...(customPrompt !== undefined ? [customPrompt] : defaultSystemPrompt),
+      ...selectSystemPromptSections(customPrompt, defaultSystemPrompt),
       ...(memoryMechanicsPrompt ? [memoryMechanicsPrompt] : []),
       ...(appendSystemPrompt ? [appendSystemPrompt] : []),
     ])
@@ -1402,7 +1402,7 @@ export async function* ask({
   taskBudget?: { total: number }
   canUseTool: CanUseToolFn
   mutableMessages?: Message[]
-  customSystemPrompt?: string
+  customSystemPrompt?: string | string[]
   appendSystemPrompt?: string
   userSpecifiedModel?: string
   fallbackModel?: string
