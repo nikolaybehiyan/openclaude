@@ -532,7 +532,6 @@ export class StructuredIO {
 
   createCanUseTool(
     onPermissionPrompt?: (details: RequiresActionDetails) => void,
-    avoidPermissionPrompts = false,
   ): CanUseToolFn {
     return async (
       tool: Tool,
@@ -542,26 +541,6 @@ export class StructuredIO {
       toolUseID: string,
       forceDecision?: PermissionDecision,
     ): Promise<PermissionDecision> => {
-      // Hosted channel sessions have no human at the SDK approval surface.
-      // Keep the native permission engine (including Auto and admin rules),
-      // but use its headless denial/circuit-breaker path instead of waiting
-      // for a can_use_tool response that a channel participant cannot give.
-      if (avoidPermissionPrompts) {
-        const interactiveContext = toolUseContext
-        toolUseContext = {
-          ...interactiveContext,
-          getAppState: () => {
-            const state = interactiveContext.getAppState()
-            return {
-              ...state,
-              toolPermissionContext: {
-                ...state.toolPermissionContext,
-                shouldAvoidPermissionPrompts: true,
-              },
-            }
-          },
-        }
-      }
       const mainPermissionResult =
         forceDecision ??
         (await hasPermissionsToUseTool(
@@ -577,22 +556,6 @@ export class StructuredIO {
         mainPermissionResult.behavior === 'deny'
       ) {
         return mainPermissionResult
-      }
-
-      // Explicit ask rules and interaction-only tools may still return ask.
-      // Never turn that into allow, run interactive hooks, or emit a hidden
-      // SDK prompt. Return the native reason to Claude so it can report the
-      // blocked action in the channel or choose an already-permitted action.
-      if (avoidPermissionPrompts) {
-        return {
-          behavior: 'deny',
-          decisionReason: mainPermissionResult.decisionReason ?? {
-            type: 'asyncAgent',
-            reason: 'Interactive approval is unavailable in this session',
-          },
-          message: mainPermissionResult.message ??
-            `Permission to use ${tool.name} is not granted by the configured policy. Interactive approval is unavailable in this session.`,
-        }
       }
 
       // Run PermissionRequest hooks in parallel with the SDK permission
@@ -765,14 +728,11 @@ export class StructuredIO {
    * tool name so that SDK hosts (VS Code, CCR, etc.) can prompt the user
    * for network access without requiring a new protocol subtype.
    */
-  createSandboxAskCallback(avoidPermissionPrompts = false): (hostPattern: {
+  createSandboxAskCallback(): (hostPattern: {
     host: string
     port?: number
   }) => Promise<boolean> {
     return async (hostPattern): Promise<boolean> => {
-      // The sandbox already checked its configured allowlist. A miss must
-      // remain denied in channel sessions, not open a web approval dialog.
-      if (avoidPermissionPrompts) return false
       try {
         const result = await this.sendRequest<PermissionToolOutput>(
           {

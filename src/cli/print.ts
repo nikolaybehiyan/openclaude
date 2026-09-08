@@ -629,9 +629,6 @@ export async function runHeadless(
   }
 
   const structuredIO = getStructuredIO(inputPrompt, options)
-  const avoidPermissionPrompts = isEnvTruthy(
-    process.env.CLAUDE_CODE_NONINTERACTIVE_PERMISSIONS,
-  )
 
   // When emitting NDJSON for SDK clients, any stray write to stdout (debug
   // prints, dependency console.log, library banners) breaks the client's
@@ -664,9 +661,7 @@ export async function runHeadless(
     // requests to the SDK host via the can_use_tool control_request protocol.
     // This must happen after structuredIO is created so we can send requests.
     try {
-      await SandboxManager.initialize(
-        structuredIO.createSandboxAskCallback(avoidPermissionPrompts),
-      )
+      await SandboxManager.initialize(structuredIO.createSandboxAskCallback())
     } catch (err) {
       process.stderr.write(`\n❌ Sandbox Error: ${errorMessage(err)}\n`)
       gracefulShutdownSync(1, 'other')
@@ -872,7 +867,6 @@ export async function runHeadless(
     structuredIO,
     () => getAppState().mcp.tools,
     onPermissionPrompt,
-    avoidPermissionPrompts,
   )
   if (options.permissionPromptToolName) {
     // Remove the permission prompt tool from the list of available tools.
@@ -4395,10 +4389,9 @@ export function getCanUseToolFn(
   structuredIO: StructuredIO,
   getMcpTools: () => Tool[],
   onPermissionPrompt?: (details: RequiresActionDetails) => void,
-  avoidPermissionPrompts = false,
 ): CanUseToolFn {
   if (permissionPromptToolName === 'stdio') {
-    return structuredIO.createCanUseTool(onPermissionPrompt, avoidPermissionPrompts)
+    return structuredIO.createCanUseTool(onPermissionPrompt)
   }
   if (!permissionPromptToolName) {
     return async (
