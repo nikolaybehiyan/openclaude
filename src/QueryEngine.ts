@@ -136,6 +136,8 @@ export type QueryEngineConfig = {
   setAppState: (f: (prev: AppState) => AppState) => void
   initialMessages?: Message[]
   readFileCache: FileStateCache
+  /** Paths queued by SDK register_repo_root for the existing memory loader. */
+  pendingNestedMemoryTriggers?: Set<string>
   customSystemPrompt?: string | string[]
   appendSystemPrompt?: string
   appendSubagentSystemPrompt?: string
@@ -396,7 +398,7 @@ export class QueryEngine {
       setAppState,
       abortController: this.abortController,
       readFileState: this.readFileState,
-      nestedMemoryAttachmentTriggers: new Set<string>(),
+      nestedMemoryAttachmentTriggers: this.config.pendingNestedMemoryTriggers ?? new Set<string>(),
       loadedNestedMemoryPaths: this.loadedNestedMemoryPaths,
       dynamicSkillDirTriggers: new Set<string>(),
       discoveredSkillNames: this.discoveredSkillNames,
@@ -559,7 +561,7 @@ export class QueryEngine {
       setAppState,
       abortController: this.abortController,
       readFileState: this.readFileState,
-      nestedMemoryAttachmentTriggers: new Set<string>(),
+      nestedMemoryAttachmentTriggers: this.config.pendingNestedMemoryTriggers ?? new Set<string>(),
       loadedNestedMemoryPaths: this.loadedNestedMemoryPaths,
       dynamicSkillDirTriggers: new Set<string>(),
       discoveredSkillNames: this.discoveredSkillNames,
@@ -1387,6 +1389,7 @@ export async function* ask({
   mutableMessages = [],
   getReadFileCache,
   setReadFileCache,
+  pendingNestedMemoryTriggers,
   customSystemPrompt,
   appendSystemPrompt,
   appendSubagentSystemPrompt,
@@ -1435,6 +1438,7 @@ export async function* ask({
   setAppState: (f: (prev: AppState) => AppState) => void
   getReadFileCache: () => FileStateCache
   setReadFileCache: (cache: FileStateCache) => void
+  pendingNestedMemoryTriggers?: Set<string>
   abortController?: AbortController
   replayUserMessages?: boolean
   includePartialMessages?: boolean
@@ -1454,6 +1458,7 @@ export async function* ask({
     setAppState,
     initialMessages: mutableMessages,
     readFileCache: cloneFileStateCache(getReadFileCache()),
+    pendingNestedMemoryTriggers,
     customSystemPrompt,
     appendSystemPrompt,
     appendSubagentSystemPrompt,

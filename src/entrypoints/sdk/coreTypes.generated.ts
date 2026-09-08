@@ -288,7 +288,7 @@ export type PermissionResult = ({
 /** Permission mode for controlling how tool executions are handled. 'default' - Standard behavior, prompts for dangerous operations. 'acceptEdits' - Auto-accept file edit operations. 'bypassPermissions' - Bypass all permission checks (requires allowDangerouslySkipPermissions). 'plan' - Planning mode, no actual tool execution. 'dontAsk' - Don't prompt for permissions, deny if not pre-approved. 'auto' - Use a model classifier to approve or deny permission prompts. */
 export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "plan" | "dontAsk" | "auto"
 
-export type HookEvent = "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "UserPromptSubmit" | "SessionStart" | "SessionEnd" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "PermissionRequest" | "PermissionDenied" | "Setup" | "TeammateIdle" | "TaskCreated" | "TaskCompleted" | "Elicitation" | "ElicitationResult" | "ConfigChange" | "WorktreeCreate" | "WorktreeRemove" | "InstructionsLoaded" | "CwdChanged" | "FileChanged"
+export type HookEvent = "PreToolUse" | "PostToolUse" | "PostToolUseFailure" | "Notification" | "UserPromptSubmit" | "SessionStart" | "SessionEnd" | "Stop" | "StopFailure" | "SubagentStart" | "SubagentStop" | "PreCompact" | "PostCompact" | "PermissionRequest" | "PermissionDenied" | "Setup" | "TeammateIdle" | "TaskCreated" | "TaskCompleted" | "Elicitation" | "ElicitationResult" | "ConfigChange" | "WorktreeCreate" | "WorktreeRemove" | "InstructionsLoaded" | "CwdChanged" | "DirectoryAdded" | "FileChanged"
 
 export type BaseHookInput = {
   session_id: string
@@ -702,6 +702,19 @@ export type CwdChangedHookInput = {
   new_cwd: string
 }
 
+export type DirectoryAddedHookInput = {
+  session_id: string
+  transcript_path: string
+  cwd: string
+  permission_mode?: string
+  agent_id?: string
+  agent_type?: string
+} & {
+  hook_event_name: "DirectoryAdded"
+  directory: string
+  source: "slash_command" | "register_repo_root"
+}
+
 export type FileChangedHookInput = {
   session_id: string
   transcript_path: string
@@ -1064,6 +1077,17 @@ export type HookInput = ({
   hook_event_name: "CwdChanged"
   old_cwd: string
   new_cwd: string
+}) | ({
+  session_id: string
+  transcript_path: string
+  cwd: string
+  permission_mode?: string
+  agent_id?: string
+  agent_type?: string
+} & {
+  hook_event_name: "DirectoryAdded"
+  directory: string
+  source: "slash_command" | "register_repo_root"
 }) | ({
   session_id: string
   transcript_path: string

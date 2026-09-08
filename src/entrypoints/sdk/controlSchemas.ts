@@ -407,6 +407,16 @@ export const SDKControlMcpSetServersResponseSchema = lazySchema(() =>
     ),
 )
 
+export const SDKControlRegisterRepoRootRequestSchema = lazySchema(() =>
+  z.object({
+    subtype: z.literal('register_repo_root'),
+    directory: z.string(),
+    reload_claude_md: z.boolean().optional(),
+    reload_plugins: z.boolean().optional(),
+    reload_skills: z.boolean().optional(),
+  }),
+)
+
 export const SDKControlReloadPluginsRequestSchema = lazySchema(() =>
   z
     .object({
@@ -606,6 +616,7 @@ export const SDKControlRequestInnerSchema = lazySchema(() =>
     SDKControlSeedReadStateRequestSchema(),
     SDKControlMcpSetServersRequestSchema(),
     SDKControlReloadPluginsRequestSchema(),
+    SDKControlRegisterRepoRootRequestSchema(),
     SDKControlMcpReconnectRequestSchema(),
     SDKControlMcpToggleRequestSchema(),
     SDKControlStopTaskRequestSchema(),

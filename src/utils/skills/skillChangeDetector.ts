@@ -307,5 +307,6 @@ export const skillChangeDetector = {
   initialize,
   dispose,
   subscribe,
+  emit: skillsChanged.emit,
   resetForTesting,
 }

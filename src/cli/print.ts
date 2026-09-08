@@ -1,7 +1,18 @@
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle'
 import { readFile, stat } from 'fs/promises'
-import { dirname } from 'path'
+import { dirname, join } from 'path'
+import {
+  getAdditionalDirectoriesForClaudeMd,
+  setAdditionalDirectoriesForClaudeMd,
+} from '../bootstrap/state.js'
+import { registerRepoRoot } from './registerRepoRoot.js'
+import { SDKControlRegisterRepoRootRequestSchema } from '../entrypoints/sdk/controlSchemas.js'
+import { applyPermissionUpdate } from '../utils/permissions/PermissionUpdate.js'
+import { clearMemoryFileCaches } from '../utils/claudemd.js'
+import { clearAgentDefinitionsCache } from '../tools/AgentTool/loadAgentsDir.js'
+import { resetSentSkillNames } from '../utils/attachments.js'
+import { executeDirectoryAddedHooks } from '../utils/hooks.js'
 import {
   downloadUserSettings,
   redownloadUserSettings,
@@ -1793,8 +1804,21 @@ function runHeadlessStreaming(
     }
   }
 
+  // SDK registration and its DirectoryAdded hooks must not be cut off by
+  // headless idle / stdin shutdown while the main turn awaits an MCP response.
+  const repoRegistrationWork = new Set<Promise<unknown>>()
+  const pendingNestedMemoryTriggers = new Set<string>()
+  function trackRepoRegistrationWork(work: Promise<unknown>): void {
+    repoRegistrationWork.add(work)
+    void work.finally(() => repoRegistrationWork.delete(work)).catch(logError)
+  }
+  async function drainRepoRegistrationWork(): Promise<void> {
+    while (repoRegistrationWork.size > 0) {
+      await Promise.allSettled([...repoRegistrationWork])
+    }
+  }
   // Idle timeout management
-  const idleTimeout = createIdleTimeoutManager(() => !running)
+  const idleTimeout = createIdleTimeoutManager(() => !running && repoRegistrationWork.size === 0)
 
   // Mutable commands and agents for hot reloading
   let currentCommands = commands
@@ -2222,6 +2246,7 @@ function runHeadlessStreaming(
                 fallbackModel: options.fallbackModel,
                 jsonSchema: getInitJsonSchema() ?? options.jsonSchema,
                 mutableMessages,
+                pendingNestedMemoryTriggers,
                 getReadFileCache: () =>
                   pendingSeeds.size === 0
                     ? readFileState
@@ -2735,6 +2760,7 @@ function runHeadlessStreaming(
         suggestionState.abortController?.abort()
         suggestionState.abortController = null
         await finalizePendingAsyncHooks()
+        await drainRepoRegistrationWork()
         unsubscribeSkillChanges()
         unsubscribeAuthStatus?.()
         statusListeners.delete(rateLimitListener)
@@ -2881,7 +2907,8 @@ function runHeadlessStreaming(
       if (
         eventId &&
         message.type !== 'user' &&
-        message.type !== 'control_response'
+        message.type !== 'control_response' &&
+        !(message.type === 'control_request' && message.request.subtype === 'register_repo_root')
       ) {
         notifyCommandLifecycle(eventId, 'completed')
       }
@@ -3122,6 +3149,86 @@ function runHeadlessStreaming(
           if (sdkServersChanged) {
             void updateSdkMcp()
           }
+        } else if (message.request.subtype === 'register_repo_root') {
+          if (eventId) notifyCommandLifecycle(eventId, 'started')
+          // MCP reconnects and SDK hooks can need input-loop responses. Do not
+          // await registration here: that would deadlock the very tool which
+          // asked the server to register its freshly cloned repository.
+          const work = (async () => {
+            try {
+              const request = SDKControlRegisterRepoRootRequestSchema().parse(
+                message.request,
+              )
+              const response = await registerRepoRoot(request, {
+                cwd: getCwd(),
+                getDirectories: () =>
+                  getAppState().toolPermissionContext
+                    .additionalWorkingDirectories as unknown as ReadonlyMap<
+                    string,
+                    { readonly path: string; readonly source: string }
+                  >,
+                addDirectory: directory => {
+                  setAppState(prev => ({
+                    ...prev,
+                    toolPermissionContext: applyPermissionUpdate(prev.toolPermissionContext, {
+                      type: 'addDirectories',
+                      directories: [directory],
+                      destination: 'session',
+                    }),
+                  }))
+                  const directories = getAdditionalDirectoriesForClaudeMd()
+                  if (!directories.includes(directory)) {
+                    setAdditionalDirectoriesForClaudeMd([...directories, directory])
+                  }
+                },
+                refreshSandbox: () => SandboxManager.refreshConfig(),
+                directoryAdded: directory => {
+                  trackRepoRegistrationWork(
+                    executeDirectoryAddedHooks(directory, 'register_repo_root')
+                      .then(({ results, systemMessages }) => {
+                        for (const text of systemMessages) {
+                          logForDebugging(`DirectoryAdded hook: ${text}`)
+                        }
+                        for (const result of results) {
+                          if (!result.succeeded && result.output) {
+                            logForDebugging(`DirectoryAdded hook failed: ${result.output}`)
+                          }
+                        }
+                      })
+                      .catch(logError),
+                  )
+                },
+                reloadClaudeMd: directory => {
+                  clearMemoryFileCaches()
+                  pendingNestedMemoryTriggers.add(join(directory, 'CLAUDE.md'))
+                },
+                reloadSkills: () => {
+                  clearCommandsCache()
+                  clearAgentDefinitionsCache()
+                  resetSentSkillNames()
+                  skillChangeDetector.emit()
+                },
+                reloadPlugins: async () => {
+                  const configured = Number.parseInt(
+                    process.env.CLAUDE_CODE_SYNC_PLUGINS_INSTALL_TIMEOUT_MS || '',
+                    10,
+                  )
+                  await Promise.race([
+                    Promise.allSettled([installPluginsForHeadless()]),
+                    sleep(configured > 0 ? configured : 30000),
+                  ])
+                  await refreshPluginState()
+                  await Promise.allSettled([applyPluginMcpDiff()])
+                },
+              })
+              sendControlResponseSuccess(message, response)
+            } catch (error) {
+              sendControlResponseError(message, errorMessage(error))
+            } finally {
+              if (eventId) notifyCommandLifecycle(eventId, 'completed')
+            }
+          })()
+          trackRepoRegistrationWork(work)
         } else if (message.request.subtype === 'reload_plugins') {
           try {
             if (
@@ -4252,6 +4359,7 @@ function runHeadlessStreaming(
       suggestionState.abortController?.abort()
       suggestionState.abortController = null
       await finalizePendingAsyncHooks()
+      await drainRepoRegistrationWork()
       unsubscribeSkillChanges()
       unsubscribeAuthStatus?.()
       statusListeners.delete(rateLimitListener)

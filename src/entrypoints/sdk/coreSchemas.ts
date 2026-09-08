@@ -387,6 +387,7 @@ export const HOOK_EVENTS = [
   'WorktreeRemove',
   'InstructionsLoaded',
   'CwdChanged',
+  'DirectoryAdded',
   'FileChanged',
 ] as const
 
@@ -732,6 +733,16 @@ export const WorktreeRemoveHookInputSchema = lazySchema(() =>
   ),
 )
 
+export const DirectoryAddedHookInputSchema = lazySchema(() =>
+  BaseHookInputSchema().and(
+    z.object({
+      hook_event_name: z.literal('DirectoryAdded'),
+      directory: z.string(),
+      source: z.enum(['slash_command', 'register_repo_root']),
+    }),
+  ),
+)
+
 export const CwdChangedHookInputSchema = lazySchema(() =>
   BaseHookInputSchema().and(
     z.object({
@@ -800,6 +811,7 @@ export const HookInputSchema = lazySchema(() =>
     WorktreeCreateHookInputSchema(),
     WorktreeRemoveHookInputSchema(),
     CwdChangedHookInputSchema(),
+    DirectoryAddedHookInputSchema(),
     FileChangedHookInputSchema(),
   ]),
 )

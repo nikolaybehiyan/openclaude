@@ -129,6 +129,7 @@ const EXPORT_ORDER = [
   'WorktreeCreateHookInputSchema',
   'WorktreeRemoveHookInputSchema',
   'CwdChangedHookInputSchema',
+  'DirectoryAddedHookInputSchema',
   'FileChangedHookInputSchema',
   'HookInputSchema',
   // Hook output schemas

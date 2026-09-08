@@ -97,6 +97,7 @@ import type {
   TaskCompletedHookInput,
   ConfigChangeHookInput,
   CwdChangedHookInput,
+  DirectoryAddedHookInput,
   FileChangedHookInput,
   InstructionsLoadedHookInput,
   UserPromptSubmitHookInput,
@@ -4448,6 +4449,24 @@ async function executeEnvHooks(
     .map(r => r.systemMessage)
     .filter((m): m is string => !!m)
   return { results, watchPaths, systemMessages }
+}
+
+export async function executeDirectoryAddedHooks(
+  directory: string,
+  source: 'slash_command' | 'register_repo_root',
+  timeoutMs: number = TOOL_HOOK_EXECUTION_TIMEOUT_MS,
+): Promise<{ results: HookOutsideReplResult[]; systemMessages: string[] }> {
+  const hookInput: DirectoryAddedHookInput = {
+    ...createBaseHookInput(undefined),
+    hook_event_name: 'DirectoryAdded',
+    directory,
+    source,
+  }
+  const results = await executeHooksOutsideREPL({ hookInput, matchQuery: source, timeoutMs })
+  return {
+    results,
+    systemMessages: results.map(result => result.systemMessage).filter((value): value is string => !!value),
+  }
 }
 
 export function executeCwdChangedHooks(

@@ -85,6 +85,7 @@ export type HookEvent =
   | 'WorktreeRemove'
   | 'InstructionsLoaded'
   | 'CwdChanged'
+  | 'DirectoryAdded'
   | 'FileChanged'
 
 export function sdkErrorFromType(

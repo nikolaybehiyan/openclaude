@@ -19,6 +19,52 @@ import {
   ExitReasonSchema,
 } from '../../src/entrypoints/sdk/coreSchemas.js'
 import { z } from 'zod/v4'
+import {
+  SDKControlRequestSchema,
+  SDKControlRegisterRepoRootRequestSchema,
+} from '../../src/entrypoints/sdk/controlSchemas.js'
+
+describe('register_repo_root SDK contract (2.1.221)', () => {
+  test('the full control union preserves all registration flags', () => {
+    const frame = {
+      type: 'control_request',
+      request_id: 'register-repo-test',
+      request: {
+        subtype: 'register_repo_root',
+        directory: '/workspace/repo',
+        reload_claude_md: true,
+        reload_plugins: true,
+        reload_skills: true,
+      },
+    }
+    expect(SDKControlRequestSchema().parse(frame)).toEqual(frame)
+  })
+
+  test('reloads are optional booleans, not coerced strings', () => {
+    const request = { subtype: 'register_repo_root', directory: '/workspace/repo' }
+    const schema = SDKControlRegisterRepoRootRequestSchema()
+    expect(schema.parse(request)).toEqual(request)
+    for (const flag of ['reload_claude_md', 'reload_plugins', 'reload_skills']) {
+      expect(schema.safeParse({ ...request, [flag]: 'true' }).success).toBe(false)
+    }
+    expect(schema.safeParse({ subtype: 'register_repo_root' }).success).toBe(false)
+  })
+
+  test('DirectoryAdded is accepted by the full hook input union', () => {
+    const input = {
+      session_id: 'test-session',
+      transcript_path: '/workspace/session.jsonl',
+      cwd: '/workspace',
+      hook_event_name: 'DirectoryAdded',
+      directory: '/workspace/repo',
+      source: 'register_repo_root',
+    }
+    const schema = HookInputSchema()
+    expect(schema.parse(input)).toEqual(input)
+    expect(schema.safeParse({ ...input, source: 'slash_command' }).success).toBe(true)
+    expect(schema.safeParse({ ...input, source: 'unrecognized_source' }).success).toBe(false)
+  })
+})
 
 /**
  * Tests for generated SDK types from Zod schemas.
