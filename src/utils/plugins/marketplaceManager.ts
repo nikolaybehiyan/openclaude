@@ -22,8 +22,10 @@ import axios from 'axios'
 import { writeFile } from 'fs/promises'
 import isEqual from 'lodash-es/isEqual.js'
 import memoize from 'lodash-es/memoize.js'
+import mergeWith from 'lodash-es/mergeWith.js'
 import { basename, dirname, isAbsolute, join, resolve, sep } from 'path'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from '../../services/analytics/growthbook.js'
+import { getGlobalConfig, getProjectPathForConfig } from '../config.js'
 import { logForDebugging } from '../debug.js'
 import { isEnvTruthy } from '../envUtils.js'
 import {
@@ -40,8 +42,10 @@ import { logError } from '../log.js'
 import {
   getInitialSettings,
   getSettingsForSource,
+  settingsMergeCustomizer,
   updateSettingsForSource,
 } from '../settings/settings.js'
+import { getEnabledSettingSources } from '../settings/constants.js'
 import type { SettingsJson } from '../settings/types.js'
 import {
   jsonParse,
@@ -182,13 +186,32 @@ export function getDeclaredMarketplaces(): Record<string, DeclaredMarketplace> {
     }
   }
 
-  // Lowest precedence: implicit < --add-dir < merged settings.
+  // 2.1.221 gates marketplace declarations on persisted project trust, not
+  // implicit headless tool trust. Before trust, only user/flag/managed sources
+  // can introduce a catalog; cloned project/local/add-dir settings cannot.
+  const trusted =
+    getGlobalConfig().projects?.[getProjectPathForConfig()]
+      ?.hasTrustDialogAccepted === true
+  let declared: Record<string, DeclaredMarketplace> = {}
+  if (trusted) {
+    declared = getInitialSettings().extraKnownMarketplaces ?? {}
+  } else {
+    for (const source of getEnabledSettingSources()) {
+      if (source === 'projectSettings' || source === 'localSettings') continue
+      const marketplaces = getSettingsForSource(source)?.extraKnownMarketplaces
+      if (marketplaces) {
+        declared = mergeWith(declared, marketplaces, settingsMergeCustomizer)
+      }
+    }
+  }
+
+  // Lowest precedence after trust: implicit < --add-dir < merged settings.
   // An explicit extraKnownMarketplaces entry for claude-plugins-official
   // in --add-dir or settings wins.
   return {
     ...implicit,
-    ...getAddDirExtraMarketplaces(),
-    ...(getInitialSettings().extraKnownMarketplaces ?? {}),
+    ...(trusted ? getAddDirExtraMarketplaces() : {}),
+    ...declared,
   }
 }
 

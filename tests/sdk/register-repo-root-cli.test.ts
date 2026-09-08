@@ -8,12 +8,18 @@ import { join, resolve } from 'path'
 // or production services, and all model output is a fixed local test response.
 const cli = process.env.OPENCLAUDE_TEST_CLI
 
-test.skipIf(!cli)('built CLI loads registered repo instructions, skills, plugins and MCP through SDK', async () => {
+for (const trusted of [false, true]) {
+test.skipIf(!cli)(`built CLI loads registered repo components with persisted trust=${trusted}`, async () => {
   const temporary = await realpath(await mkdtemp(join(tmpdir(), 'repo-root-sdk-')))
   const workspace = join(temporary, 'workspace')
   const repository = join(workspace, 'repo')
   await mkdir(repository, { recursive: true })
   await mkdir(join(temporary, 'config'))
+  if (trusted) {
+    await writeFile(join(temporary, 'config', '.claude.json'), JSON.stringify({
+      projects: { [workspace]: { hasTrustDialogAccepted: true } },
+    }))
+  }
   await mkdir(join(repository, '.claude', 'skills', 'repo-sdk-skill'), { recursive: true })
   await writeFile(join(repository, 'CLAUDE.md'), 'REPO_ROOT_MEMORY_SENTINEL: Follow repository-specific test instructions.\n')
   await writeFile(join(repository, '.claude', 'skills', 'repo-sdk-skill', 'SKILL.md'),
@@ -32,8 +38,23 @@ test.skipIf(!cli)('built CLI loads registered repo instructions, skills, plugins
   }))
   await writeFile(join(plugin, 'skills', 'plugin-sdk-skill', 'SKILL.md'),
     '---\nname: plugin-sdk-skill\ndescription: REPO_ROOT_PLUGIN_SENTINEL local plugin skill\n---\nOnly used by the offline SDK test.\n')
+  const repoOnlyMarket = join(temporary, 'repo-only-market')
+  const repoOnlyPlugin = join(repoOnlyMarket, 'plugin')
+  await mkdir(join(repoOnlyMarket, '.claude-plugin'), { recursive: true })
+  await mkdir(join(repoOnlyPlugin, '.claude-plugin'), { recursive: true })
+  await mkdir(join(repoOnlyPlugin, 'skills', 'repo-only'), { recursive: true })
+  await writeFile(join(repoOnlyMarket, '.claude-plugin', 'marketplace.json'), JSON.stringify({
+    name: 'repo-only-market', owner: { name: 'Local SDK test' },
+    plugins: [{ name: 'repo-only-plugin', source: './plugin' }],
+  }))
+  await writeFile(join(repoOnlyPlugin, '.claude-plugin', 'plugin.json'), JSON.stringify({
+    name: 'repo-only-plugin', version: '1.0.0',
+  }))
+  await writeFile(join(repoOnlyPlugin, 'skills', 'repo-only', 'SKILL.md'),
+    '---\nname: repo-only\ndescription: REPO_ONLY_MARKET_SENTINEL\n---\nOnly used by the offline SDK test.\n')
   await writeFile(join(repository, '.claude', 'settings.json'), JSON.stringify({
-    enabledPlugins: { 'repo-sdk-plugin@repo-sdk-market': true },
+    extraKnownMarketplaces: { 'repo-only-market': { source: { source: 'directory', path: repoOnlyMarket } } },
+    enabledPlugins: { 'repo-sdk-plugin@repo-sdk-market': true, 'repo-only-plugin@repo-only-market': true },
   }))
   // The administrator declares the catalog in a trusted settings source.
   // The newly registered repo only enables an already configured plugin;
@@ -202,6 +223,7 @@ test.skipIf(!cli)('built CLI loads registered repo instructions, skills, plugins
     const prompt = JSON.stringify(inferenceRequests)
     expect(prompt.includes('REPO_ROOT_MEMORY_SENTINEL')).toBe(true)
     expect(prompt.includes('REPO_ROOT_SKILL_SENTINEL')).toBe(true)
+    expect(prompt.includes('REPO_ONLY_MARKET_SENTINEL')).toBe(trusted)
     if (!prompt.includes('REPO_ROOT_PLUGIN_SENTINEL')) {
       const debug = await readFile(join(temporary, 'debug.log'), 'utf8').catch(() => '')
       throw new Error(`Plugin not loaded: ${debug.split('\n').filter(line => /repo-sdk|headlessPluginInstall|marketplace.*fail|marketplace.*skip/i.test(line)).join('\n').slice(-6000)}`)
@@ -237,3 +259,4 @@ test.skipIf(!cli)('built CLI loads registered repo instructions, skills, plugins
     await rm(temporary, { recursive: true, force: true })
   }
 }, 55_000)
+}
