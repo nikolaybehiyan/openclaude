@@ -5,7 +5,8 @@ import { join, resolve } from 'path'
 
 // Opt-in integration test against an actual built CLI (or the local 2.1.221
 // binary). Inference is a loopback-only fixture: no real account credentials
-// or production services, and all model output is a fixed local test response.
+// or production services. Scripted inference drives one real MCP tool call;
+// it does not stand in for a real model completing a user task.
 const cli = process.env.OPENCLAUDE_TEST_CLI
 
 for (const trusted of [false, true]) {
@@ -63,6 +64,7 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
     extraKnownMarketplaces: { 'repo-sdk-market': { source: { source: 'directory', path: marketplace } } },
   })
   const mcpMethods: string[] = []
+  const mcpCalls: any[] = []
   const mcpServer = Bun.serve({
     hostname: '127.0.0.1', port: 0,
     async fetch(request) {
@@ -73,15 +75,20 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
       let result: unknown = {}
       if (message.method === 'initialize') {
         result = {
-          protocolVersion: message.params.protocolVersion,
+          // Select the version this fixture implements; echoing a newer
+          // proposal advertises capabilities/protocol semantics we do not.
+          protocolVersion: '2025-03-26',
           capabilities: { tools: {} },
           serverInfo: { name: 'repo-sdk-mcp', version: '1.0.0' },
         }
       } else if (message.method === 'tools/list') {
         result = { tools: [{
           name: 'repo_probe', description: 'Local repository MCP fixture',
-          inputSchema: { type: 'object', properties: {} },
+          inputSchema: { type: 'object', properties: { nonce: { type: 'string' } }, required: ['nonce'] },
         }] }
+      } else if (message.method === 'tools/call') {
+        mcpCalls.push(message.params)
+        result = { content: [{ type: 'text', text: 'REPO_MCP_EXECUTION_SENTINEL' }], isError: false }
       }
       return Response.json({ jsonrpc: '2.0', id: message.id, result })
     },
@@ -90,23 +97,37 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
     mcpServers: { 'repo-sdk-mcp': { type: 'http', url: new URL('/mcp', mcpServer.url).href } },
   }))
   const inferenceRequests: any[] = []
+  let probeRequested = false
   const inference = Bun.serve({
     hostname: '127.0.0.1', port: 0,
     async fetch(request) {
       if (request.method !== 'POST') return new Response(null, { status: 200 })
       const body = await request.json()
       inferenceRequests.push(body)
+      const probeTool = body.tools?.find((tool: any) => tool.name?.endsWith('__repo_probe'))
+      let tool: { name: string; input: unknown } | undefined
+      if (!probeRequested && probeTool) {
+        tool = { name: probeTool.name, input: { nonce: 'sdk-repo-call' } }
+        probeRequested = true
+      }
       const message = {
-        id: 'msg_register_repo_test', type: 'message', role: 'assistant',
+        id: `msg_register_repo_test_${inferenceRequests.length}`, type: 'message', role: 'assistant',
         model: 'claude-sonnet-4-6', content: [], stop_reason: null, stop_sequence: null,
         usage: { input_tokens: 10, output_tokens: 0 },
       }
       const events = [
         { type: 'message_start', message },
-        { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
-        { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'sdk-test-ok' } },
+        ...(tool ? [
+          { type: 'content_block_start', index: 0, content_block: {
+            type: 'tool_use', id: `tool_repo_${inferenceRequests.length}`, name: tool.name, input: {},
+          } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'input_json_delta', partial_json: JSON.stringify(tool.input) } },
+        ] : [
+          { type: 'content_block_start', index: 0, content_block: { type: 'text', text: '' } },
+          { type: 'content_block_delta', index: 0, delta: { type: 'text_delta', text: 'sdk-test-ok' } },
+        ]),
         { type: 'content_block_stop', index: 0 },
-        { type: 'message_delta', delta: { stop_reason: 'end_turn', stop_sequence: null }, usage: { output_tokens: 4 } },
+        { type: 'message_delta', delta: { stop_reason: tool ? 'tool_use' : 'end_turn', stop_sequence: null }, usage: { output_tokens: 4 } },
         { type: 'message_stop' },
       ]
       return new Response(events.map(event => `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`).join(''), {
@@ -121,6 +142,7 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
   const child = Bun.spawn([...command,
     '--print', '--input-format', 'stream-json', '--output-format', 'stream-json',
     '--verbose', '--no-session-persistence', '--model', 'claude-sonnet-4-6',
+    '--permission-mode', 'bypassPermissions',
     '--debug-file', join(temporary, 'debug.log'),
     '--settings', administratorSettings,
   ], {
@@ -210,10 +232,11 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
     const connectedStatus = (await response('mcp-connected-status')).response.response.mcpServers
     expect(connectedStatus.some((server: any) => server.name === repositoryMcp.name && server.status === 'connected')).toBe(true)
     expect(mcpMethods).toContain('initialize')
+    expect(mcpMethods).toContain('tools/list')
 
     // The instruction and skill files were not in cwd during initialize.
     // Verify the running query sees the registered repo, not merely an ACK.
-    send({ type: 'user', message: { role: 'user', content: 'Reply with the fixture acknowledgement.' }, parent_tool_use_id: null })
+    send({ type: 'user', message: { role: 'user', content: 'Call the local repository probe with nonce sdk-repo-call, then acknowledge its result.' }, parent_tool_use_id: null })
     const result = await waitFor(frame => frame.type === 'result')
     expect(result.subtype).toBe('success')
     expect(result.is_error).toBe(false)
@@ -221,6 +244,17 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
       throw new Error(`No inference request: ${JSON.stringify(frames.filter(frame => frame.type === 'assistant' || frame.type === 'result'))}`)
     }
     const prompt = JSON.stringify(inferenceRequests)
+    if (mcpCalls.length === 0) {
+      throw new Error(`MCP probe not called (${mcpMethods.join(', ')}; status=${JSON.stringify(connectedStatus)}): ${JSON.stringify(inferenceRequests.map(request => ({
+        tools: request.tools?.map((tool: any) => tool.name),
+        results: request.messages?.flatMap((message: any) => Array.isArray(message.content)
+          ? message.content.filter((block: any) => block.type === 'tool_result').map((block: any) => JSON.stringify(block.content).slice(0, 500))
+          : []),
+      }))).slice(-5000)}`)
+    }
+    expect(mcpCalls.map(({ name, arguments: args }) => ({ name, arguments: args })))
+      .toEqual([{ name: 'repo_probe', arguments: { nonce: 'sdk-repo-call' } }])
+    expect(prompt.includes('REPO_MCP_EXECUTION_SENTINEL')).toBe(true)
     expect(prompt.includes('REPO_ROOT_MEMORY_SENTINEL')).toBe(true)
     expect(prompt.includes('REPO_ROOT_SKILL_SENTINEL')).toBe(true)
     expect(prompt.includes('REPO_ONLY_MARKET_SENTINEL')).toBe(trusted)
