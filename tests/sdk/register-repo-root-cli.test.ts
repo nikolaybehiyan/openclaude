@@ -221,15 +221,29 @@ test.skipIf(!cli)(`built CLI loads registered repo components with persisted tru
     const mcpStatus = (await response('mcp-status')).response.response.mcpServers
     const repositoryMcp = mcpStatus.find((server: any) => server.name.includes('repo-sdk-mcp'))
     expect(repositoryMcp).toBeDefined()
-    // 2.1.221 can expose the newly discovered MCP as pending (lazy connect).
-    // Exercise the actual connector with the same explicit SDK command on
-    // both CLIs; discovery must not be mislabeled as a completed connection.
+    // Native plugin discovery/connect runs in the background. Do not race an
+    // explicit reconnect against that first connection's tools/list: its old
+    // transport can otherwise be closed while discovery is still in flight.
+    async function readyMcpStatus(prefix: string): Promise<any[]> {
+      const deadline = Date.now() + 10_000
+      for (let attempt = 0; Date.now() < deadline; attempt++) {
+        const id = `${prefix}-${attempt}`
+        send({ type: 'control_request', request_id: id, request: { subtype: 'mcp_status' } })
+        const statuses = (await response(id)).response.response.mcpServers
+        if (statuses.some((server: any) => server.name === repositoryMcp.name && server.status === 'connected'
+          && server.tools?.some((tool: any) => tool.name === 'repo_probe'))) return statuses
+        await Bun.sleep(100)
+      }
+      const debug = await readFile(join(temporary, 'debug.log'), 'utf8').catch(() => '')
+      throw new Error(`MCP tools not ready: ${debug.split('\n').filter(line => /repo-sdk-mcp|capabilit|protocol/i.test(line)).join('\n').slice(-6000)}`)
+    }
+    await readyMcpStatus('mcp-initial-ready')
+    // Exercise explicit SDK reconnect only after initial discovery completes.
     send({ type: 'control_request', request_id: 'mcp-connect', request: {
       subtype: 'mcp_reconnect', serverName: repositoryMcp.name,
     } })
     expect((await response('mcp-connect')).response.subtype).toBe('success')
-    send({ type: 'control_request', request_id: 'mcp-connected-status', request: { subtype: 'mcp_status' } })
-    const connectedStatus = (await response('mcp-connected-status')).response.response.mcpServers
+    const connectedStatus = await readyMcpStatus('mcp-reconnected-ready')
     expect(connectedStatus.some((server: any) => server.name === repositoryMcp.name && server.status === 'connected')).toBe(true)
     expect(mcpMethods).toContain('initialize')
     expect(mcpMethods).toContain('tools/list')
