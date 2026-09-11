@@ -487,7 +487,7 @@ export async function unstable_messagesCreate(
         if (sdkMessage.subtype !== 'success' || sdkMessage.is_error === true) {
           const failure = sdkMessage as Record<string, unknown>
           const errors = Array.isArray(failure.errors) ? failure.errors.join('; ') : ''
-          throw new Error(errors || `artifact OpenClaude query failed: ${String(sdkMessage.subtype)}`)
+          throw new Error(errors || `artifact Darb query failed: ${String(sdkMessage.subtype)}`)
         }
         if (typeof sdkMessage.uuid === 'string' && sdkMessage.uuid) {
           responseID = sdkMessage.uuid
@@ -509,7 +509,7 @@ export async function unstable_messagesCreate(
       }
     }
     if (!resultSeen) {
-      throw new Error('artifact OpenClaude query completed without a result message')
+      throw new Error('artifact Darb query completed without a result message')
     }
     return {
       id: responseID,

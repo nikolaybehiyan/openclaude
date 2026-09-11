@@ -20,7 +20,7 @@ export const USAGE = [
   '  /commit-message status',
   '  /commit-message off',
   '  /commit-message default',
-  '  /commit-message set "Generated with OpenClaude using GPT-5.5"',
+  '  /commit-message set "Generated with Darb using GPT-5.5"',
   '  /commit-message co-author "Name" name@example.com',
 ].join('\n')
 
@@ -138,7 +138,7 @@ export const call: LocalCommandCall = async args => {
       if (error) return { type: 'text', value: error }
       return {
         type: 'text',
-        value: 'Commit attribution reset to the OpenClaude default.',
+        value: 'Commit attribution reset to the Darb default.',
       }
     }
 

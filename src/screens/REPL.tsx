@@ -4178,7 +4178,7 @@ export function REPL({
   useEffect(() => {
     const handleSuspend = () => {
       // Print suspension instructions
-      process.stdout.write(`\nOpenClaude has been suspended. Run \`fg\` to bring Darb back.\nNote: ctrl + z now suspends Darb, ctrl + _ undoes input.\n`);
+      process.stdout.write(`\nDarb has been suspended. Run \`fg\` to bring Darb back.\nNote: ctrl + z now suspends Darb, ctrl + _ undoes input.\n`);
     };
     const handleResume = () => {
       // Force complete component tree replacement instead of terminal clear

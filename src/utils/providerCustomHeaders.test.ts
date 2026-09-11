@@ -23,16 +23,16 @@ describe('parseProfileCustomHeadersInput', () => {
       error: expect.stringContaining('Name: value'),
     })
     expect(parseProfileCustomHeadersInput('Authorization: Bearer token')).toMatchObject({
-      error: expect.stringContaining('managed by OpenClaude'),
+      error: expect.stringContaining('managed by Darb'),
     })
     expect(parseProfileCustomHeadersInput('api-key: token')).toMatchObject({
-      error: expect.stringContaining('managed by OpenClaude'),
+      error: expect.stringContaining('managed by Darb'),
     })
     expect(parseProfileCustomHeadersInput('x-api-key: token')).toMatchObject({
-      error: expect.stringContaining('managed by OpenClaude'),
+      error: expect.stringContaining('managed by Darb'),
     })
     expect(parseProfileCustomHeadersInput('x-anthropic-danger: yes')).toMatchObject({
-      error: expect.stringContaining('managed by OpenClaude'),
+      error: expect.stringContaining('managed by Darb'),
     })
   })
 })

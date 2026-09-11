@@ -12,7 +12,7 @@ describe('getDefaultCommitCoAuthorName', () => {
         apiProvider: 'openai',
         isInternalRepo: false,
       }),
-    ).toBe('OpenClaude (gpt-5.5)')
+    ).toBe('Darb (gpt-5.5)')
   })
 
   it('does not apply internal Claude formatting to non-Claude providers', () => {
@@ -22,7 +22,7 @@ describe('getDefaultCommitCoAuthorName', () => {
         apiProvider: 'openai',
         isInternalRepo: true,
       }),
-    ).toBe('OpenClaude (gpt-5.5)')
+    ).toBe('Darb (gpt-5.5)')
   })
 
   it('keeps the codename-safe fallback for unknown first-party models', () => {
@@ -32,7 +32,7 @@ describe('getDefaultCommitCoAuthorName', () => {
         apiProvider: 'firstParty',
         isInternalRepo: false,
       }),
-    ).toBe('Claude Opus 4.6')
+    ).toBe('Darb')
   })
 
   it('sanitizes unknown internal Claude co-author names', () => {
@@ -42,7 +42,7 @@ describe('getDefaultCommitCoAuthorName', () => {
         apiProvider: 'firstParty',
         isInternalRepo: true,
       }),
-    ).toBe('Claude (bad model id)')
+    ).toBe('Darb (Claude (bad model id))')
   })
 
   it('does not duplicate the Claude prefix for Claude model names', () => {
@@ -52,7 +52,7 @@ describe('getDefaultCommitCoAuthorName', () => {
         apiProvider: 'firstParty',
         isInternalRepo: false,
       }),
-    ).toBe('Claude Opus 4.6')
+    ).toBe('Darb (Claude Opus 4.6)')
   })
 
   it('uses the OpenClaude email for commit attribution across providers', () => {

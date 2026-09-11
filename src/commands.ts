@@ -206,7 +206,7 @@ import stats from './commands/stats/index.js'
 const usageReport: Command = {
   type: 'prompt',
   name: 'insights',
-  description: 'Generate a report analyzing your OpenClaude sessions',
+  description: 'Generate a report analyzing your Darb sessions',
   contentLength: 0,
   progressMessage: 'analyzing your sessions',
   source: 'builtin',

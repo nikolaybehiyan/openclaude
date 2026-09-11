@@ -347,7 +347,7 @@ export async function connectSdkMcpServers(
               case 'ask':
                 return {
                   behavior: 'ask' as const,
-                  message: `OpenClaude needs your permission to use ${toolDef.name}`,
+                  message: `Darb needs your permission to use ${toolDef.name}`,
                 }
               default:
                 return MCPTool.checkPermissions(input, context)
