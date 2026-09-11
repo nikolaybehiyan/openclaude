@@ -354,11 +354,11 @@ export function describeDesignAuthFailure(
   switch (result.reason) {
     case 'needs_design_login':
       return nonInteractive
-        ? 'DesignSync needs Design authorization, but this non-interactive session has no Design-capable credential. In Claude Code Web, restart the session so its hosted Design capability can be attached; in a local terminal, run /design-login.'
+        ? 'DesignSync needs Design authorization, but this non-interactive session has no Design-capable credential. In Darb Web, restart the session so its hosted Design capability can be attached; in a local terminal, run /design-login.'
         : 'DesignSync needs design-system authorization. Run /design-login to authorize it with your claude.ai account — this works even when this session authenticates with an API key or a provider token.'
     case 'design_refresh_failed':
       return nonInteractive
-        ? `Could not refresh the design access token (transient error). Retry shortly; if the error persists, the stored credential needs re-authorization from an interactive Claude Code terminal (not available here).${detail}`
+        ? `Could not refresh the design access token (transient error). Retry shortly; if the error persists, the stored credential needs re-authorization from an interactive Darb terminal (not available here).${detail}`
         : `Could not refresh the design access token (transient error). Retry shortly, or run /design-login to re-authorize.${detail}`
     case 'wrong_provider':
       return 'DesignSync is only available with claude.ai authentication. It is not supported through Bedrock, Vertex, or other third-party providers.'

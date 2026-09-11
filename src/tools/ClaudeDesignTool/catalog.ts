@@ -188,7 +188,7 @@ export function validateDesignOperation(
     const metadata = discovered.get(operation)
     if (metadata?.readOnly) return null
     if (metadata) {
-      return `ClaudeDesign ${operation}: the server reports this operation as write-capable, and this client version can't validate its arguments (it needs a WRITE_OP_SCHEMAS entry). Update Claude Code to use it.`
+      return `ClaudeDesign ${operation}: the server reports this operation as write-capable, and this client version can't validate its arguments (it needs a WRITE_OP_SCHEMAS entry). Update Darb to use it.`
     }
     return `ClaudeDesign ${operation}: unrecognized operation. If the server added it recently, call {operation: "list"} first — a read-only operation becomes callable after discovery; a write-tier operation needs a WRITE_OP_SCHEMAS entry in this client.`
   }
