@@ -1,5 +1,4 @@
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../../services/analytics/index.js'
-import { getOauthConfig } from '../../constants/oauth.js'
 import { shouldUseCodexTransport } from '../../services/api/providerConfig.js'
 import {
   getTransportKindForRoute,
@@ -121,17 +120,7 @@ export function isFirstPartyAnthropicBaseUrl(): boolean {
     return true
   }
   try {
-    const parsed = new URL(baseUrl)
-    // An approved first-party deployment accepts its own OAuth credentials
-    // on the same origin. Never send those credentials to an unrelated custom
-    // inference provider, including a host-managed external inference route.
-    if (process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL) {
-      const approved = new URL(getOauthConfig().BASE_API_URL)
-      if (parsed.origin === approved.origin && !parsed.username && !parsed.password) {
-        return true
-      }
-    }
-    const host = parsed.host
+    const host = new URL(baseUrl).host
     const allowedHosts = ['api.anthropic.com']
     if (process.env.USER_TYPE === 'ant') {
       allowedHosts.push('api-staging.anthropic.com')
