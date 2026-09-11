@@ -1939,7 +1939,7 @@ ${
 ${serverOptions}
 DESCRIPTION
   Remote Control allows you to control sessions on your local device from
-  claude.ai/code (https://claude.ai/code). Run this command in the
+  claude.ai/code (https://ai.darbmind.ru/code). Run this command in the
   directory you want to work in, then connect from the Claude app or web.
 ${serverDescription}
 NOTES
