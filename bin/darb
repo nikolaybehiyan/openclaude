@@ -1,8 +1,7 @@
 #!/usr/bin/env node
 
 import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
-import { fileURLToPath, pathToFileURL } from 'node:url'
+import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
@@ -28,9 +27,4 @@ if (!process.env.NODE_EXTRA_CA_CERTS && existsSync(localCA)) {
   process.exit(child.status ?? 1)
 }
 
-const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'darb', 'cli.mjs')
-if (!existsSync(dist)) {
-  console.error('Darb: CLI bundle is missing. Run bun run build:darb first.')
-  process.exit(1)
-}
-await import(pathToFileURL(dist).href)
+await import('./openclaude')

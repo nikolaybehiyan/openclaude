@@ -1,7 +1,7 @@
 {
   "name": "@gitlawb/openclaude",
   "version": "0.9.2",
-  "description": "OpenClaude opens coding-agent workflows to any LLM \u2014 OpenAI, Gemini, DeepSeek, Ollama, and 200+ models",
+  "description": "OpenClaude opens coding-agent workflows to any LLM — OpenAI, Gemini, DeepSeek, Ollama, and 200+ models",
   "type": "module",
   "bin": {
     "openclaude": "./bin/openclaude",
@@ -21,9 +21,7 @@
     "dist/sdk.mjs",
     "src/entrypoints/sdk.d.ts",
     "src/entrypoints/sdk/coreTypes.generated.ts",
-    "README.md",
-    "dist/darb/cli.mjs",
-    "dist/darb/cli.js"
+    "README.md"
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
@@ -68,9 +66,7 @@
     "doctor:report": "bun run scripts/system-check.ts --out reports/doctor-runtime.json",
     "hardening:check": "bun run smoke && bun run doctor:runtime",
     "hardening:strict": "bun run typecheck && bun run hardening:check",
-    "prepack": "npm run build",
-    "build:cli": "bun run scripts/build.ts --cli-only",
-    "build:darb": "bun run scripts/build-darb.ts"
+    "prepack": "npm run build"
   },
   "dependencies": {
     "@alcalzone/ansi-tokenize": "0.3.0",
