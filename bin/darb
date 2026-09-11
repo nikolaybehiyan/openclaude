@@ -1,0 +1,47 @@
+#!/usr/bin/env node
+
+import { existsSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath, pathToFileURL } from 'node:url'
+import { homedir } from 'node:os'
+import { spawnSync } from 'node:child_process'
+
+// The standalone package uses the existing first-party protocol and OAuth
+// registry. Keep these technical names compatible with the shared runtime.
+const origin = 'https://ai.darbmind.ru'
+process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = origin
+process.env.ANTHROPIC_BASE_URL = origin
+process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+process.env.CLAUDE_CONFIG_DIR ??= join(homedir(), '.darb')
+process.env.DISABLE_AUTOUPDATER = '1'
+
+// Node loads additional CA roots only at process startup. A local deployment
+// can install its public CA in this CLI's config without disabling TLS checks.
+const localCA = join(process.env.CLAUDE_CONFIG_DIR, 'ca.pem')
+if (!process.env.NODE_EXTRA_CA_CERTS && existsSync(localCA)) {
+  const child = spawnSync(process.execPath, [...process.execArgv, process.argv[1], ...process.argv.slice(2)], {
+    stdio: 'inherit',
+    env: { ...process.env, NODE_EXTRA_CA_CERTS: localCA },
+  })
+  if (child.error) throw child.error
+  process.exit(child.status ?? 1)
+}
+
+// Explicit incompatible provider credentials must not silently redirect darb
+// away from its backend or replace the user's persisted OAuth account.
+const conflicts = [
+  'ANTHROPIC_API_KEY', 'ANTHROPIC_AUTH_TOKEN', 'CLAUDE_CODE_OAUTH_TOKEN',
+  'CLAUDE_CODE_USE_OPENAI', 'CLAUDE_CODE_USE_GEMINI', 'CLAUDE_CODE_USE_BEDROCK',
+  'CLAUDE_CODE_USE_VERTEX', 'CLAUDE_CODE_USE_FOUNDRY', 'CLAUDE_CODE_USE_GITHUB',
+].filter(key => process.env[key] && !['0', 'false'].includes(process.env[key]))
+if (conflicts.length) {
+  console.error(`Darb: remove conflicting environment settings before signing in: ${conflicts.join(', ')}`)
+  process.exit(1)
+}
+
+const dist = join(dirname(fileURLToPath(import.meta.url)), '..', 'dist', 'darb', 'cli.mjs')
+if (!existsSync(dist)) {
+  console.error('Darb: CLI bundle is missing. Run bun run build:darb first.')
+  process.exit(1)
+}
+await import(pathToFileURL(dist).href)

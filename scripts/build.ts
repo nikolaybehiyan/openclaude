@@ -15,6 +15,13 @@ import { CLI_EXTERNALS, SDK_EXTERNALS } from './externals.js'
 
 const pkg = JSON.parse(readFileSync('./package.json', 'utf-8'))
 const version = pkg.version
+const cliOnly = process.argv.includes('--cli-only')
+const outputIndex = process.argv.indexOf('--outdir')
+const outputDirectory = outputIndex < 0 ? './dist' : process.argv[outputIndex + 1]
+if (!outputDirectory) throw new Error('--outdir requires a directory')
+const buildTime = process.env.SOURCE_DATE_EPOCH
+  ? new Date(Number(process.env.SOURCE_DATE_EPOCH) * 1000).toISOString()
+  : new Date().toISOString()
 
 function requiredBuildIdentity(name: string, pattern: RegExp): string {
   const value = process.env[name]?.trim()
@@ -170,7 +177,7 @@ try {
 
 result = await Bun.build({
   entrypoints: ['./src/entrypoints/cli.tsx'],
-  outdir: './dist',
+  outdir: outputDirectory,
   target: 'node',
   format: 'esm',
   splitting: false,
@@ -185,7 +192,7 @@ result = await Bun.build({
     // version separately in Open Claude branding.
     'MACRO.VERSION': JSON.stringify('99.0.0'),
     'MACRO.DISPLAY_VERSION': JSON.stringify(version),
-    'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
+    'MACRO.BUILD_TIME': JSON.stringify(buildTime),
     'MACRO.ISSUES_EXPLAINER':
       JSON.stringify('report the issue at https://github.com/Gitlawb/openclaude/issues'),
     'MACRO.FEEDBACK_CHANNEL':
@@ -505,16 +512,17 @@ if (!result.success) {
   }
   process.exitCode = 1
 } else {
-  console.log(`✓ Built openclaude v${version} → dist/cli.mjs`)
+  console.log(`✓ Built ${productIdentity.productName} v${version} → ${outputDirectory}/cli.mjs`)
 }
 
 // ── SDK Bundle Build ──────────────────────────────────────────────────────
 // SDK is a separate bundle for npm consumption - must NOT bundle React/Ink
+if (!cliOnly) {
 console.log('Building SDK bundle...')
 
 sdkResult = await Bun.build({
   entrypoints: ['./src/entrypoints/sdk/index.ts'],
-  outdir: './dist',
+  outdir: outputDirectory,
   target: 'node',
   format: 'esm',
   splitting: false,
@@ -525,7 +533,7 @@ sdkResult = await Bun.build({
     ...productIdentityDefines,
     'MACRO.VERSION': JSON.stringify(version),
     'MACRO.DISPLAY_VERSION': JSON.stringify(version),
-    'MACRO.BUILD_TIME': JSON.stringify(new Date().toISOString()),
+    'MACRO.BUILD_TIME': JSON.stringify(buildTime),
     'MACRO.ISSUES_EXPLAINER':
       JSON.stringify('report the issue at https://github.com/Gitlawb/openclaude/issues'),
     'MACRO.FEEDBACK_CHANNEL':
@@ -940,6 +948,7 @@ if (!sdkResult.success) {
   console.log(`✓ Built SDK bundle → dist/sdk.mjs`)
 }
 
+}
 } finally {
   // Always restore source files, even if Bun.build() throws
   restoreModifiedFiles()
