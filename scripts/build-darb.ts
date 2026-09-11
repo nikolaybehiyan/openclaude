@@ -1,4 +1,5 @@
 import { spawnSync } from 'node:child_process'
+import { writeFileSync } from 'node:fs'
 
 const result = spawnSync(process.execPath, ['--smol', 'run', 'scripts/build.ts', '--cli-only', '--outdir', 'dist/darb'], {
   stdio: 'inherit',
@@ -14,4 +15,8 @@ const result = spawnSync(process.execPath, ['--smol', 'run', 'scripts/build.ts',
   },
 })
 if (result.error) throw result.error
+if (result.status === 0) {
+  // Native subprocess launchers resolve cli.js beside the bundle.
+  writeFileSync('dist/darb/cli.js', "#!/usr/bin/env node\nimport './cli.mjs'\n", { mode: 0o755 })
+}
 process.exitCode = result.status ?? 1

@@ -22,7 +22,8 @@
     "src/entrypoints/sdk.d.ts",
     "src/entrypoints/sdk/coreTypes.generated.ts",
     "README.md",
-    "dist/darb/cli.mjs"
+    "dist/darb/cli.mjs",
+    "dist/darb/cli.js"
   ],
   "scripts": {
     "build": "bun run scripts/build.ts",
