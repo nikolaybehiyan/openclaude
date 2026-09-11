@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { hasProfileScope, isClaudeAISubscriber } from '../../utils/auth.js'
 import { getGlobalConfig, saveGlobalConfig } from '../../utils/config.js'
 import { logForDebugging } from '../../utils/debug.js'
@@ -42,7 +43,7 @@ async function _fetchMetricsEnabled(): Promise<MetricsEnabledResponse> {
     ...authResult.headers,
   }
 
-  const endpoint = `https://api.anthropic.com/api/claude_code/organizations/metrics_enabled`
+  const endpoint = `${getOauthConfig().BASE_API_URL}/api/claude_code/organizations/metrics_enabled`
   const response = await axios.get<MetricsEnabledResponse>(endpoint, {
     headers,
     timeout: 5000,

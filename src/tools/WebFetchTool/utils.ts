@@ -1,4 +1,5 @@
 import axios, { type AxiosResponse } from 'axios'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { LRUCache } from 'lru-cache'
 import {
   type AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -188,7 +189,7 @@ export async function checkDomainBlocklist(
   }
   try {
     const response = await axios.get(
-      `https://api.anthropic.com/api/web/domain_info?domain=${encodeURIComponent(domain)}`,
+      `${getOauthConfig().BASE_API_URL}/api/web/domain_info?domain=${encodeURIComponent(domain)}`,
       { timeout: DOMAIN_CHECK_TIMEOUT_MS },
     )
     if (response.status === 200) {

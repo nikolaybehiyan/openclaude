@@ -1,4 +1,5 @@
 import axios from 'axios';
+import { getOauthConfig } from '../constants/oauth.js';
 import { readFile, stat } from 'fs/promises';
 import * as React from 'react';
 import { useCallback, useEffect, useState } from 'react';
@@ -556,7 +557,7 @@ async function submitFeedback(data: FeedbackData, signal?: AbortSignal): Promise
       'User-Agent': getUserAgent(),
       ...authResult.headers
     };
-    const response = await axios.post('https://api.anthropic.com/api/claude_cli_feedback', {
+    const response = await axios.post(`${getOauthConfig().BASE_API_URL}/api/claude_cli_feedback`, {
       content: jsonStringify(data)
     }, {
       headers,

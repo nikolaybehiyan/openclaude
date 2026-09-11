@@ -8,6 +8,7 @@ import {
   type ResourceMetrics,
 } from '@opentelemetry/sdk-metrics'
 import axios from 'axios'
+import { getOauthConfig } from '../../constants/oauth.js'
 import { checkMetricsEnabled } from 'src/services/api/metricsOptOut.js'
 import { getIsNonInteractiveSession } from '../../bootstrap/state.js'
 import { getSubscriptionType, isClaudeAISubscriber } from '../auth.js'
@@ -44,7 +45,7 @@ export class BigQueryMetricsExporter implements PushMetricExporter {
   private isShutdown = false
 
   constructor(options: { timeout?: number } = {}) {
-    const defaultEndpoint = 'https://api.anthropic.com/api/claude_code/metrics'
+    const defaultEndpoint = `${getOauthConfig().BASE_API_URL}/api/claude_code/metrics`
 
     if (
       process.env.USER_TYPE === 'ant' &&

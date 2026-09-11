@@ -6,15 +6,13 @@ import { fileURLToPath, pathToFileURL } from 'node:url'
 import { homedir } from 'node:os'
 import { spawnSync } from 'node:child_process'
 
-// Public endpoints from Darb's existing owned-local desktop origin profile.
-// Keep the control services and provider route separate, as the native host does.
+// Darb implements the native service contract on its own origin.
 const origin = 'https://ai.darbmind.ru'
 process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = origin
-process.env.ANTHROPIC_BASE_URL = 'https://api.z.ai/api/anthropic'
+process.env.ANTHROPIC_BASE_URL = origin
 process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
 process.env.CLAUDE_CODE_GB_BASE_URL = origin
 process.env.GROWTHBOOK_CLIENT_KEY = 'sdk-zAZezfDKGoZuXXKe'
-process.env.DARBMIN_CODE_INFERENCE_CREDENTIAL_URL = `${origin}/api/claude_code/inference_credential`
 process.env.CLAUDE_CONFIG_DIR ??= join(homedir(), '.darb')
 process.env.DISABLE_AUTOUPDATER = '1'
 

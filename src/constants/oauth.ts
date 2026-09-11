@@ -117,7 +117,7 @@ const PROD_OAUTH_CONFIG = {
  * See: https://datatracker.ietf.org/doc/html/draft-ietf-oauth-client-id-metadata-document-00
  */
 export const MCP_CLIENT_METADATA_URL =
-  'https://claude.ai/oauth/claude-code-client-metadata'
+  'https://ai.darbmind.ru/oauth/claude-code-client-metadata'
 
 // Staging OAuth configuration - only included in ant builds with staging flag
 // Uses literal check for dead code elimination
@@ -239,6 +239,7 @@ export function getOauthConfig(): OauthConfig {
       CONSOLE_SUCCESS_URL: `${base}/oauth/code/success?app=claude-code`,
       CLAUDEAI_SUCCESS_URL: `${base}/oauth/code/success?app=claude-code`,
       MANUAL_REDIRECT_URL: `${base}/oauth/code/callback`,
+      MCP_PROXY_URL: base,
       OAUTH_FILE_SUFFIX: '-custom-oauth',
     }
   }

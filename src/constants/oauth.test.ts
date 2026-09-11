@@ -50,6 +50,8 @@ describe('host-managed Code control and inference routing', () => {
     expect(config.CLAUDE_AI_AUTHORIZE_URL).toBe(
       'https://ai.darbmind.ru/oauth/authorize',
     )
+    expect(config.MCP_PROXY_URL).toBe('https://ai.darbmind.ru')
+    expect(config.MCP_PROXY_PATH).toBe('/v1/mcp/{server_id}')
     expect(isHostManagedExternalInference()).toBe(true)
   })
 
