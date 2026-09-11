@@ -8,9 +8,9 @@ import { getAPIProvider } from '../utils/model/providers.js'
 import { getWorkload } from '../utils/workloadContext.js'
 
 const DEFAULT_PREFIX =
-  `You are Darb, an open-source coding agent and CLI.`
+  `You are Darb, an AI assistant for chat, collaborative work, and coding.`
 const AGENT_SDK_CLAUDE_CODE_PRESET_PREFIX =
-  `You are Darb, an open-source coding agent and CLI running within the Claude Agent SDK.`
+  `You are Darb, an AI assistant for chat, collaborative work, and coding, running within the Claude Agent SDK.`
 const AGENT_SDK_PREFIX =
   `You are Darb, built on the Claude Agent SDK.`
 

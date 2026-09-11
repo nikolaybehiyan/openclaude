@@ -19,6 +19,7 @@ import { GENERAL_PURPOSE_AGENT } from '../tools/AgentTool/built-in/generalPurpos
 import { EXPLORE_AGENT } from '../tools/AgentTool/built-in/exploreAgent.js'
 import { PLAN_AGENT } from '../tools/AgentTool/built-in/planAgent.js'
 import { STATUSLINE_SETUP_AGENT } from '../tools/AgentTool/built-in/statuslineSetup.js'
+import { getCoordinatorSystemPrompt } from '../coordinator/coordinatorMode.js'
 
 const originalSimpleEnv = process.env.CLAUDE_CODE_SIMPLE
 
@@ -122,4 +123,5 @@ test('all runtime request identity modes are Darb', () => {
   ]) {
     expect(getCLISyspromptPrefix(options)).toStartWith('You are Darb,')
   }
+  expect(getCoordinatorSystemPrompt()).toStartWith('You are Darb,')
 })
