@@ -91,7 +91,7 @@ function setupOpenAIMode(baseUrl: string, model: string): void {
 }
 
 describe('printStartupScreen logo', () => {
-  test('renders CLAUDE with a D-shaped D instead of an O-shaped block', () => {
+  test('renders the Darb logo and product footer', () => {
     ;(globalThis as Record<string, unknown>).MACRO = { VERSION: 'test-version' }
     Object.defineProperty(process.stdout, 'isTTY', {
       configurable: true,
@@ -107,10 +107,10 @@ describe('printStartupScreen logo', () => {
     printStartupScreen()
 
     const plainOutput = stripAnsi(output)
-    expect(plainOutput).toContain('███████╗ ████████╗')
-    expect(plainOutput).toContain('██╔═══██╗ ██╔═════╝')
-    expect(plainOutput).toContain('███████╔╝ ████████╗')
-    expect(plainOutput).not.toContain('████████║ ████████╗')
+    expect(plainOutput).toContain('██████╗  █████╗ ██████╗ ██████╗')
+    expect(plainOutput).toContain('darb vtest-version')
+    expect(plainOutput).toContain('Darbmind')
+    expect(plainOutput).not.toMatch(/OpenClaude|OPEN CLAUDE|openclaude|Anthropic/)
   })
 })
 
@@ -262,27 +262,27 @@ describe('detectProvider — explicit dedicated-provider env flags', () => {
 describe('detectProvider — modelOverride from --model flag', () => {
   test('modelOverride overrides default Anthropic model', () => {
     const result = detectProvider('claude-opus-4-6')
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('opus')
   })
 
   test('modelOverride alias is resolved for Anthropic', () => {
     const result = detectProvider('opus')
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('opus')
   })
 
   test('modelOverride takes priority over ANTHROPIC_MODEL env var', () => {
     process.env.ANTHROPIC_MODEL = 'claude-haiku-4-5-20251001'
     const result = detectProvider('claude-opus-4-6')
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('opus')
   })
 
   test('modelOverride takes priority over CLAUDE_MODEL env var', () => {
     process.env.CLAUDE_MODEL = 'claude-haiku-4-5-20251001'
     const result = detectProvider('claude-opus-4-6')
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('opus')
   })
 
@@ -315,14 +315,14 @@ describe('detectProvider — modelOverride from --model flag', () => {
   test('undefined modelOverride preserves default behavior', () => {
     process.env.ANTHROPIC_MODEL = 'claude-sonnet-4-6'
     const result = detectProvider(undefined)
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('sonnet')
   })
 
   test('no argument preserves default behavior', () => {
     process.env.ANTHROPIC_MODEL = 'claude-sonnet-4-6'
     const result = detectProvider()
-    expect(result.name).toBe('Anthropic')
+    expect(result.name).toBe('Darbmind')
     expect(result.model).toContain('sonnet')
   })
 })

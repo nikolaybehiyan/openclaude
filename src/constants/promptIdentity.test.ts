@@ -34,6 +34,7 @@ test('CLI identity prefixes describe Darb instead of Claude Code', () => {
 
   for (const prefix of CLI_SYSPROMPT_PREFIXES) {
     expect(prefix).toContain('Darb')
+    expect(prefix).not.toContain('OpenClaude')
     expect(prefix).not.toContain('Claude Code')
     expect(prefix).not.toContain("Anthropic's official CLI for Claude")
   }
@@ -109,4 +110,16 @@ test('built-in agent prompts describe Darb instead of Claude Code', () => {
   expect(guidePrompt).toContain('**Darb** (the CLI tool)')
   expect(guidePrompt).not.toContain('You are the Claude guide agent.')
   expect(guidePrompt).not.toContain('**Claude Code** (the CLI tool)')
+})
+
+// The request assembler uses these prefixes for interactive CLI, SDK preset,
+// and raw SDK calls. User-supplied prompt bodies remain untouched.
+test('all runtime request identity modes are Darb', () => {
+  for (const options of [
+    { isNonInteractive: false, hasAppendSystemPrompt: false },
+    { isNonInteractive: true, hasAppendSystemPrompt: true },
+    { isNonInteractive: true, hasAppendSystemPrompt: false },
+  ]) {
+    expect(getCLISyspromptPrefix(options)).toStartWith('You are Darb,')
+  }
 })
