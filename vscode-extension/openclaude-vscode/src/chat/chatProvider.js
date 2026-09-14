@@ -567,7 +567,7 @@ class OpenClaudeChatPanelManager {
 
     this._panel = vscode.window.createWebviewPanel(
       'openclaude.chatPanel',
-      'OpenClaude Chat',
+      'Darb Chat',
       vscode.ViewColumn.Beside,
       {
         enableScripts: true,

@@ -1,7 +1,7 @@
 {
   "name": "openclaude-vscode",
-  "displayName": "OpenClaude",
-  "description": "Practical VS Code companion for OpenClaude with project-aware launch behavior and a real Control Center.",
+  "displayName": "Darb",
+  "description": "Practical VS Code companion for Darb with project-aware launch behavior and a real Control Center.",
   "version": "0.2.0",
   "publisher": "devnull-bootloader",
   "engines": {
@@ -40,60 +40,60 @@
     "commands": [
       {
         "command": "openclaude.start",
-        "title": "OpenClaude: Launch in Terminal",
-        "category": "OpenClaude"
+        "title": "Darb: Launch in Terminal",
+        "category": "Darb"
       },
       {
         "command": "openclaude.startInWorkspaceRoot",
-        "title": "OpenClaude: Launch in Workspace Root",
-        "category": "OpenClaude"
+        "title": "Darb: Launch in Workspace Root",
+        "category": "Darb"
       },
       {
         "command": "openclaude.openDocs",
-        "title": "OpenClaude: Open Repository",
-        "category": "OpenClaude"
+        "title": "Darb: Open Repository",
+        "category": "Darb"
       },
       {
         "command": "openclaude.openSetupDocs",
-        "title": "OpenClaude: Open Setup Guide",
-        "category": "OpenClaude"
+        "title": "Darb: Open Setup Guide",
+        "category": "Darb"
       },
       {
         "command": "openclaude.openWorkspaceProfile",
-        "title": "OpenClaude: Open Workspace Profile",
-        "category": "OpenClaude"
+        "title": "Darb: Open Workspace Profile",
+        "category": "Darb"
       },
       {
         "command": "openclaude.openControlCenter",
-        "title": "OpenClaude: Open Control Center",
-        "category": "OpenClaude"
+        "title": "Darb: Open Control Center",
+        "category": "Darb"
       },
       {
         "command": "openclaude.newChat",
-        "title": "OpenClaude: New Chat",
-        "category": "OpenClaude"
+        "title": "Darb: New Chat",
+        "category": "Darb"
       },
       {
         "command": "openclaude.openChat",
-        "title": "OpenClaude: Open Chat Panel",
-        "category": "OpenClaude"
+        "title": "Darb: Open Chat Panel",
+        "category": "Darb"
       },
       {
         "command": "openclaude.resumeSession",
-        "title": "OpenClaude: Resume Session",
-        "category": "OpenClaude"
+        "title": "Darb: Resume Session",
+        "category": "Darb"
       },
       {
         "command": "openclaude.abortChat",
-        "title": "OpenClaude: Abort Generation",
-        "category": "OpenClaude"
+        "title": "Darb: Abort Generation",
+        "category": "Darb"
       }
     ],
     "viewsContainers": {
       "activitybar": [
         {
           "id": "openclaude",
-          "title": "OpenClaude",
+          "title": "Darb",
           "icon": "media/openclaude.svg"
         }
       ]
@@ -120,32 +120,37 @@
       }
     ],
     "configuration": {
-      "title": "OpenClaude",
+      "title": "Darb",
       "properties": {
         "openclaude.launchCommand": {
           "type": "string",
           "default": "openclaude",
-          "description": "Command run in the integrated terminal when launching OpenClaude."
+          "description": "Command run in the integrated terminal when launching Darb."
         },
         "openclaude.terminalName": {
           "type": "string",
-          "default": "OpenClaude",
-          "description": "Integrated terminal tab name for OpenClaude sessions."
+          "default": "Darb",
+          "description": "Integrated terminal tab name for Darb sessions."
         },
         "openclaude.useOpenAIShim": {
           "type": "boolean",
           "default": false,
-          "description": "Optionally set CLAUDE_CODE_USE_OPENAI=1 in launched OpenClaude terminals."
+          "description": "Optionally set CLAUDE_CODE_USE_OPENAI=1 in launched Darb terminals."
         },
         "openclaude.permissionMode": {
           "type": "string",
           "default": "acceptEdits",
-          "enum": ["default", "acceptEdits", "bypassPermissions", "plan"],
+          "enum": [
+            "default",
+            "acceptEdits",
+            "bypassPermissions",
+            "plan"
+          ],
           "enumDescriptions": [
             "Prompt for permission on each tool use (requires manual approval)",
             "Auto-approve file edits, prompt for other operations (recommended)",
             "Auto-approve all operations without prompting",
-            "Read-only mode — no file modifications allowed"
+            "Read-only mode \u2014 no file modifications allowed"
           ],
           "description": "Permission mode for chat sessions. Controls which tool operations are auto-approved."
         }
@@ -153,7 +158,7 @@
     },
     "themes": [
       {
-        "label": "OpenClaude Terminal Black",
+        "label": "Darb Terminal Black",
         "uiTheme": "vs-dark",
         "path": "./themes/OpenClaude-Terminal-Black.json"
       }

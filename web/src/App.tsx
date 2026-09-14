@@ -30,9 +30,9 @@ function App() {
     <div className="site-shell">
       <header className="site-header">
         <nav className="nav" aria-label="primary">
-          <a className="brand" href="/" aria-label="openclaude home">
+          <a className="brand" href="/" aria-label="Darb home">
             <img src="/openclaude.png" alt="" />
-            <span>openclaude</span>
+            <span>Darb</span>
             <span className="ver">v0.7</span>
           </a>
           <div className="nav-right">
@@ -111,7 +111,7 @@ function App() {
         <div className="footer-line">
           <span className="brand">
             <img src="/openclaude.png" alt="" />
-            <span>openclaude</span>
+            <span>Darb</span>
             <span className="ver">v0.7.0</span>
           </span>
           <span className="sep">|</span>
