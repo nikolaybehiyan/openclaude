@@ -13,6 +13,8 @@ import { getModelStrings } from './modelStrings.js'
 import { getCachedOllamaModelOptions, isOllamaProvider } from './ollamaModels.js'
 import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNimModels.js'
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
+import { currentDarbCatalog, isDarbManagedInference } from './darbModels.js'
+import { CONNECT_AI } from './darbCatalog.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -23,6 +25,11 @@ const validModelCache = new Map<string, boolean>()
 export async function validateModel(
   model: string,
 ): Promise<{ valid: boolean; error?: string }> {
+  if (isDarbManagedInference()) {
+    return currentDarbCatalog()?.models.some(row => row.id === model) && isModelAllowed(model)
+      ? { valid: true }
+      : { valid: false, error: CONNECT_AI }
+  }
   const normalizedModel = model.trim()
 
   // Empty model is invalid

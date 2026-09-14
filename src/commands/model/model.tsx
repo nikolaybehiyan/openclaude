@@ -59,6 +59,8 @@ import { validateModel } from '../../utils/model/validateModel.js'
 import { getLocalOpenAICompatibleProviderLabel } from '../../utils/providerDiscovery.js'
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { parseCustomHeadersEnv } from '../../utils/providerCustomHeaders.js'
+import { darbCatalogErrorMessage, refreshDarbModels } from '../../services/api/darbModels.js'
+import { darbModelOptions, isDarbManagedInference } from '../../utils/model/darbModels.js'
 import {
   getActiveOpenAIModelOptionsCache,
   getActiveProviderProfile,
@@ -593,7 +595,7 @@ function SetModelAndClose({
         return
       }
 
-      if (isKnownAlias(model)) {
+      if (!isDarbManagedInference() && isKnownAlias(model)) {
         setModel(model)
         return
       }
@@ -780,6 +782,20 @@ async function refreshModelsAndSummarize(): Promise<string> {
 
 export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
   const trimmedArgs = args?.trim() || ''
+
+  if (isDarbManagedInference() && !COMMON_INFO_ARGS.includes(trimmedArgs) && !COMMON_HELP_ARGS.includes(trimmedArgs)) {
+    try {
+      await refreshDarbModels()
+    } catch (error) {
+      onDone(darbCatalogErrorMessage(error), { display: 'system' })
+      return
+    }
+    if (trimmedArgs === 'refresh') {
+      onDone(`Darb: ${darbModelOptions().length} available models. Run /model to select.`, { display: 'system' })
+      return
+    }
+    if (!trimmedArgs) return <ModelPickerWrapper discoveryContext={null} onDone={onDone} />
+  }
 
   if (COMMON_INFO_ARGS.includes(trimmedArgs)) {
     logEvent('tengu_model_command_inline_help', {

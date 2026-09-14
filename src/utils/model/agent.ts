@@ -1,6 +1,6 @@
 import type { PermissionMode } from '../permissions/PermissionMode.js'
 import { capitalize } from '../stringUtils.js'
-import { MODEL_ALIASES, type ModelAlias } from './aliases.js'
+import { MODEL_ALIASES } from './aliases.js'
 import { applyBedrockRegionPrefix, getBedrockRegionPrefix } from './bedrock.js'
 import {
   getCanonicalName,
@@ -8,12 +8,13 @@ import {
   parseUserSpecifiedModel,
 } from './model.js'
 import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './providers.js'
+import { darbModelLabel, darbModelOptions, isDarbManagedInference, requireDarbModel } from './darbModels.js'
 
 export const AGENT_MODEL_OPTIONS = [...MODEL_ALIASES, 'inherit'] as const
 export type AgentModelAlias = (typeof AGENT_MODEL_OPTIONS)[number]
 
 export type AgentModelOption = {
-  value: AgentModelAlias
+  value: string
   label: string
   description: string
 }
@@ -37,9 +38,13 @@ export function getDefaultSubagentModel(): string {
 export function getAgentModel(
   agentModel: string | undefined,
   parentModel: string,
-  toolSpecifiedModel?: ModelAlias,
+  toolSpecifiedModel?: string,
   permissionMode?: PermissionMode,
 ): string {
+  if (isDarbManagedInference()) {
+    const selected = process.env.CLAUDE_CODE_SUBAGENT_MODEL || toolSpecifiedModel || agentModel
+    return requireDarbModel(!selected || selected === 'inherit' ? parentModel : selected).id
+  }
   if (process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
     return parseUserSpecifiedModel(process.env.CLAUDE_CODE_SUBAGENT_MODEL)
   }
@@ -148,6 +153,7 @@ function aliasMatchesParentTier(alias: string, parentModel: string): boolean {
  * and custom Anthropic-compatible endpoints (proxies, self-hosted).
  */
 export function checkIsClaudeNativeProvider(): boolean {
+  if (isDarbManagedInference()) return false
   const provider = getAPIProvider()
   return (
     provider === 'bedrock' ||
@@ -161,6 +167,7 @@ export function getAgentModelDisplay(model: string | undefined): string {
   // When model is omitted, getDefaultSubagentModel() returns 'inherit' at runtime
   if (!model) return 'Inherit from parent (default)'
   if (model === 'inherit') return 'Inherit from parent'
+  if (isDarbManagedInference()) return darbModelLabel(model)
   return capitalize(model)
 }
 
@@ -168,6 +175,10 @@ export function getAgentModelDisplay(model: string | undefined): string {
  * Get available model options for agents
  */
 export function getAgentModelOptions(): AgentModelOption[] {
+  if (isDarbManagedInference()) return [
+    { value: 'inherit', label: 'Inherit from parent', description: 'Use the same selected model and connection' },
+    ...darbModelOptions(),
+  ]
   return [
     {
       value: 'sonnet',

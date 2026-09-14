@@ -1,5 +1,10 @@
 import { describe, test, expect, beforeEach, afterEach, mock } from 'bun:test'
 
+const originalProviders = await import('./providers.js')
+function mockProviders(factory: () => Partial<typeof originalProviders>) {
+  mock.module('./providers.js', () => ({ ...originalProviders, ...factory() }))
+}
+
 describe('getAgentModel provider-aware fallback', () => {
   // Restore all mocks after each test
   afterEach(() => {
@@ -9,7 +14,7 @@ describe('getAgentModel provider-aware fallback', () => {
   describe('Claude-native providers', () => {
     test('haiku alias resolves to haiku model for official Anthropic API', async () => {
       // Mock providers to return firstParty with official URL
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'firstParty',
         isFirstPartyAnthropicBaseUrl: () => true,
       }))
@@ -24,7 +29,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias resolves for Bedrock provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'bedrock',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -37,7 +42,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias resolves for Vertex provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'vertex',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -50,7 +55,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias resolves for Foundry provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'foundry',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -65,7 +70,7 @@ describe('getAgentModel provider-aware fallback', () => {
 
   describe('Non-Claude-native providers', () => {
     test('haiku alias inherits parent model for OpenAI provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'openai',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -78,7 +83,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for Gemini provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'gemini',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -92,7 +97,7 @@ describe('getAgentModel provider-aware fallback', () => {
 
     test('haiku alias inherits parent model for custom Anthropic-compatible URL', async () => {
       // firstParty provider but with custom URL (not official Anthropic)
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'firstParty',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -105,7 +110,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('sonnet alias inherits parent model for OpenAI provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'openai',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -118,7 +123,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for Mistral provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'mistral',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -131,7 +136,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for GitHub Copilot provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'github',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -144,7 +149,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for NVIDIA NIM provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'nvidia-nim',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -157,7 +162,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for MiniMax provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'minimax',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -170,7 +175,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('haiku alias inherits parent model for Codex provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'codex',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -185,7 +190,7 @@ describe('getAgentModel provider-aware fallback', () => {
 
   describe('inherit behavior unchanged', () => {
     test('inherit always returns parent model regardless of provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'openai',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -199,7 +204,7 @@ describe('getAgentModel provider-aware fallback', () => {
 
   describe('checkIsClaudeNativeProvider helper', () => {
     test('returns true for official Anthropic API', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'firstParty',
         isFirstPartyAnthropicBaseUrl: () => true,
       }))
@@ -209,7 +214,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('returns true for Bedrock provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'bedrock',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -219,7 +224,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('returns true for Vertex provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'vertex',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -229,7 +234,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('returns true for Foundry provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'foundry',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -239,7 +244,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('returns false for OpenAI provider', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'openai',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))
@@ -249,7 +254,7 @@ describe('getAgentModel provider-aware fallback', () => {
     })
 
     test('returns false for custom Anthropic URL', async () => {
-      mock.module('./providers.js', () => ({
+      mockProviders(() => ({
         getAPIProvider: () => 'firstParty',
         isFirstPartyAnthropicBaseUrl: () => false,
       }))

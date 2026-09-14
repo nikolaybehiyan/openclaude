@@ -36,6 +36,8 @@ import type { Root } from './ink.js';
 import { launchRepl } from './replLauncher.js';
 import { hasGrowthBookEnvOverride, initializeGrowthBook, refreshGrowthBookAfterAuthChange } from './services/analytics/growthbook.js';
 import { fetchBootstrapData } from './services/api/bootstrap.js';
+import { darbCatalogErrorMessage, refreshDarbModels } from './services/api/darbModels.js';
+import { currentDarbCatalog, isDarbManagedInference } from './utils/model/darbModels.js';
 import { refreshStartupDiscoveryForActiveRoute } from './integrations/discoveryService.js';
 import { prefetchOllamaModels } from './utils/model/ollamaModels.js';
 import { type DownloadResult, downloadSessionFiles, type FilesApiConfig, parseFileSpecs } from './services/api/filesApi.js';
@@ -2031,6 +2033,16 @@ async function run(): Promise<CommanderCommand> {
       await initializeGrowthBook();
     }
 
+    // Account model selection is essential even in --bare / noninteractive
+    // mode. Do not let background bootstrap race the first inference call.
+    if (isDarbManagedInference()) {
+      try {
+        await refreshDarbModels();
+      } catch (error) {
+        process.stderr.write(`${darbCatalogErrorMessage(error)}\n`);
+      }
+    }
+
     // Special case the default model with the null keyword
     // NOTE: Model resolution happens after setup() to ensure trust is established before AWS auth
     const userSpecifiedModel = options.model === 'default' ? getDefaultMainLoopModel() : options.model;
@@ -2292,6 +2304,9 @@ async function run(): Promise<CommanderCommand> {
         prompt = '';
       }
       if (onboardingShown) {
+        if (isDarbManagedInference() && !currentDarbCatalog()) {
+          try { await refreshDarbModels(); } catch { /* /model shows the actionable connection state. */ }
+        }
         // Refresh auth-dependent services now that the user has logged in during onboarding.
         // Keep in sync with the post-login logic in src/commands/login.tsx
         void refreshRemoteManagedSettings();

@@ -8,6 +8,7 @@ import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { supportsCodexReasoningEffort } from '../services/api/providerConfig.js'
 import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
+import { currentDarbCatalog, isDarbManagedInference } from './model/darbModels.js'
 
 export type { EffortLevel }
 
@@ -32,6 +33,7 @@ export type PersistedEffortLevel = Exclude<EffortLevel, 'max'>
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
+  if (isDarbManagedInference()) return getAvailableEffortLevels(model).length > 0
   const m = model.toLowerCase()
   if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
     return true
@@ -73,6 +75,7 @@ export function modelSupportsEffort(model: string): boolean {
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
 // Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
 export function modelSupportsMaxEffort(model: string): boolean {
+  if (isDarbManagedInference()) return getAvailableEffortLevels(model).some(level => level === 'max')
   const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
   if (supported3P !== undefined) {
     return supported3P
@@ -99,6 +102,7 @@ export function modelSupportsMaxEffort(model: string): boolean {
 // aliases (including Desktop's pinned provider models) carry the authoritative
 // xhigh_effort capability in their environment projection.
 export function modelSupportsXHighEffort(model: string): boolean {
+  if (isDarbManagedInference()) return getAvailableEffortLevels(model).includes('xhigh')
   const supported3P = get3PModelCapabilityOverride(model, 'xhigh_effort')
   if (supported3P !== undefined) {
     return supported3P
@@ -127,6 +131,10 @@ export function modelUsesOpenAIEffort(model: string): boolean {
 }
 
 export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIEffortLevel[] {
+  if (isDarbManagedInference()) {
+    const declared = currentDarbCatalog()?.models.find(row => row.id === model)?.reasoning_efforts ?? []
+    return EFFORT_LEVELS.filter(level => declared.includes(level))
+  }
   if (!modelSupportsEffort(model)) {
     return []
   }
@@ -389,6 +397,7 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 export function getDefaultEffortForModel(
   model: string,
 ): EffortValue | undefined {
+  if (isDarbManagedInference()) return undefined
   if (process.env.USER_TYPE === 'ant') {
     const config = getAntModelOverrideConfig()
     const isDefaultModel =

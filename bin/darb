@@ -10,6 +10,9 @@ const origin = 'https://ai.darbmind.ru'
 process.env.CLAUDE_CODE_CUSTOM_OAUTH_URL = origin
 process.env.ANTHROPIC_BASE_URL = origin
 process.env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST = '1'
+// Only this standalone entry point consumes the account's CLI connection.
+// Embedded runtimes keep their caller-owned frozen model contract.
+process.env.DARB_CLI_MANAGED_INFERENCE = '1'
 process.env.CLAUDE_CODE_GB_BASE_URL = origin
 process.env.GROWTHBOOK_CLIENT_KEY = 'sdk-zAZezfDKGoZuXXKe'
 process.env.CLAUDE_CONFIG_DIR ??= join(homedir(), '.darb')

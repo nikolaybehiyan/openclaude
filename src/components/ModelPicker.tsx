@@ -11,6 +11,8 @@ import { useAppState, useSetAppState } from '../state/AppState.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, modelSupportsXHighEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
 import { getModelOptions, type ModelOption } from '../utils/model/modelOptions.js';
+import { isDarbManagedInference } from '../utils/model/darbModels.js';
+import { getAvailableEffortLevels } from '../utils/effort.js';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings.js';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint.js';
 import { Select } from './CustomSelect/index.js';
@@ -99,7 +101,7 @@ export function ModelPicker(t0) {
   const modelOptions = optionsOverride ?? t3;
   let t4;
   bb0: {
-    if (initial !== null && !modelOptions.some(opt => opt.value === initial)) {
+    if (!isDarbManagedInference() && initial !== null && !modelOptions.some(opt => opt.value === initial)) {
       let t5;
       if ($[4] !== initial) {
         t5 = modelDisplayString(initial);
@@ -212,7 +214,7 @@ export function ModelPicker(t0) {
     if (!focusedSupportsEffort) {
       return;
     }
-    setEffort(prev => cycleEffortLevel(prev ?? focusedDefaultEffort, direction, focusedSupportsXHigh, focusedSupportsMax));
+    setEffort(prev => cycleEffortLevel(prev ?? focusedDefaultEffort, direction, focusedSupportsXHigh, focusedSupportsMax, focusedResolvedModel));
     setHasToggledEffort(true);
   };
   const t12 = {
@@ -434,14 +436,15 @@ function EffortLevelIndicator(t0) {
   }
   return t4;
 }
-function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', includeXHigh: boolean, includeMax: boolean): EffortLevel {
-  const levels: EffortLevel[] = ['low', 'medium', 'high'];
-  if (includeXHigh) levels.push('xhigh');
-  if (includeMax) levels.push('max');
+function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', includeXHigh: boolean, includeMax: boolean, model?: string | null): EffortLevel {
+  const levels: EffortLevel[] = isDarbManagedInference() ? [...getAvailableEffortLevels(model ?? '')] : ['low', 'medium', 'high'];
+  if (!isDarbManagedInference() && includeXHigh) levels.push('xhigh');
+  if (!isDarbManagedInference() && includeMax) levels.push('max');
+  if (levels.length === 0) return current;
   // If the current level isn't in the cycle (e.g. 'max' after switching to a
   // non-Opus model), clamp to 'high'.
   const idx = levels.indexOf(current);
-  const currentIndex = idx !== -1 ? idx : levels.indexOf('high');
+  const currentIndex = idx !== -1 ? idx : Math.max(0, levels.indexOf('high'));
   if (direction === 'right') {
     return levels[(currentIndex + 1) % levels.length]!;
   } else {
@@ -450,6 +453,7 @@ function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', inc
 }
 function getDefaultEffortLevelForOption(value?: string): EffortLevel {
   const resolved = resolveOptionModel(value) ?? getDefaultMainLoopModel();
+  if (isDarbManagedInference()) return getAvailableEffortLevels(resolved)[0] ?? 'high';
   const defaultValue = getDefaultEffortForModel(resolved);
   return defaultValue !== undefined ? convertEffortValueToLevel(defaultValue) : 'high';
 }

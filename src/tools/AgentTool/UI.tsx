@@ -424,7 +424,7 @@ export function renderToolUseTag(input: Partial<{
   description: string;
   prompt: string;
   subagent_type: string;
-  model?: ModelAlias;
+  model?: string;
 }>): React.ReactNode {
   const tags: React.ReactNode[] = [];
   if (input.model) {

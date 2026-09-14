@@ -2,6 +2,7 @@ import { getSettings_DEPRECATED } from '../settings/settings.js'
 import { isModelAlias, isModelFamilyAlias } from './aliases.js'
 import { parseUserSpecifiedModel } from './model.js'
 import { resolveOverriddenModel } from './modelStrings.js'
+import { isDarbManagedInference } from './darbModels.js'
 
 /**
  * Check if a model belongs to a given family by checking if its name
@@ -103,6 +104,7 @@ export function isModelAllowed(model: string): boolean {
   if (!availableModels) {
     return true // No restrictions
   }
+  if (isDarbManagedInference()) return availableModels.includes(model)
   if (availableModels.length === 0) {
     return false // Empty allowlist blocks all user-specified models
   }

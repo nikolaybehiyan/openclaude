@@ -16,6 +16,7 @@ import {
   isFirstPartyAnthropicBaseUrl,
 } from './model/providers.js'
 import { getSettingsWithErrors } from './settings/settings.js'
+import { darbModelReasoning, isDarbManagedInference } from './model/darbModels.js'
 
 export type ThinkingConfig =
   | { type: 'adaptive' }
@@ -122,6 +123,7 @@ export function getRainbowColor(
 // TODO(inigo): add support for probing unknown models via API error detection
 // Provider-aware thinking support detection (aligns with modelSupportsISP in betas.ts)
 export function modelSupportsThinking(model: string): boolean {
+  if (isDarbManagedInference()) return darbModelReasoning(model)
   const supported3P = get3PModelCapabilityOverride(model, 'thinking')
   if (supported3P !== undefined) {
     return supported3P
@@ -157,6 +159,8 @@ export function modelSupportsThinking(model: string): boolean {
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports adaptive thinking.
 export function modelSupportsAdaptiveThinking(model: string): boolean {
+  // Darb's generic adapters accept adaptive reasoning, not invented budgets.
+  if (isDarbManagedInference()) return darbModelReasoning(model)
   const supported3P = get3PModelCapabilityOverride(model, 'adaptive_thinking')
   if (supported3P !== undefined) {
     return supported3P

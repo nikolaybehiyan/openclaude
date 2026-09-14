@@ -29,6 +29,7 @@ import { isModelAllowed } from './modelAllowlist.js'
 import { type ModelAlias, isModelAlias } from './aliases.js'
 import { capitalize } from '../stringUtils.js'
 import { DEFAULT_GEMINI_MODEL } from '../providerProfile.js'
+import { darbDefaultModel, darbModelLabel, isDarbManagedInference } from './darbModels.js'
 
 export type ModelShortName = string
 export type ModelName = string
@@ -41,6 +42,7 @@ function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefin
 }
 
 export function getSmallFastModel(): ModelName {
+  if (isDarbManagedInference()) return darbDefaultModel()
   if (process.env.ANTHROPIC_SMALL_FAST_MODEL) return process.env.ANTHROPIC_SMALL_FAST_MODEL
   // For Gemini provider, use a fast model
   if (getAPIProvider() === 'gemini') {
@@ -137,7 +139,7 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
   }
 
   // Ignore the user-specified model if it's not in the availableModels allowlist.
-  if (specifiedModel && !isModelAllowed(specifiedModel)) {
+  if (!isDarbManagedInference() && specifiedModel && !isModelAllowed(specifiedModel)) {
     return undefined
   }
 
@@ -170,6 +172,7 @@ export function getBestModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Opus model (3P providers may lag so keep defaults unchanged).
 export function getDefaultOpusModel(): ModelName {
+  if (isDarbManagedInference()) return darbDefaultModel()
   if (process.env.ANTHROPIC_DEFAULT_OPUS_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_OPUS_MODEL
   }
@@ -216,6 +219,7 @@ export function getDefaultOpusModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Sonnet model (3P providers may lag so keep defaults unchanged).
 export function getDefaultSonnetModel(): ModelName {
+  if (isDarbManagedInference()) return darbDefaultModel()
   if (process.env.ANTHROPIC_DEFAULT_SONNET_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_SONNET_MODEL
   }
@@ -260,6 +264,7 @@ export function getDefaultSonnetModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Haiku model (3P providers may lag so keep defaults unchanged).
 export function getDefaultHaikuModel(): ModelName {
+  if (isDarbManagedInference()) return darbDefaultModel()
   if (process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL) {
     return process.env.ANTHROPIC_DEFAULT_HAIKU_MODEL
   }
@@ -311,6 +316,7 @@ export function getRuntimeMainLoopModel(params: {
   exceeds200kTokens?: boolean
 }): ModelName {
   const { permissionMode, mainLoopModel, exceeds200kTokens = false } = params
+  if (isDarbManagedInference()) return mainLoopModel
 
   // opusplan uses Opus in plan mode without [1m] suffix.
   if (
@@ -339,6 +345,7 @@ export function getRuntimeMainLoopModel(params: {
  * @returns The default model setting to use
  */
 export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
+  if (isDarbManagedInference()) return darbDefaultModel()
   // GitHub Copilot provider: check settings.model first, then env, then default
   if (getAPIProvider() === 'github') {
     const settings = getSettings_DEPRECATED() || {}
@@ -509,6 +516,7 @@ export function getClaudeAiUserDefaultModelDescription(
 export function renderDefaultModelSetting(
   setting: ModelName | ModelAlias,
 ): string {
+  if (isDarbManagedInference()) return darbModelLabel(setting)
   if (setting === 'opusplan') {
     return 'Opus 4.7 in plan mode, else Sonnet 4.6'
   }
@@ -543,6 +551,7 @@ export function isOpus1mMergeEnabled(): boolean {
 }
 
 export function renderModelSetting(setting: ModelName | ModelAlias): string {
+  if (isDarbManagedInference()) return darbModelLabel(setting)
   if (setting === 'opusplan') {
     return 'Opus Plan'
   }
@@ -565,6 +574,7 @@ export function renderModelSetting(setting: ModelName | ModelAlias): string {
  * if the model is not recognized as a public model.
  */
 export function getPublicModelDisplayName(model: ModelName): string | null {
+  if (isDarbManagedInference()) return darbModelLabel(model)
   // For OpenAI-compatible/non-Anthropic providers, show the actual model name
   // instead of interpreting provider-specific defaults as Claude aliases.
   if (
@@ -718,6 +728,7 @@ export function getPublicModelName(model: ModelName): string {
 export function parseUserSpecifiedModel(
   modelInput: ModelName | ModelAlias,
 ): ModelName {
+  if (isDarbManagedInference()) return modelInput
   const modelInputTrimmed = normalizeModelSetting(modelInput)
   if (!modelInputTrimmed) {
     return getDefaultSonnetModel()
@@ -838,6 +849,7 @@ export function isLegacyModelRemapEnabled(): boolean {
 }
 
 export function modelDisplayString(model: ModelSetting): string {
+  if (isDarbManagedInference()) return darbModelLabel(model)
   if (model === null) {
     if (getAPIProvider() !== 'firstParty') {
       return `Default (${getDefaultMainLoopModel()})`
@@ -855,6 +867,7 @@ export function modelDisplayString(model: ModelSetting): string {
 
 // @[MODEL LAUNCH]: Add a marketing name mapping for the new model below.
 export function getMarketingNameForModel(modelId: string): string | undefined {
+  if (isDarbManagedInference()) return darbModelLabel(modelId)
   if (getAPIProvider() === 'foundry') {
     // deployment ID is user-defined in Foundry, so it may have no relation to the actual model
     return undefined
@@ -904,5 +917,6 @@ export function getMarketingNameForModel(modelId: string): string | undefined {
 }
 
 export function normalizeModelStringForAPI(model: string): string {
+  if (isDarbManagedInference()) return model
   return resolveProviderModelOverride(model.replace(/\[(1|2)m\]/gi, ''))
 }

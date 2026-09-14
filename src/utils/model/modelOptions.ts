@@ -42,6 +42,7 @@ import { getCachedOllamaModelOptions, isOllamaProvider } from './ollamaModels.js
 import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNimModels.js'
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
 import { getAntModels } from './antModels.js'
+import { darbModelOptions, isDarbManagedInference } from './darbModels.js'
 
 // @[MODEL LAUNCH]: Update all the available and default model option strings below.
 
@@ -668,6 +669,7 @@ function getKnownModelOption(model: string): ModelOption | null {
 }
 
 export function getModelOptions(fastMode = false): ModelOption[] {
+  if (isDarbManagedInference()) return filterModelOptionsByAllowlist(darbModelOptions())
   if (getAPIProvider() === 'github') {
     return filterModelOptionsByAllowlist(getModelOptionsBase(fastMode))
   }
