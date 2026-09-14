@@ -60,7 +60,9 @@ import { getLocalOpenAICompatibleProviderLabel } from '../../utils/providerDisco
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { parseCustomHeadersEnv } from '../../utils/providerCustomHeaders.js'
 import { darbCatalogErrorMessage, refreshDarbModels } from '../../services/api/darbModels.js'
-import { darbModelOptions, isDarbManagedInference } from '../../utils/model/darbModels.js'
+import { darbModelOptions, darbModelScope, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
+import { makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
+import { bindDarbSessionConnection } from '../../utils/sessionStorage.js'
 import {
   getActiveOpenAIModelOptionsCache,
   getActiveProviderProfile,
@@ -91,6 +93,14 @@ function renderModelLabel(model: string | null): string {
     model ?? getDefaultMainLoopModelSetting(),
   )
   return model === null ? `${rendered} (default)` : rendered
+}
+
+function selectDarbConnection(model: string | null): void {
+  if (!isDarbManagedInference()) return
+  const scope = darbModelScope()
+  const binding = requireDarbModel(model ?? getDefaultMainLoopModelSetting())
+  if (!scope || !isModelAllowed(binding.id)) throw new Error('Model is not available for this account')
+  bindDarbSessionConnection(makeDarbSessionBinding(scope, binding), true)
 }
 
 function haveSameModelOptions(left: ModelOption[], right: ModelOption[]): boolean {
@@ -381,6 +391,12 @@ function ModelPickerWrapper({
   }
 
   const handleSelect = (model: string | null, effort: EffortLevel | undefined) => {
+    try {
+      selectDarbConnection(model)
+    } catch {
+      onDone('Could not save the Darb connection selection. No model was changed.', { display: 'system' })
+      return
+    }
     logEvent('tengu_model_command_menu', {
       action: String(model) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
       from_model: String(mainLoopModel) as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -571,7 +587,7 @@ function SetModelAndClose({
         return
       }
 
-      if (model && isOpus1mUnavailable(model)) {
+      if (!isDarbManagedInference() && model && isOpus1mUnavailable(model)) {
         onDone(
           'Opus 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -580,7 +596,7 @@ function SetModelAndClose({
         )
         return
       }
-      if (model && isSonnet1mUnavailable(model)) {
+      if (!isDarbManagedInference() && model && isSonnet1mUnavailable(model)) {
         onDone(
           'Sonnet 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -617,6 +633,12 @@ function SetModelAndClose({
     }
 
     function setModel(modelValue: string | null): void {
+      try {
+        selectDarbConnection(modelValue)
+      } catch {
+        onDone('Could not save the Darb connection selection. No model was changed.', { display: 'system' })
+        return
+      }
       setAppState(prev => ({
         ...prev,
         mainLoopModel: modelValue,

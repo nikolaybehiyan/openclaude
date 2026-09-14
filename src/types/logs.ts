@@ -4,6 +4,7 @@ import type { ContentReplacementRecord } from 'src/utils/toolResultStorage.js'
 import type { AgentId } from './ids.js'
 import type { Message } from './message.js'
 import type { QueueOperationMessage } from './messageQueueTypes.js'
+import type { DarbSessionBinding } from '../utils/model/darbSessionBinding.js'
 
 export type SerializedMessage = Message & {
   cwd: string
@@ -50,6 +51,7 @@ export type LogOption = {
   mode?: 'coordinator' | 'normal' // Session mode for coordinator/normal detection
   worktreeSession?: PersistedWorktreeSession | null // Worktree state at session end (null = exited, undefined = never entered)
   contentReplacements?: ContentReplacementRecord[] // Replacement decisions for resume reconstruction
+  darbInferenceBinding?: DarbSessionBinding | null
 }
 
 export type SummaryMessage = {
@@ -295,6 +297,7 @@ export type ContextCollapseSnapshotEntry = {
 }
 
 export type Entry =
+  | { type: 'darb-inference-binding'; sessionId: UUID; binding: DarbSessionBinding | null }
   | TranscriptMessage
   | SummaryMessage
   | CustomTitleMessage

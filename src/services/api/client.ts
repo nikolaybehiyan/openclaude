@@ -50,6 +50,7 @@ import {
 } from './authRouting.js'
 import { currentDarbCatalog, darbModelScope, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
 import { guardDarbFetch } from '../../utils/model/darbCatalog.js'
+import { makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
 import { isModelAllowed } from '../../utils/model/modelAllowlist.js'
 
 const importRuntimeModule = new Function(
@@ -188,6 +189,18 @@ export async function getAnthropicClient({
 }): Promise<Anthropic> {
   const darbBinding = !providerOverride && isDarbManagedInference() ? requireDarbModel(model) : undefined
   if (darbBinding && !isModelAllowed(darbBinding.id)) throw new Error('Model is restricted by local settings')
+  // Fail before SDK retry/error wrapping, so the native TUI can explain how
+  // to confirm a changed connection instead of showing "Connection error".
+  const darbScope = darbBinding ? darbModelScope() : undefined
+  const darbSessionId = getSessionId()
+  if (darbBinding) {
+    const { bindDarbSessionConnection } = await import('../../utils/sessionStorage.js')
+    if (!darbScope || darbModelScope() !== darbScope || getSessionId() !== darbSessionId ||
+        currentDarbCatalog()?.models.includes(darbBinding) !== true) {
+      throw new Error('Darb account or session changed; retry in the current session')
+    }
+    bindDarbSessionConnection(makeDarbSessionBinding(darbScope, darbBinding))
+  }
   // Convert the runtime effort value to the OpenAI-shaped enum the shim
   // expects. Undefined → shim falls back to descriptor/alias defaults.
   const shimReasoningEffort: OpenAIEffortLevel | undefined =
@@ -254,10 +267,18 @@ export async function getAnthropicClient({
   let resolvedFetch = buildFetch(fetchOverride, source)
   if (darbBinding) {
     const binding = darbBinding
-    const scope = darbModelScope()
+    const scope = darbScope
+    const sessionId = darbSessionId
     resolvedFetch = guardDarbFetch(resolvedFetch ?? fetch, 'https://ai.darbmind.ru', binding, () =>
-      darbModelScope() === scope && !!getClaudeAIOAuthTokens()?.accessToken &&
-      currentDarbCatalog()?.models.includes(binding) === true)
+      !!scope && darbModelScope() === scope && getSessionId() === sessionId &&
+      !!getClaudeAIOAuthTokens()?.accessToken && currentDarbCatalog()?.models.includes(binding) === true,
+    async () => {
+      const { bindDarbSessionConnection } = await import('../../utils/sessionStorage.js')
+      if (!scope || getSessionId() !== sessionId || darbModelScope() !== scope) {
+        throw new Error('Darb account or session changed; retry in the current session')
+      }
+      bindDarbSessionConnection(makeDarbSessionBinding(scope, binding))
+    })
   }
 
   const ARGS = {

@@ -309,6 +309,7 @@ type ResumeLoadResult = {
   tag?: string
   mode?: 'coordinator' | 'normal'
   worktreeSession?: PersistedWorktreeSession | null
+  darbInferenceBinding?: import('../types/logs.js').LogOption['darbInferenceBinding']
   prNumber?: number
   prUrl?: string
   prRepository?: string

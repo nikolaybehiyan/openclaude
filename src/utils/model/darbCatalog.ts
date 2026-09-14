@@ -114,6 +114,7 @@ export function guardDarbFetch(
   origin: string,
   binding: DarbModelBinding,
   isCurrentAccount: () => boolean,
+  beforeRequest?: () => void | Promise<void>,
 ): DarbFetch {
   return async (input, init) => {
     if (!isCurrentAccount()) throw new Error('Darb account changed; run /login and /model refresh')
@@ -126,6 +127,8 @@ export function guardDarbFetch(
       const body = await request.clone().json() as { model?: unknown }
       if (body.model !== binding.id) throw new Error('Darb model changed after request binding')
     }
+    await beforeRequest?.()
+    if (!isCurrentAccount()) throw new Error('Darb account or session changed; retry in the current session')
     // Strip both public and internal binding headers supplied through custom
     // headers; only this frozen authenticated catalog may supply the binding.
     const headers = new Headers(request.headers)

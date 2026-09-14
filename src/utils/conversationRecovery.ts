@@ -484,8 +484,9 @@ export function restoreSkillStateFromMessages(messages: Message[]): void {
 export async function loadMessagesFromJsonlPath(path: string): Promise<{
   messages: SerializedMessage[]
   sessionId: UUID | undefined
+  darbInferenceBinding?: LogOption['darbInferenceBinding']
 }> {
-  const { messages: byUuid, leafUuids } = await loadTranscriptFile(path)
+  const { messages: byUuid, leafUuids, darbInferenceBindings } = await loadTranscriptFile(path)
   let tip: (typeof byUuid extends Map<UUID, infer T> ? T : never) | null = null
   let tipTs = 0
   for (const m of byUuid.values()) {
@@ -504,6 +505,7 @@ export async function loadMessagesFromJsonlPath(path: string): Promise<{
     // transcript, so the root retains the source session's ID. Matches
     // loadFullLog's mostRecentLeaf.sessionId.
     sessionId: tip.sessionId as UUID | undefined,
+    darbInferenceBinding: darbInferenceBindings.get(tip.sessionId as UUID),
   }
 }
 
@@ -541,6 +543,7 @@ export async function loadConversationForResume(
   tag?: string
   mode?: 'coordinator' | 'normal'
   worktreeSession?: PersistedWorktreeSession | null
+  darbInferenceBinding?: LogOption['darbInferenceBinding']
   prNumber?: number
   prUrl?: string
   prRepository?: string
@@ -551,6 +554,7 @@ export async function loadConversationForResume(
     let log: LogOption | null = null
     let messages: Message[] | null = null
     let sessionId: UUID | undefined
+    let pathDarbBinding: LogOption['darbInferenceBinding']
 
     if (source === undefined) {
       // --continue: most recent session, skipping live --bg/daemon sessions
@@ -585,6 +589,7 @@ export async function loadConversationForResume(
       const loaded = await loadMessagesFromJsonlPath(sourceJsonlFile)
       messages = loaded.messages
       sessionId = loaded.sessionId
+      pathDarbBinding = loaded.darbInferenceBinding
     } else if (typeof source === 'string') {
       // Load specific session by ID
       log = await getLastSessionLog(source as UUID)
@@ -657,11 +662,12 @@ export async function loadConversationForResume(
       tag: log?.tag,
       mode: log?.mode,
       worktreeSession: log?.worktreeSession,
+      darbInferenceBinding: log ? log.darbInferenceBinding : pathDarbBinding,
       prNumber: log?.prNumber,
       prUrl: log?.prUrl,
       prRepository: log?.prRepository,
       // Include full path for cross-directory resume
-      fullPath: log?.fullPath,
+      fullPath: log?.fullPath ?? sourceJsonlFile,
     }
   } catch (error) {
     logError(error as Error)

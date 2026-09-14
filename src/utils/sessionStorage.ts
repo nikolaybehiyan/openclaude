@@ -4,7 +4,7 @@ import type { Dirent } from 'fs'
 // Sync fs primitives for readFileTailSync — separate from fs/promises
 // imports above. Named (not wildcard) per CLAUDE.md style; no collisions
 // with the async-suffixed names.
-import { closeSync, fstatSync, openSync, readSync } from 'fs'
+import { appendFileSync, closeSync, fsyncSync, fstatSync, mkdirSync, openSync, readSync } from 'fs'
 import {
   appendFile as fsAppendFile,
   open as fsOpen,
@@ -93,6 +93,8 @@ import { getSettings_DEPRECATED } from './settings/settings.js'
 import { jsonParse, jsonStringify } from './slowOperations.js'
 import type { ContentReplacementRecord } from './toolResultStorage.js'
 import { validateUuid } from './uuid.js'
+import { type DarbSessionBinding, DARB_SESSION_SELECTION_REQUIRED, parseDarbSessionBinding, sameDarbSessionBinding } from './model/darbSessionBinding.js'
+import { isDarbManagedInference } from './model/darbModels.js'
 
 // Cache MACRO.VERSION at module level to work around bun --define bug in async contexts
 // See: https://github.com/oven-sh/bun/issues/26168
@@ -548,6 +550,8 @@ class Project {
   currentSessionAgentColor: string | undefined
   currentSessionLastPrompt: string | undefined
   currentSessionAgentSetting: string | undefined
+  // undefined = fresh session; null = legacy/invalid restored binding.
+  currentSessionDarbBinding: DarbSessionBinding | null | undefined
   currentSessionMode: 'coordinator' | 'normal' | undefined
   // Tri-state: undefined = never touched (don't write), null = exited worktree,
   // object = currently in worktree. reAppendSessionMetadata writes null so
@@ -733,6 +737,10 @@ class Project {
     if (!this.sessionFile) return
     const sessionId = getSessionId() as UUID
     if (!sessionId) return
+
+    if (this.currentSessionDarbBinding !== undefined && !this.shouldSkipPersistence()) {
+      this.writeDarbBinding(this.currentSessionDarbBinding)
+    }
 
     // One sync tail read to refresh SDK-mutable fields. Same
     // LITE_READ_BUF_SIZE window readLiteMetadata uses. Empty string on
@@ -978,6 +986,31 @@ class Project {
       isSessionPersistenceDisabled() ||
       isEnvTruthy(process.env.CLAUDE_CODE_SKIP_PROMPT_HISTORY)
     )
+  }
+
+  // Synchronous and durable before inference: a queued best-effort metadata
+  // write could be lost if the process exits immediately after sending history.
+  // New sessions stay cache-only until their first transcript is materialized.
+  private writeDarbBinding(binding: DarbSessionBinding | null): void {
+    if (!this.sessionFile || this.shouldSkipPersistence()) return
+    mkdirSync(dirname(this.sessionFile), { recursive: true, mode: 0o700 })
+    const fd = openSync(this.sessionFile, 'a', 0o600)
+    try {
+      appendFileSync(fd, JSON.stringify({ type: 'darb-inference-binding',
+        sessionId: getSessionId(), binding }) + '\n')
+      fsyncSync(fd)
+    } finally {
+      closeSync(fd)
+    }
+  }
+
+  bindDarbConnection(binding: DarbSessionBinding, explicitSelection: boolean): void {
+    if (sameDarbSessionBinding(this.currentSessionDarbBinding, binding)) return
+    if (this.currentSessionDarbBinding !== undefined && !explicitSelection) {
+      throw new Error(DARB_SESSION_SELECTION_REQUIRED)
+    }
+    this.writeDarbBinding(binding)
+    this.currentSessionDarbBinding = binding
   }
 
   /**
@@ -2569,6 +2602,7 @@ export async function loadTranscriptFromFile(
       leafUuids,
       contentReplacements,
       worktreeStates,
+      darbInferenceBindings,
     } = await loadTranscriptFile(filePath)
 
     if (messages.size === 0) {
@@ -2614,6 +2648,7 @@ export async function loadTranscriptFromFile(
       worktreeSession: worktreeStates.has(sessionId)
         ? worktreeStates.get(sessionId)
         : undefined,
+      darbInferenceBinding: darbInferenceBindings.get(sessionId),
     }
   }
 
@@ -3018,6 +3053,7 @@ export function getCurrentSessionAgentColor(): string | undefined {
  * agent banner) and re-appended on session exit via reAppendSessionMetadata.
  */
 export function restoreSessionMetadata(meta: {
+  darbInferenceBinding?: DarbSessionBinding | null
   customTitle?: string
   tag?: string
   agentName?: string
@@ -3030,6 +3066,11 @@ export function restoreSessionMetadata(meta: {
   prRepository?: string
 }): void {
   const project = getProject()
+  // Missing/malformed old metadata is not permission to send old history to
+  // whichever connection happens to be the account default after restart.
+  if (isDarbManagedInference()) {
+    project.currentSessionDarbBinding = parseDarbSessionBinding(meta.darbInferenceBinding)
+  }
   // ??= so --name (cacheSessionTitle) wins over the resumed
   // session's title. REPL.tsx clears before calling, so /resume is unaffected.
   if (meta.customTitle) project.currentSessionTitle ??= meta.customTitle
@@ -3059,6 +3100,7 @@ export function clearSessionMetadata(): void {
   project.currentSessionAgentColor = undefined
   project.currentSessionLastPrompt = undefined
   project.currentSessionAgentSetting = undefined
+  project.currentSessionDarbBinding = undefined
   project.currentSessionMode = undefined
   project.currentSessionWorktree = undefined
   project.currentSessionPrNumber = undefined
@@ -3076,6 +3118,12 @@ export function clearSessionMetadata(): void {
  */
 export function reAppendSessionMetadata(): void {
   getProject().reAppendSessionMetadata()
+}
+
+export function bindDarbSessionConnection(binding: DarbSessionBinding, explicitSelection = false): void {
+  const validated = parseDarbSessionBinding(binding)
+  if (!validated) throw new Error(DARB_SESSION_SELECTION_REQUIRED)
+  getProject().bindDarbConnection(validated, explicitSelection)
 }
 
 export async function saveAgentName(
@@ -3234,6 +3282,7 @@ export async function loadFullLog(log: LogOption): Promise<LogOption> {
       prRepositories,
       modes,
       worktreeStates,
+      darbInferenceBindings,
       fileHistorySnapshots,
       attributionSnapshots,
       contentReplacements,
@@ -3280,6 +3329,7 @@ export async function loadFullLog(log: LogOption): Promise<LogOption> {
         sessionId && worktreeStates.has(sessionId)
           ? worktreeStates.get(sessionId)
           : log.worktreeSession,
+      darbInferenceBinding: sessionId ? darbInferenceBindings.get(sessionId) : null,
       prNumber: sessionId ? prNumbers.get(sessionId) : log.prNumber,
       prUrl: sessionId ? prUrls.get(sessionId) : log.prUrl,
       prRepository: sessionId
@@ -3373,6 +3423,7 @@ export async function searchSessionsByCustomTitle(
  * Kept as raw JSON string markers for cheap line filtering during streaming.
  */
 const METADATA_TYPE_MARKERS = [
+  '"type":"darb-inference-binding"',
   '"type":"summary"',
   '"type":"custom-title"',
   '"type":"tag"',
@@ -3384,8 +3435,7 @@ const METADATA_TYPE_MARKERS = [
   '"type":"pr-link"',
 ]
 const METADATA_MARKER_BUFS = METADATA_TYPE_MARKERS.map(m => Buffer.from(m))
-// Longest marker is 22 bytes; +1 for leading `{` = 23.
-const METADATA_PREFIX_BOUND = 25
+const METADATA_PREFIX_BOUND = 1 + Math.max(...METADATA_MARKER_BUFS.map(marker => marker.length))
 
 // null = carry spans whole chunk. Skips concat when carry provably isn't
 // a metadata line (markers sit at byte 1 after `{`).
@@ -3747,6 +3797,7 @@ export async function loadTranscriptFile(
   prRepositories: Map<UUID, string>
   modes: Map<UUID, string>
   worktreeStates: Map<UUID, PersistedWorktreeSession | null>
+  darbInferenceBindings: Map<UUID, DarbSessionBinding | null>
   fileHistorySnapshots: Map<UUID, FileHistorySnapshotMessage>
   attributionSnapshots: Map<UUID, AttributionSnapshotMessage>
   contentReplacements: Map<UUID, ContentReplacementRecord[]>
@@ -3767,6 +3818,7 @@ export async function loadTranscriptFile(
   const prRepositories = new Map<UUID, string>()
   const modes = new Map<UUID, string>()
   const worktreeStates = new Map<UUID, PersistedWorktreeSession | null>()
+  const darbInferenceBindings = new Map<UUID, DarbSessionBinding | null>()
   const fileHistorySnapshots = new Map<UUID, FileHistorySnapshotMessage>()
   const attributionSnapshots = new Map<UUID, AttributionSnapshotMessage>()
   const contentReplacements = new Map<UUID, ContentReplacementRecord[]>()
@@ -3869,6 +3921,8 @@ export async function loadTranscriptFile(
           modes.set(entry.sessionId, entry.mode)
         } else if (entry.type === 'worktree-state' && entry.sessionId) {
           worktreeStates.set(entry.sessionId, entry.worktreeSession)
+        } else if (entry.type === 'darb-inference-binding' && entry.sessionId) {
+          darbInferenceBindings.set(entry.sessionId, parseDarbSessionBinding(entry.binding))
         } else if (entry.type === 'pr-link' && entry.sessionId) {
           prNumbers.set(entry.sessionId, entry.prNumber)
           prUrls.set(entry.sessionId, entry.prUrl)
@@ -3933,6 +3987,8 @@ export async function loadTranscriptFile(
         modes.set(entry.sessionId, entry.mode)
       } else if (entry.type === 'worktree-state' && entry.sessionId) {
         worktreeStates.set(entry.sessionId, entry.worktreeSession)
+      } else if (entry.type === 'darb-inference-binding' && entry.sessionId) {
+        darbInferenceBindings.set(entry.sessionId, parseDarbSessionBinding(entry.binding))
       } else if (entry.type === 'pr-link' && entry.sessionId) {
         prNumbers.set(entry.sessionId, entry.prNumber)
         prUrls.set(entry.sessionId, entry.prUrl)
@@ -4069,6 +4125,7 @@ export async function loadTranscriptFile(
     prRepositories,
     modes,
     worktreeStates,
+    darbInferenceBindings,
     fileHistorySnapshots,
     attributionSnapshots,
     contentReplacements,
@@ -4089,6 +4146,7 @@ async function loadSessionFile(sessionId: UUID): Promise<{
   tags: Map<UUID, string>
   agentSettings: Map<UUID, string>
   worktreeStates: Map<UUID, PersistedWorktreeSession | null>
+  darbInferenceBindings: Map<UUID, DarbSessionBinding | null>
   fileHistorySnapshots: Map<UUID, FileHistorySnapshotMessage>
   attributionSnapshots: Map<UUID, AttributionSnapshotMessage>
   contentReplacements: Map<UUID, ContentReplacementRecord[]>
@@ -4144,6 +4202,7 @@ export async function getLastSessionLog(
     tags,
     agentSettings,
     worktreeStates,
+    darbInferenceBindings,
     fileHistorySnapshots,
     attributionSnapshots,
     contentReplacements,
@@ -4188,6 +4247,7 @@ export async function getLastSessionLog(
       contentReplacements.get(sessionId) ?? [],
     ),
     worktreeSession: worktreeStates.get(sessionId),
+    darbInferenceBinding: darbInferenceBindings.get(sessionId),
     contextCollapseCommits: contextCollapseCommits.filter(
       e => e.sessionId === sessionId,
     ),
@@ -4874,6 +4934,7 @@ export async function loadAllLogsFromSessionFile(
     agentNames,
     agentColors,
     agentSettings,
+    darbInferenceBindings,
     prNumbers,
     prUrls,
     prRepositories,
@@ -4939,6 +5000,7 @@ export async function loadAllLogsFromSessionFile(
       agentName: agentNames.get(sessionId),
       agentColor: agentColors.get(sessionId),
       agentSetting: agentSettings.get(sessionId),
+      darbInferenceBinding: darbInferenceBindings.get(sessionId),
       mode: modes.get(sessionId) as LogOption['mode'],
       prNumber: prNumbers.get(sessionId),
       prUrl: prUrls.get(sessionId),

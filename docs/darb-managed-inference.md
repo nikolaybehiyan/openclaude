@@ -30,6 +30,22 @@ refresh clears it; stale asynchronous responses cannot restore an older catalog.
 Changing account prevents reuse of a constructed client's binding. A model-setting
 string from another provider never authorizes a Darb request.
 
+The native JSONL transcript also keeps a `darb-inference-binding` metadata entry:
+version, a hash of origin/account/organization, connection ID and connection
+revision. This is only a destination selector, not a credential or cached grant.
+Every model's catalog digest and current permissions are still checked separately
+on every request, so approved helper models on the same connection remain usable.
+
+Resume/continue/path-based loading, forks and pre-compaction metadata recovery
+preserve the selector. A changed account, organization, connection or connection
+revision cannot silently reroute old history. Legacy/malformed transcripts require
+an explicit choice in `/model`; `/model refresh` alone does not authorize migration.
+Select in interactive mode before reusing such a transcript from `--print`.
+`/clear` starts a fresh binding. Binding metadata is flushed before inference when
+a transcript exists; fresh sessions use native lazy materialization. Persistence
+disabled means memory-only enforcement. Write failures stop inference. An already
+constructed HTTP client also rechecks account and session after async preflight.
+
 This path is enabled by the launcher-owned `DARB_CLI_MANAGED_INFERENCE=1` switch
 and the existing trusted Darb control/inference origin. Embedded SDK/remote runtime
 sessions and third-party profiles are excluded: their caller owns their frozen
@@ -46,6 +62,11 @@ tests that write settings:
 - `src/utils/model/darbModels.test.ts` — 6 model/helper/agent/effort/identity tests.
 - `src/services/api/darbModels.test.ts` — 5 authenticated catalog/failure tests.
 - Existing OAuth routing (7), shim models (14), agent routing (20) tests pass.
+- `src/utils/model/darbSessionBinding.test.ts` — 10 tests: native disk round-trip,
+  a separate-process restart, all full log loading paths, changed identities and
+  gateways, legacy/invalid data, explicit selection, fork/clear, no persistence,
+  large pre-compaction recovery, storage errors and transport fencing.
+- Existing transcript persistence tests — 5 pass. Total focused suite: 75 pass.
 
 The branded CLI/SDK build and `darb --version` smoke pass. The repository-wide
 TypeScript check still has 1,723 diagnostics; comparing normalized diagnostics
@@ -53,8 +74,8 @@ against HEAD in memory added **zero** diagnostics (no worktree or source rollbac
 This is not a claim that the full typecheck passes.
 
 Not yet established: a live configured gateway inference in the installed CLI,
-TUI acceptance after deployment, cross-process resume with a persisted connection
-binding, numeric context/output limits and pricing for arbitrary models, or all
+TUI acceptance after deployment, concurrent independent writers to one transcript,
+numeric context/output limits and pricing for arbitrary models, or all
 specialized helper/capability paths. The server still retains its unconfigured
 legacy SDK branch for unmigrated clients; this standalone client refuses that
 branch. Other Darb surfaces require their own migration and acceptance. This is
