@@ -2667,6 +2667,11 @@ async function run(): Promise<CommanderCommand> {
       const defaultState = getDefaultAppState();
       const headlessInitialState: AppState = {
         ...defaultState,
+        // query.ts reads AppState for every turn, not the bootstrap override.
+        // Keep --model and the resolved startup selection in the execution
+        // state as well as the init message (matching the interactive path).
+        mainLoopModel: initialMainLoopModel,
+        mainLoopModelForSession: null,
         mcp: {
           ...defaultState.mcp,
           clients: mcpClients,

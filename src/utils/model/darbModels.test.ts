@@ -150,6 +150,33 @@ describe('Darb CLI model consumers', () => {
     expect(getModelOptions()).toEqual([])
   })
 
+  test('budget readers survive missing and refreshing models without authorizing them or inventing capacities', async () => {
+    const context = await import('../context.js')
+    const { calculateTokenWarningState } = await import('../../services/compact/autoCompact.js')
+    const missing = ['opus[1m]', 'claude-opus-4-6', 'removed/model', '']
+    const check = () => {
+      for (const id of missing) {
+        expect(context.getKnownDarbModelContextCapacity(id)).toBeNull()
+        expect(context.getKnownDarbModelInputCapacity(id)).toBeNull()
+        expect(context.getKnownDarbModelOutputCapacity(id)).toBeNull()
+        expect(context.getContextWindowForModel(id)).toBe(200_000)
+        expect(context.getModelMaxOutputTokens(id)).toEqual({ default: 32_000, upperLimit: 64_000 })
+        expect(context.has1mContext(id)).toBe(false)
+        expect(context.modelSupports1M(id)).toBe(false)
+        expect(calculateTokenWarningState(0, id).percentLeft).toBe(100)
+        expect(() => managed.requireDarbModel(id)).toThrow('Connect AI')
+      }
+    }
+    check()
+    // The real refresh/save path invalidates the authorization catalog while
+    // its HTTP request is pending; a concurrent Notifications render is safe.
+    managed.darbCatalogSession.begin(managed.darbModelScope()!)
+    check()
+    expect(getModelOptions()).toEqual([])
+    config.oauthAccount.accountUuid = 'account-B'
+    check()
+  })
+
   test('local allowlists are exact real IDs, not Claude family/prefix remapping', () => {
     settings.availableModels = ['Vendor/DeepSeek-V3[1m]']
     expect(isModelAllowed('Vendor/DeepSeek-V3[1m]')).toBe(true)

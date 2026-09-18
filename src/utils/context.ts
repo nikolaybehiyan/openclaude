@@ -10,12 +10,22 @@ import {
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
 import { getDarbFrozenModelContext } from './model/darbFrozenContext.js'
-import { isDarbCustomInference, requireDarbModel } from './model/darbModels.js'
+import { currentDarbCustomCatalog, isDarbCustomInference } from './model/darbModels.js'
+import type { DarbModelBinding } from './model/darbCatalog.js'
 
-function managedModelContext(model: string) {
+type ManagedModelCapacity = Pick<DarbModelBinding, 'supports_1m' | 'context_window_tokens' | 'max_context_tokens' | 'max_input_tokens' | 'max_output_tokens'>
+const UNKNOWN_MANAGED_CAPACITY: ManagedModelCapacity = Object.freeze({ supports_1m: false, context_window_tokens: 0 })
+
+function managedModelContext(model: string): ManagedModelCapacity | undefined {
   const frozen = getDarbFrozenModelContext(model)
   if (frozen) return frozen
-  return isDarbCustomInference() ? requireDarbModel(model) : undefined
+  if (!isDarbCustomInference()) return undefined
+  // Budget readers also run while /model refresh clears the catalog, or a
+  // saved selection is no longer available. They are not authorization checks:
+  // keep the ordinary unknown-capacity budget so the TUI can recover instead
+  // of crashing. Never reinterpret a stale ID as a Claude capability. Actual
+  // inference/agent/selection entry points still requireDarbModel and fail closed.
+  return currentDarbCustomCatalog()?.models.find(row => row.id === model) ?? UNKNOWN_MANAGED_CAPACITY
 }
 
 // Legacy internal budgeting fallback. This is not an assertion about the
