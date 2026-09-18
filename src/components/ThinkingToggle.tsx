@@ -10,7 +10,8 @@ import { Byline } from './design-system/Byline.js';
 import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint.js';
 import { Pane } from './design-system/Pane.js';
 import { useMainLoopModel } from '../hooks/useMainLoopModel.js';
-import { darbSelectedThinking, isDarbCustomInference, requireDarbModel } from '../utils/model/darbModels.js';
+import { darbModelControlState, isDarbCustomInference } from '../utils/model/darbModels.js';
+import { useDarbCatalogRevision } from '../hooks/useDarbCatalogRevision.js';
 import { darbThinkingModes, darbThinkingWithMode, type DarbNativeThinking } from '../utils/model/darbModelControls.js';
 import { selectDarbConnection } from '../utils/model/darbSelection.js';
 export type Props = {
@@ -20,6 +21,7 @@ export type Props = {
   isMidConversation?: boolean;
 };
 export function ThinkingToggle(props: Props) {
+  useDarbCatalogRevision();
   return isDarbCustomInference() ? <DarbThinkingToggle {...props} /> : <NativeThinkingToggle {...props} />;
 }
 
@@ -27,25 +29,28 @@ function DarbThinkingToggle(props: Props) {
   const model = useMainLoopModel();
   const [error, setError] = useState<string>();
   const [saving, setSaving] = useState(false);
-  const row = requireDarbModel(model);
-  const selected = darbSelectedThinking(model);
+  const pending = React.useRef(false);
+  const { row, selected, error: stateError } = darbModelControlState(model);
   const labels = { extended: 'Enabled (explicit thinking budget)', auto: 'Adaptive', off: 'Disabled' };
-  const options = [{ value: 'reset', label: 'Auto (omit thinking request)' }, ...darbThinkingModes(row).map(mode => ({ value: mode, label: labels[mode] }))];
+  const options = [{ value: 'reset', label: 'Auto (omit thinking request)' }, ...(row && !stateError ? darbThinkingModes(row).map(mode => ({ value: mode, label: labels[mode] })) : [])];
+  if (saving) return <Pane color="permission"><Text dimColor>Saving…</Text></Pane>;
+  if (!row) return <Pane color="permission"><Box flexDirection="column"><Text color="error">{error ?? stateError}</Text>
+    <Select options={[{ value: 'close', label: 'Back to settings' }]} onChange={() => props.onCancel?.()} onCancel={props.onCancel ?? (() => {})} /></Box></Pane>;
   return <Pane color="permission"><Box flexDirection="column">
     <Text bold>Thinking — {model}</Text>
     <Text dimColor>Explicit model preference. Auto resets the request; it does not choose adaptive.</Text>
     <Select options={options} defaultValue={selected?.mode ?? 'reset'} defaultFocusValue={selected?.mode ?? 'reset'} visibleOptionCount={4}
       onCancel={props.onCancel ?? (() => {})} onChange={async value => {
-        if (saving) return;
-        setSaving(true); setError(undefined);
+        if (pending.current) return;
+        pending.current = true; setSaving(true); setError(undefined);
         const mode = value === 'reset' ? undefined : value as DarbNativeThinking['mode'];
         try {
           await selectDarbConnection(model, darbThinkingWithMode(selected, mode));
           props.onSelect(mode === 'extended' || mode === 'auto');
         } catch { setError('Could not confirm the Darb preference. Run /model refresh before retrying.'); }
-        finally { setSaving(false); }
+        finally { pending.current = false; setSaving(false); }
       }} />
-    {saving ? <Text dimColor>Saving…</Text> : null}{error ? <Text color="error">{error}</Text> : null}
+    {error || stateError ? <Text color="error">{error ?? stateError}</Text> : null}
   </Box></Pane>;
 }
 

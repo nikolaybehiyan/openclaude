@@ -9,7 +9,7 @@ import { EffortPicker } from '../../components/EffortPicker.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
 import { Box, Text } from '../../ink.js';
 import { Select } from '../../components/CustomSelect/index.js';
-import { darbSelectedThinking, isDarbCustomInference, requireDarbModel } from '../../utils/model/darbModels.js';
+import { darbModelControlState, isDarbCustomInference } from '../../utils/model/darbModels.js';
 import { darbCanSelectEffort, darbEffortOptions, darbThinkingWithEffort } from '../../utils/model/darbModelControls.js';
 import { selectDarbConnection } from '../../utils/model/darbSelection.js';
 import { resolveAppliedEffort } from '../../utils/effort.js';
@@ -202,13 +202,13 @@ function DarbEffortCommand({ args, onDone }: { args: string; onDone: LocalJSXCom
   const [error, setError] = React.useState<string>();
   const [saving, setSaving] = React.useState(false);
   const started = React.useRef(false), pending = React.useRef(false);
-  const row = requireDarbModel(model);
-  const selected = darbSelectedThinking(model);
+  const { row, selected, error: stateError } = darbModelControlState(model);
   async function apply(value: string) {
     if (pending.current) return;
     pending.current = true; setSaving(true); setError(undefined);
     const effort = value === 'auto' || value === 'unset' ? undefined : value;
     try {
+      if (!row || stateError && effort !== undefined) throw new Error('Model controls unavailable');
       if (effort !== undefined && !darbCanSelectEffort(row, effort)) throw new Error('Unavailable effort');
       await selectDarbConnection(model, darbThinkingWithEffort(selected, effort));
       // The authoritative per-model state now supplies the value; no global
@@ -223,16 +223,20 @@ function DarbEffortCommand({ args, onDone }: { args: string; onDone: LocalJSXCom
     if (started.current || !args) return;
     started.current = true;
     if (COMMON_HELP_ARGS.includes(args)) onDone('Usage: /effort [exact owner value|auto|current]. Auto omits the effort request. Values are model-specific; no automatic high level is selected.');
+    else if (!row) onDone(stateError);
     else if (args === 'current' || args === 'status') {
       try { onDone(`Effort for ${model}: ${resolveAppliedEffort(model, undefined) ?? 'auto (not requested)'}`); }
       catch { onDone('Saved effort is unavailable; refresh the selector or explicitly reset it.'); }
     } else void apply(args);
   }, [args]);
-  const options = [{ value: 'auto', label: 'Auto (omit effort request)' }, ...darbEffortOptions(row).map(value => ({ value, label: value }))];
+  const options = [{ value: 'auto', label: 'Auto (omit effort request)' }, ...(row && !stateError ? darbEffortOptions(row).map(value => ({ value, label: value })) : [])];
+  if (saving) return <Box><Text dimColor>Saving…</Text></Box>;
+  if (!row) return <Box flexDirection="column"><Text color="error">{error ?? stateError}</Text>
+    <Select options={[{ value: 'close', label: 'Back to prompt' }]} onChange={() => onDone('Run /model refresh before retrying.')} onCancel={() => onDone('Cancelled')} /></Box>;
   return <Box flexDirection="column"><Text bold>Effort — {model}</Text>
     {!args || error ? <Select options={options} defaultValue={selected?.effort ?? 'auto'} defaultFocusValue={selected?.effort ?? 'auto'} visibleOptionCount={10}
       onChange={value => { void apply(value); }} onCancel={() => onDone('Cancelled')} /> : null}
-    {saving ? <Text dimColor>Saving…</Text> : null}{error ? <Text color="error">{error}</Text> : null}
+    {error || stateError ? <Text color="error">{error ?? stateError}</Text> : null}
   </Box>;
 }
 

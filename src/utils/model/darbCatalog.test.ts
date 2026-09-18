@@ -20,6 +20,26 @@ function customCatalog(value:unknown) {
 }
 
 describe('Darb catalog contract', () => {
+  test('subscribers observe revocation and confirmed replacement, not stale completions', () => {
+    const session = new DarbCatalogSession()
+    const seen: unknown[] = []
+    const stop = session.subscribe(() => seen.push(session.current('scope')?.defaultModel))
+    const first = session.begin('scope')
+    expect(seen).toEqual([undefined])
+    session.complete('scope', first, payload('Model/A'))
+    expect(seen).toEqual([undefined, 'Model/A'])
+    const second = session.begin('scope')
+    expect(seen).toEqual([undefined, 'Model/A', undefined])
+    const revision = session.getRevision()
+    expect(session.complete('scope', first, payload('stale'))).toBe(false)
+    expect(session.getRevision()).toBe(revision)
+    session.complete('scope', second, payload('Model/B'))
+    expect(seen).toEqual([undefined, 'Model/A', undefined, 'Model/B'])
+    stop()
+    session.begin('scope')
+    expect(seen).toHaveLength(4)
+    expect(session.current('scope')).toBeUndefined()
+  })
   test('accepts the public owner explicit-default shape without a custom selection or icn binding', () => {
     // sdk_inference.go handleSDKModels projects these exact fields from the
     // default Org policy. No private owner/credential metadata is on this API.

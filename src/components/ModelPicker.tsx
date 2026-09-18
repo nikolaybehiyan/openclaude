@@ -12,6 +12,8 @@ import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, 
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
 import { getModelOptions, type ModelOption } from '../utils/model/modelOptions.js';
 import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from '../utils/model/darbModels.js';
+import { useDarbCatalogRevision } from '../hooks/useDarbCatalogRevision.js';
+import { CONNECT_AI } from '../utils/model/darbCatalog.js';
 import { darbEffortOptions, type DarbNativeThinking } from '../utils/model/darbModelControls.js';
 import { getAvailableEffortLevels } from '../utils/effort.js';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings.js';
@@ -62,6 +64,7 @@ function mapDiscoveryToneToColor(tone: ModelPickerDiscoveryState['tone']): 'erro
   }
 }
 export function ModelPicker(props: Props) {
+  useDarbCatalogRevision();
   return isDarbCustomInference() ? <DarbModelPicker {...props} /> : <NativeModelPicker {...props} />;
 }
 
@@ -95,14 +98,14 @@ function DarbModelPicker(props: Props) {
     <Text color="remember" bold>Select model</Text>
     <Text dimColor>{props.headerText ?? 'Exact models from your Darb connection. Explicit controls are saved for this model after confirmation.'}</Text>
     {props.discoveryState ? <Text color={mapDiscoveryToneToColor(props.discoveryState.tone)}>{props.discoveryState.message}</Text> : null}
-    <Select options={catalog?.models.map(model => ({ value: model.id, label: model.display_name === model.id ? model.id : `${model.display_name} (${model.id})`, description: model.id })) ?? []}
+    {!catalog ? <><Text color="warning">{CONNECT_AI}</Text><Select options={[{value:'close',label:'Back'}]} onChange={() => props.onCancel?.()} onCancel={props.onCancel ?? (() => {})} /></> : <Select options={catalog.models.map(model => ({ value: model.id, label: model.display_name === model.id ? model.id : `${model.display_name} (${model.id})`, description: model.id }))}
       defaultValue={initial} defaultFocusValue={initial} visibleOptionCount={10}
       onFocus={value => { setFocused(value); setDraft(undefined); setEdited(false); }}
       onChange={value => {
         if (stateError && value === focused && !edited) return;
         if (props.onManagedSelect) props.onManagedSelect(value, edited ? draft : undefined);
         else props.onSelect(value, undefined);
-      }} onCancel={props.onCancel ?? (() => {})} />
+      }} onCancel={props.onCancel ?? (() => {})} />}
     {stateError ? <Text color="error">{stateError}</Text> : null}
     <Text dimColor>Thinking: {selected?.mode ?? 'auto (not requested)'}</Text>
     <Text dimColor>Effort: {selected?.effort ?? 'auto (not requested)'}{props.onManagedSelect && levels.length > 0 ? ' · ← → to adjust; auto resets the effort request' : ''}</Text>

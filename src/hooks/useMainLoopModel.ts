@@ -1,6 +1,7 @@
 import { useEffect, useReducer } from 'react'
 import { onGrowthBookRefresh } from '../services/analytics/growthbook.js'
 import { useAppState } from '../state/AppState.js'
+import { useDarbCatalogRevision } from './useDarbCatalogRevision.js'
 import {
   getDefaultMainLoopModelSetting,
   type ModelName,
@@ -11,6 +12,7 @@ import {
 // API calls. Use this over getMainLoopModel() when the component needs to
 // update upon a model config change.
 export function useMainLoopModel(): ModelName {
+  useDarbCatalogRevision()
   const mainLoopModel = useAppState(s => s.mainLoopModel)
   const mainLoopModelForSession = useAppState(s => s.mainLoopModelForSession)
 

@@ -87,3 +87,13 @@ export function darbSelectedThinking(model: string) {
   if (selected !== undefined) validateDarbNativeThinking(row, selected)
   return selected
 }
+
+// Rendering is not an authorization boundary. A save deliberately revokes
+// the catalog while awaiting the owner response; readers must tolerate that
+// state without retaining a stale binding or throwing out of React render.
+export function darbModelControlState(model: string) {
+  const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
+  if (!row) return { row: undefined, selected: undefined, error: CONNECT_AI }
+  try { return { row, selected: darbSelectedThinking(model), error: undefined } }
+  catch { return { row, selected: undefined, error: 'Saved controls are unavailable. Reset them explicitly or run /model refresh.' } }
+}

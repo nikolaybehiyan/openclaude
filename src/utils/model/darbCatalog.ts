@@ -171,6 +171,18 @@ export class DarbCatalogSession {
   private scope: string | undefined
   private catalog: DarbCatalog | undefined
   private generation = 0
+  private revision = 0
+  private listeners = new Set<() => void>()
+
+  subscribe = (listener: () => void): (() => void) => {
+    this.listeners.add(listener)
+    return () => { this.listeners.delete(listener) }
+  }
+  getRevision = (): number => this.revision
+  private notify(): void {
+    this.revision++
+    for (const listener of this.listeners) listener()
+  }
 
   hasCatalog(): boolean {
     return this.catalog !== undefined
@@ -183,12 +195,15 @@ export class DarbCatalogSession {
   begin(scope: string): number {
     this.scope = scope
     this.catalog = undefined
-    return ++this.generation
+    const generation = ++this.generation
+    this.notify()
+    return generation
   }
 
   complete(scope: string, generation: number, payload: unknown): boolean {
     if (scope !== this.scope || generation !== this.generation) return false
     this.catalog = parseDarbCatalog(payload)
+    this.notify()
     return true
   }
 }

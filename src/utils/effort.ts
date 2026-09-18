@@ -316,7 +316,12 @@ export function getDisplayedEffortLevel(
   model: string,
   appStateEffort: EffortValue | undefined,
 ): EffortLevel {
-  if (isDarbCustomInference()) return (resolveAppliedEffort(model, appStateEffort) ?? 'auto') as EffortLevel
+  if (isDarbCustomInference()) {
+    // Status text must not crash the TUI while a strict save/refresh revokes
+    // the catalog. Request-time resolveAppliedEffort remains fail-closed.
+    try { return (resolveAppliedEffort(model, appStateEffort) ?? 'auto') as EffortLevel }
+    catch { return 'unavailable' as EffortLevel }
+  }
   const resolved = resolveAppliedEffort(model, appStateEffort) ?? 'high'
   return convertEffortValueToLevel(resolved)
 }
