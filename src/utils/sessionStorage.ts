@@ -1015,7 +1015,7 @@ class Project {
         if (index < 0) controls.push(entry)
         else controls[index] = entry
       }
-      const merged = parseDarbSessionBinding({ ...binding, controls_by_model: controls })
+      const merged = parseDarbSessionBinding({ ...current, ...binding, controls_by_model: controls })
       if (!merged) throw new Error('Invalid Darb session model controls')
       if (JSON.stringify(merged) === JSON.stringify(current)) return
       binding = merged
@@ -1038,6 +1038,16 @@ class Project {
     const next = parseDarbSessionBinding({ ...base, controls_by_model: entries })
     if (!next) throw new Error('Invalid Darb session model controls')
     if (JSON.stringify(next) === JSON.stringify(current)) return
+    this.writeDarbBinding(next)
+    this.currentSessionDarbBinding = next
+  }
+
+  setDarbModel(binding: DarbSessionBinding, model: string): void {
+    const current = this.currentSessionDarbBinding
+    if (binding.version !== 1 || current?.version !== 1 || !sameDarbSessionBinding(current, binding)) throw new Error(DARB_SESSION_SELECTION_REQUIRED)
+    if (current.selected_model === model) return
+    const next = parseDarbSessionBinding({ ...current, selected_model: model })
+    if (!next) throw new Error('Invalid Darb session model selection')
     this.writeDarbBinding(next)
     this.currentSessionDarbBinding = next
   }
@@ -3159,6 +3169,10 @@ registerDarbSessionBindingReader(() => getProject().currentSessionDarbBinding)
 
 export function setDarbSessionThinking(binding: DarbSessionBinding, model: string, thinking: DarbNativeThinking | null): void {
   getProject().setDarbThinking(binding, model, thinking)
+}
+
+export function setDarbSessionModel(binding: DarbSessionBinding, model: string): void {
+  getProject().setDarbModel(binding, model)
 }
 
 export async function saveAgentName(

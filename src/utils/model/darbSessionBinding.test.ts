@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { asSessionId } from '../../types/ids.js'
 import { getSessionId, switchSession } from '../../bootstrap/state.js'
 import { guardDarbFetch, type DarbModelBinding } from './darbCatalog.js'
-import { makeDarbDefaultSessionBinding, makeDarbSessionBinding, parseDarbSessionBinding, readDarbSessionThinking } from './darbSessionBinding.js'
+import { darbModelForResume, isDarbMainConversationSource, makeDarbDefaultSessionBinding, makeDarbSessionBinding, parseDarbSessionBinding, readDarbSessionThinking } from './darbSessionBinding.js'
 
 const originalManaged = await import('./darbModels.js')
 let managed = true
@@ -67,6 +67,36 @@ test('persists only a versioned scope hash and connection selector, not keys/end
   expect(JSON.stringify(parsed)).not.toContain('do-not-persist')
   expect(parseDarbSessionBinding({ ...binding, version: 99 })).toBeNull()
   expect(parseDarbSessionBinding({ ...binding, connection_revision: Number.MAX_SAFE_INTEGER + 1 })).toBeNull()
+})
+
+test('main model preference survives disk, fork, controls and helper requests without becoming authorization', async () => {
+  storage.bindDarbSessionConnection(binding)
+  storage.setDarbSessionModel(binding, model.id)
+  storage.setDarbSessionThinking(binding, model.id, {type: 'mode', mode: 'extended'})
+  const saved = await storage.loadTranscriptFromFile(file)
+  expect(saved.darbInferenceBinding?.version === 1 && saved.darbInferenceBinding.selected_model).toBe(model.id)
+  storage.resetProjectForTesting()
+  storage.setSessionFileForTesting(file)
+  storage.restoreSessionMetadata(saved)
+  const helper = makeDarbSessionBinding(scope, {...model, id: 'different-helper'})
+  storage.bindDarbSessionConnection(helper)
+  storage.bindDarbSessionConnection({...binding, controls_by_model: [{model: model.id, thinking: null}]}, true)
+  const restored = (await storage.loadTranscriptFromFile(file)).darbInferenceBinding
+  expect(darbModelForResume(restored, true, undefined)).toBe(model.id)
+  expect(darbModelForResume(restored, true, 'explicit-override')).toBeUndefined()
+  expect(darbModelForResume(restored, false, undefined)).toBeUndefined()
+  expect(darbModelForResume(binding, true, undefined)).toBeUndefined()
+  expect(() => storage.setDarbSessionModel({...binding, connection_revision: 4}, model.id)).toThrow('No history was sent')
+  for (const selected_model of ['', ' padded ', 'bad\nmodel', 'x'.repeat(513), 7]) {
+    expect(parseDarbSessionBinding({...binding, selected_model})).toBeNull()
+  }
+  storage.clearSessionMetadata()
+  expect(() => storage.setDarbSessionModel(binding, model.id)).toThrow('No history was sent')
+})
+
+test('only main conversation requests persist the model, never compaction or child agents', () => {
+  for (const source of ['sdk', 'repl_main_thread', 'repl_main_thread:custom']) expect(isDarbMainConversationSource(source)).toBe(true)
+  for (const source of ['agent:general-purpose', 'compact', 'session_memory', 'title', undefined]) expect(isDarbMainConversationSource(source)).toBe(false)
 })
 
 test('durable metadata survives all native log loading paths and permits another approved model on the same connection', async () => {

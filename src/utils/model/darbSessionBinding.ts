@@ -9,6 +9,8 @@ export type DarbCustomSessionBinding = Readonly<{
   scope: string
   connection_id: string
   connection_revision: number
+  // Main conversation choice; helper/agent requests must never replace it.
+  selected_model?: string
   // Local session preferences, not account-global state or authorization.
   controls_by_model?: readonly Readonly<{ model: string; thinking: DarbNativeThinking | null }>[]
 }>
@@ -32,6 +34,9 @@ export function parseDarbSessionBinding(value: unknown): DarbSessionBinding | nu
   if (row.version !== 1 || typeof row.scope !== 'string' || !/^[a-f0-9]{64}$/.test(row.scope) ||
       typeof row.connection_id !== 'string' || !/^icn_[a-f0-9]{32}$/.test(row.connection_id) ||
       !Number.isSafeInteger(row.connection_revision) || Number(row.connection_revision) < 1) return null
+  if (row.selected_model !== undefined && (typeof row.selected_model !== 'string' ||
+      !row.selected_model.length || row.selected_model.length > 512 ||
+      row.selected_model.trim() !== row.selected_model || /[\p{Cc}]/u.test(row.selected_model))) return null
   let controls: DarbCustomSessionBinding['controls_by_model']
   if (row.controls_by_model !== undefined) {
     if (!Array.isArray(row.controls_by_model) || row.controls_by_model.length > 1000) return null
@@ -46,7 +51,21 @@ export function parseDarbSessionBinding(value: unknown): DarbSessionBinding | nu
     } catch { return null }
   }
   return Object.freeze({ version: 1, scope: row.scope, connection_id: row.connection_id,
-    connection_revision: row.connection_revision as number, ...(controls ? { controls_by_model: controls } : {}) })
+    connection_revision: row.connection_revision as number,
+    ...(row.selected_model === undefined ? {} : { selected_model: row.selected_model as string }),
+    ...(controls ? { controls_by_model: controls } : {}) })
+}
+
+// Restore a preference, not authorization. The live catalog and connection
+// binding are still checked before any resumed history leaves the process.
+export function darbModelForResume(value: unknown, custom: boolean, explicitModel: string | null | undefined): string | undefined {
+  if (!custom || explicitModel !== undefined) return undefined
+  const binding = parseDarbSessionBinding(value)
+  return binding?.version === 1 ? binding.selected_model : undefined
+}
+
+export function isDarbMainConversationSource(source: string | undefined): boolean {
+  return source === 'sdk' || source?.startsWith('repl_main_thread') === true
 }
 
 export function makeDarbSessionBinding(scope: string, model: DarbModelBinding): DarbCustomSessionBinding {

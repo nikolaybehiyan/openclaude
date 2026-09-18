@@ -50,7 +50,7 @@ import {
 } from './authRouting.js'
 import { currentDarbCatalog, darbModelScope, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
 import { CONNECT_AI, guardDarbFetch } from '../../utils/model/darbCatalog.js'
-import { makeDarbDefaultSessionBinding, makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
+import { isDarbMainConversationSource, makeDarbDefaultSessionBinding, makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
 import { isModelAllowed } from '../../utils/model/modelAllowlist.js'
 
 const importRuntimeModule = new Function(
@@ -197,12 +197,15 @@ export async function getAnthropicClient({
   const darbScope = darbCatalog ? darbModelScope() : undefined
   const darbSessionId = getSessionId()
   if (darbCatalog) {
-    const { bindDarbSessionConnection } = await import('../../utils/sessionStorage.js')
+    const { bindDarbSessionConnection, setDarbSessionModel } = await import('../../utils/sessionStorage.js')
     if (!darbScope || darbModelScope() !== darbScope || getSessionId() !== darbSessionId ||
         currentDarbCatalog() !== darbCatalog) {
       throw new Error('Darb account or session changed; retry in the current session')
     }
     bindDarbSessionConnection(darbBinding ? makeDarbSessionBinding(darbScope, darbBinding) : makeDarbDefaultSessionBinding(darbScope))
+    if (darbBinding && isDarbMainConversationSource(source)) {
+      setDarbSessionModel(makeDarbSessionBinding(darbScope, darbBinding), darbBinding.id)
+    }
   }
   // Convert the runtime effort value to the OpenAI-shaped enum the shim
   // expects. Undefined → shim falls back to descriptor/alias defaults.

@@ -42,6 +42,8 @@ import type { FileHistorySnapshot } from './fileHistory.js'
 import { fileHistoryRestoreStateFromLog } from './fileHistory.js'
 import { createSystemMessage } from './messages.js'
 import { parseUserSpecifiedModel } from './model/model.js'
+import { darbModelForResume, type DarbSessionBinding } from './model/darbSessionBinding.js'
+import { isDarbCustomInference } from './model/darbModels.js'
 import { getPlansDirectory } from './plans.js'
 import { setCwd } from './Shell.js'
 import {
@@ -62,6 +64,7 @@ import {
 } from './worktree.js'
 
 type ResumeResult = {
+  darbInferenceBinding?: DarbSessionBinding | null
   messages?: Message[]
   fileHistorySnapshots?: FileHistorySnapshot[]
   attributionSnapshots?: AttributionSnapshotMessage[]
@@ -100,6 +103,8 @@ export function restoreSessionStateFromLog(
   result: ResumeResult,
   setAppState: (f: (prev: AppState) => AppState) => void,
 ): void {
+  const resumedModel = restoreDarbModelPreference(result)
+  if (resumedModel) setAppState(prev => ({ ...prev, mainLoopModel: resumedModel, mainLoopModelForSession: null }))
   // Restore file history state
   if (result.fileHistorySnapshots && result.fileHistorySnapshots.length > 0) {
     fileHistoryRestoreStateFromLog(result.fileHistorySnapshots, newState => {
@@ -147,6 +152,12 @@ export function restoreSessionStateFromLog(
       }))
     }
   }
+}
+
+function restoreDarbModelPreference(result: ResumeResult): string | undefined {
+  const model = darbModelForResume(result.darbInferenceBinding, isDarbCustomInference(), getMainLoopModelOverride())
+  if (model !== undefined) setMainLoopModelOverride(model)
+  return model
 }
 
 /**
@@ -531,6 +542,7 @@ export async function processResumedConversation(
     context.cliAgents,
     context.agentDefinitions,
   )
+  const resumedModel = restoreDarbModelPreference(result)
 
   return {
     messages: result.messages,
@@ -543,6 +555,7 @@ export async function processResumedConversation(
     restoredAgentDef: restoredAgent,
     initialState: {
       ...context.initialState,
+      ...(resumedModel && { mainLoopModel: resumedModel, mainLoopModelForSession: null }),
       ...(resumedAgentType && { agent: resumedAgentType }),
       ...(restoredAttribution && { attribution: restoredAttribution }),
       ...(standaloneAgentContext && { standaloneAgentContext }),
