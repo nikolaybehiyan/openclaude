@@ -2,7 +2,7 @@ import axios from 'axios'
 import { getClaudeAIOAuthTokens } from '../../utils/auth.js'
 import { withOAuth401Retry } from '../../utils/http.js'
 import { getClaudeCodeUserAgent } from '../../utils/userAgent.js'
-import { currentDarbCustomCatalog, darbCatalogSession, darbModelScope, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
+import { currentDarbCustomCatalog, darbCatalogSession, darbModelScope, isDarbManagedInference, requireDarbModelCandidate } from '../../utils/model/darbModels.js'
 import { darbCatalogFromSelector } from '../../utils/model/darbCatalog.js'
 import { parseDarbNativeThinking, validateDarbNativeThinking, type DarbNativeThinking } from '../../utils/model/darbModelControls.js'
 
@@ -67,7 +67,7 @@ export async function refreshDarbModels(): Promise<void> {
 // An explicit owner preference change. No cookies, provider keys, optimistic
 // UI ACK, custom->default fallback, or blind retry after an ambiguous write.
 export async function saveDarbModelSelection(model: string, thinking?: DarbNativeThinking | null): Promise<void> {
-  const scope = darbModelScope(), catalog = currentDarbCustomCatalog(), binding = requireDarbModel(model)
+  const scope = darbModelScope(), catalog = currentDarbCustomCatalog(), binding = requireDarbModelCandidate(model)
   if (!scope || !catalog?.configuration_revision) throw new DarbCatalogUnavailable('Refresh the Darb selector before changing the selection')
   if (thinking !== undefined) validateDarbNativeThinking(binding, thinking)
   const owner = identity(scope)

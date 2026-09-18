@@ -21,7 +21,7 @@ mock.module('../../utils/userAgent.js', () => ({ getClaudeCodeUserAgent: () => '
 mock.module('../../utils/model/darbModels.js', () => ({
   darbCatalogSession: session, darbModelScope: () => scope, isDarbManagedInference: () => enabled,
   currentDarbCustomCatalog: () => session.current(scope),
-  requireDarbModel: (id: string) => { const catalog=session.current(scope); const row=catalog?.mode==='custom'?catalog.models.find(row=>row.id===id):undefined; if(!row)throw new Error('Connect AI'); return row },
+  requireDarbModelCandidate: (id: string) => { const catalog=session.current(scope); const row=catalog?.mode==='custom'?catalog.models.find(row=>row.id===id):undefined; if(!row)throw new Error('Connect AI'); return row },
 }))
 const { refreshDarbModels, darbCatalogErrorMessage, saveDarbModelSelection } = await import('./darbModels.js')
 
@@ -95,6 +95,35 @@ test('explicit selection uses scoped authenticated PATCH fences and accepts only
   expect(patch.mock.calls[0]![1]).toEqual({model:'Real/Model',thinking:null,configuration_revision:3,account_uuid:'account-A',organization_uuid:'org-A',...binding})
   expect(session.current(scope)?.defaultModel).toBe('Real/Model')
   expect((session.current(scope) as any)?.models[0].selected_thinking).toBeNull()
+})
+
+test('changed owner catalog remains selectable but only an explicit acknowledged save confirms it', async () => {
+  const changed=payload()
+  changed.status='selection_required'
+  changed.model_selector_config[0]!.inference_connection.status='selection_required'
+  get.mockImplementation(async()=>({data:changed}))
+  await refreshDarbModels()
+  expect((session.current(scope) as any)?.selectionRequired).toBe(true)
+  expect(patch).toHaveBeenCalledTimes(0)
+  await saveDarbModelSelection('Real/Model',null)
+  expect(patch).toHaveBeenCalledTimes(1)
+  expect((session.current(scope) as any)?.selectionRequired).toBeUndefined()
+  expect(session.current(scope)?.defaultModel).toBe('Real/Model')
+})
+
+test('selection-required catalogs retain account, revision and matching status validation', async () => {
+  for (const mismatch of ['account','revision','status']) {
+    const changed=payload()
+    changed.status='selection_required'
+    changed.model_selector_config[0]!.inference_connection.status='selection_required'
+    if(mismatch==='account')changed.account_uuid='account-B'
+    if(mismatch==='revision')changed.configuration_revision++
+    if(mismatch==='status')changed.model_selector_config[0]!.inference_connection.status='ready'
+    get.mockImplementation(async()=>({data:changed}))
+    await expect(refreshDarbModels()).rejects.toThrow()
+    expect(session.current(scope)).toBeUndefined()
+  }
+  expect(patch).toHaveBeenCalledTimes(0)
 })
 
 test('failed or cross-account writes do not ACK, fall back or retain authorization', async () => {

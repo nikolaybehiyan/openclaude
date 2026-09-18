@@ -20,6 +20,14 @@ function customCatalog(value:unknown) {
 }
 
 describe('Darb catalog contract', () => {
+  test('selection-required keeps validated candidates marked unconfirmed and rejects stale bindings', () => {
+    const changed={...payload(),status:'selection_required'}
+    expect(customCatalog(changed).selectionRequired).toBe(true)
+    expect(customCatalog(payload()).selectionRequired).toBeUndefined()
+    changed.saved_selection.catalog_revision='sha256:'+'c'.repeat(64)
+    expect(()=>parseDarbCatalog(changed)).toThrow('selection changed')
+    expect(()=>parseDarbCatalog({configuration_mode:'default',status:'selection_required',data:[{id:'claude-sonnet-4-6',type:'model',display_name:'Sonnet'}],has_more:false})).toThrow('default model catalog')
+  })
   test('subscribers observe revocation and confirmed replacement, not stale completions', () => {
     const session = new DarbCatalogSession()
     const seen: unknown[] = []

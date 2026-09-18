@@ -2,7 +2,7 @@ import { saveDarbModelSelection } from '../../services/api/darbModels.js'
 import { bindDarbSessionConnection } from '../sessionStorage.js'
 import { getDefaultMainLoopModelSetting } from './model.js'
 import { isModelAllowed } from './modelAllowlist.js'
-import { currentDarbCatalog, darbModelScope, isDarbManagedInference, requireDarbModel } from './darbModels.js'
+import { currentDarbCatalog, darbModelScope, isDarbManagedInference, requireDarbModel, requireDarbModelCandidate } from './darbModels.js'
 import { makeDarbDefaultSessionBinding, makeDarbSessionBinding } from './darbSessionBinding.js'
 import { validateDarbNativeThinking, type DarbNativeThinking } from './darbModelControls.js'
 
@@ -16,7 +16,7 @@ export async function selectDarbConnection(model: string | null, thinking?: Darb
     bindDarbSessionConnection(makeDarbDefaultSessionBinding(scope), true)
     return
   }
-  const binding = requireDarbModel(model ?? getDefaultMainLoopModelSetting())
+  const binding = requireDarbModelCandidate(model ?? getDefaultMainLoopModelSetting())
   if (!scope || !isModelAllowed(binding.id)) throw new Error('Model is not available for this account')
   if (thinking !== undefined) validateDarbNativeThinking(binding, thinking)
   await saveDarbModelSelection(binding.id, thinking)

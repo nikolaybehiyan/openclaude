@@ -1,4 +1,4 @@
-import { CONNECT_AI, darbCatalogSession } from './darbCatalog.js'
+import { CONNECT_AI, CONFIRM_MODEL, darbCatalogSession } from './darbCatalog.js'
 import { getDarbFrozenModelContext } from './darbFrozenContext.js'
 import { getGlobalConfig } from '../config.js'
 import { getAPIProvider } from './providers.js'
@@ -58,6 +58,13 @@ export function darbModelLabel(model?: string | null): string {
 }
 
 export function requireDarbModel(model: string | undefined) {
+  if (currentDarbCustomCatalog()?.selectionRequired) throw new Error(CONFIRM_MODEL)
+  return requireDarbModelCandidate(model)
+}
+
+// Selection candidates are not inference authorization. Only explicit owner
+// save may turn a changed catalog into an admitted binding.
+export function requireDarbModelCandidate(model: string | undefined) {
   const binding = currentDarbCustomCatalog()?.models.find(row => row.id === model)
   if (!binding) throw new Error(CONNECT_AI)
   return binding

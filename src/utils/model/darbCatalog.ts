@@ -28,6 +28,7 @@ export type DarbCatalog = Readonly<{
   models: readonly DarbModelBinding[]
   defaultModel: string
   configuration_revision?: number
+  selectionRequired?: true
 }> | Readonly<{
   mode: 'default'
   models: readonly DarbDefaultModel[]
@@ -37,6 +38,7 @@ export type DarbCatalog = Readonly<{
 }>
 
 export const CONNECT_AI = 'Connect AI in Darb → Customize → Connections, select a CLI model, then run /model refresh.'
+export const CONFIRM_MODEL = 'Darb model configuration changed. Run /model and select the model again to confirm its current settings.'
 
 function object(value: unknown): Record<string, unknown> {
   if (value === null || typeof value !== 'object' || Array.isArray(value)) {
@@ -55,8 +57,9 @@ export function parseDarbCatalog(payload: unknown): DarbCatalog {
   if (!Array.isArray(root.data) || root.data.length > 1000 || root.has_more !== false) {
     throw new Error('Darb model catalog is incomplete; no model was selected')
   }
-  if (root.status !== undefined && root.status !== 'ready') throw new Error(CONNECT_AI)
+  if (root.status !== undefined && root.status !== 'ready' && root.status !== 'selection_required') throw new Error(CONNECT_AI)
   if (root.configuration_mode === 'default') {
+    if (root.status === 'selection_required') throw new Error('Invalid Darb default model catalog')
     if (root.saved_selection != null || root.data.length === 0) throw new Error('Invalid Darb default model catalog')
     const models = root.data.map(raw => {
       const row = object(raw)
@@ -144,6 +147,7 @@ export function parseDarbCatalog(payload: unknown): DarbCatalog {
   }
   if (root.configuration_revision !== undefined && (!Number.isSafeInteger(root.configuration_revision) || Number(root.configuration_revision) < 1)) throw new Error('Invalid Darb configuration revision')
   return Object.freeze({ mode: 'custom', models: Object.freeze(models), defaultModel: defaultModel.id,
+    ...(root.status === 'selection_required' ? { selectionRequired: true as const } : {}),
     ...(root.configuration_revision === undefined ? {} : { configuration_revision: root.configuration_revision as number }) })
 }
 
@@ -154,13 +158,13 @@ export function darbCatalogFromSelector(payload: unknown, account: string, organ
   if (root.account_uuid !== account || root.organization_uuid !== organization || !Number.isSafeInteger(root.configuration_revision) || Number(root.configuration_revision) < 0) throw new Error('Darb selector account or configuration changed')
   if (root.configuration_mode === 'default') return { configuration_mode: 'default' }
   if (Number(root.configuration_revision) < 1) throw new Error('Invalid Darb configuration revision')
-  if (root.configuration_mode !== 'custom' || root.status !== 'ready' || !Array.isArray(root.model_selector_config) || !Array.isArray(root.model_selector_state)) throw new Error(CONNECT_AI)
+  if (root.configuration_mode !== 'custom' || !['ready','selection_required'].includes(String(root.status)) || !Array.isArray(root.model_selector_config) || !Array.isArray(root.model_selector_state)) throw new Error(CONNECT_AI)
   const config = root.model_selector_config.map(object).filter(row => row.id === 'cli')
   const state = root.model_selector_state.map(object).filter(row => row.id === 'cli')
   if (config.length !== 1 || state.length !== 1 || !Array.isArray(config[0]!.models)) throw new Error('Invalid Darb CLI selector')
   const connection = object(config[0]!.inference_connection)
-  if (connection.mode !== 'custom' || connection.status !== 'ready' || connection.configuration_revision !== root.configuration_revision) throw new Error('Darb selector configuration changed')
-  return { configuration_mode: 'custom', status: 'ready', configuration_revision: root.configuration_revision,
+  if (connection.mode !== 'custom' || connection.status !== root.status || connection.configuration_revision !== root.configuration_revision) throw new Error('Darb selector configuration changed')
+  return { configuration_mode: 'custom', status: root.status, configuration_revision: root.configuration_revision,
     data: config[0]!.models.map(raw => { const row = object(raw); return { ...row, display_name: row.name } }),
     has_more: false, saved_selection: state[0], native_selector_state: state[0] }
 }

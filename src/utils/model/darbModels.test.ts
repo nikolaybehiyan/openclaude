@@ -24,12 +24,12 @@ const { modelSupportsThinking, modelSupportsAdaptiveThinking } = await import('.
 const { getAgentModel, getAgentModelOptions } = await import('./agent.js')
 const { setMainLoopModelOverride } = await import('../../bootstrap/state.js')
 
-function install(id = 'Vendor/DeepSeek-V3[1m]') {
+function install(id = 'Vendor/DeepSeek-V3[1m]', status = 'ready') {
   const scope = managed.darbModelScope()!
   const version = managed.darbCatalogSession.begin(scope)
   const binding = { connection_id: 'icn_' + 'a'.repeat(32), connection_revision: 4, catalog_revision: 'sha256:' + 'b'.repeat(64) }
   managed.darbCatalogSession.complete(scope, version, {
-    configuration_mode:'custom',
+    configuration_mode:'custom', status,
     data: [{ ...binding, id, display_name: 'Real model', capabilities: { reasoning: true, reasoning_efforts: ['medium', 'xhigh'] } }],
     saved_selection: { ...binding, model: id }, has_more: false,
   })
@@ -62,6 +62,15 @@ afterAll(() => {
 })
 
 describe('Darb CLI model consumers', () => {
+  test('changed catalog allows selection candidates without authorizing inference or agents', () => {
+    install('Vendor/Exact','selection_required')
+    expect(managed.requireDarbModelCandidate('Vendor/Exact').id).toBe('Vendor/Exact')
+    expect(getModelOptions().map(row=>row.value)).toContain('Vendor/Exact')
+    expect(()=>managed.requireDarbModel('Vendor/Exact')).toThrow('select the model again')
+    expect(()=>managed.requireDarbModelCandidate('foreign')).toThrow('Connect AI')
+    install('Vendor/Exact')
+    expect(managed.requireDarbModel('Vendor/Exact').id).toBe('Vendor/Exact')
+  })
   test('authenticated explicit default restores unchanged native aliases, options, capabilities and local policy', () => {
     delete process.env.ANTHROPIC_SMALL_FAST_MODEL
     const native = () => ({
