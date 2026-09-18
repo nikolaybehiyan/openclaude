@@ -60,9 +60,9 @@ import { getLocalOpenAICompatibleProviderLabel } from '../../utils/providerDisco
 import { isEssentialTrafficOnly } from '../../utils/privacyLevel.js'
 import { parseCustomHeadersEnv } from '../../utils/providerCustomHeaders.js'
 import { darbCatalogErrorMessage, refreshDarbModels } from '../../services/api/darbModels.js'
-import { darbModelOptions, darbModelScope, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
-import { makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
-import { bindDarbSessionConnection } from '../../utils/sessionStorage.js'
+import { currentDarbCatalog, darbModelOptions, darbModelScope, isDarbCustomInference, isDarbManagedInference, requireDarbModel } from '../../utils/model/darbModels.js'
+import { type DarbNativeThinking } from '../../utils/model/darbModelControls.js'
+import { selectDarbConnection } from '../../utils/model/darbSelection.js'
 import {
   getActiveOpenAIModelOptionsCache,
   getActiveProviderProfile,
@@ -93,14 +93,6 @@ function renderModelLabel(model: string | null): string {
     model ?? getDefaultMainLoopModelSetting(),
   )
   return model === null ? `${rendered} (default)` : rendered
-}
-
-function selectDarbConnection(model: string | null): void {
-  if (!isDarbManagedInference()) return
-  const scope = darbModelScope()
-  const binding = requireDarbModel(model ?? getDefaultMainLoopModelSetting())
-  if (!scope || !isModelAllowed(binding.id)) throw new Error('Model is not available for this account')
-  bindDarbSessionConnection(makeDarbSessionBinding(scope, binding), true)
 }
 
 function haveSameModelOptions(left: ModelOption[], right: ModelOption[]): boolean {
@@ -390,11 +382,11 @@ function ModelPickerWrapper({
     })
   }
 
-  const handleSelect = (model: string | null, effort: EffortLevel | undefined) => {
+  const handleSelect = async (model: string | null, effort: EffortLevel | undefined, thinking?: DarbNativeThinking | null) => {
     try {
-      selectDarbConnection(model)
+      await selectDarbConnection(model, thinking)
     } catch {
-      onDone('Could not save the Darb connection selection. No model was changed.', { display: 'system' })
+      onDone('Could not confirm the Darb selection. Run /model refresh before retrying. The current session model was not changed.', { display: 'system' })
       return
     }
     logEvent('tengu_model_command_menu', {
@@ -407,6 +399,7 @@ function ModelPickerWrapper({
       ...prev,
       mainLoopModel: model,
       mainLoopModelForSession: null,
+      ...(isDarbCustomInference() ? { effortValue: undefined } : {}),
     }))
 
     let message = `Set model to ${chalk.bold(renderModelLabel(model))}`
@@ -543,6 +536,7 @@ function ModelPickerWrapper({
       initial={mainLoopModel}
       sessionModel={mainLoopModelForSession}
       onSelect={handleSelect}
+      onManagedSelect={(model, thinking) => handleSelect(model, undefined, thinking)}
       onCancel={handleCancel}
       isStandaloneCommand
       showFastModeNotice={
@@ -587,7 +581,7 @@ function SetModelAndClose({
         return
       }
 
-      if (!isDarbManagedInference() && model && isOpus1mUnavailable(model)) {
+      if (!isDarbCustomInference() && model && isOpus1mUnavailable(model)) {
         onDone(
           'Opus 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -596,7 +590,7 @@ function SetModelAndClose({
         )
         return
       }
-      if (!isDarbManagedInference() && model && isSonnet1mUnavailable(model)) {
+      if (!isDarbCustomInference() && model && isSonnet1mUnavailable(model)) {
         onDone(
           'Sonnet 4.6 with 1M context is not available for your account. Learn more: https://code.claude.com/docs/en/model-config#extended-context-with-1m',
           {
@@ -611,7 +605,7 @@ function SetModelAndClose({
         return
       }
 
-      if (!isDarbManagedInference() && isKnownAlias(model)) {
+      if (!isDarbCustomInference() && isKnownAlias(model)) {
         setModel(model)
         return
       }
@@ -632,17 +626,18 @@ function SetModelAndClose({
       }
     }
 
-    function setModel(modelValue: string | null): void {
+    async function setModel(modelValue: string | null): Promise<void> {
       try {
-        selectDarbConnection(modelValue)
+        await selectDarbConnection(modelValue)
       } catch {
-        onDone('Could not save the Darb connection selection. No model was changed.', { display: 'system' })
+        onDone('Could not confirm the Darb selection. Run /model refresh before retrying. The current session model was not changed.', { display: 'system' })
         return
       }
       setAppState(prev => ({
         ...prev,
         mainLoopModel: modelValue,
         mainLoopModelForSession: null,
+        ...(isDarbCustomInference() ? { effortValue: undefined } : {}),
       }))
 
       let message = `Set model to ${chalk.bold(renderModelLabel(modelValue))}`
@@ -813,7 +808,9 @@ export const call: LocalJSXCommandCall = async (onDone, _context, args) => {
       return
     }
     if (trimmedArgs === 'refresh') {
-      onDone(`Darb: ${darbModelOptions().length} available models. Run /model to select.`, { display: 'system' })
+      onDone(currentDarbCatalog()?.mode === 'default'
+        ? 'Darb default configuration is active. Run /model to select using your account’s model settings.'
+        : `Darb: ${darbModelOptions().length} available models. Run /model to select.`, { display: 'system' })
       return
     }
     if (!trimmedArgs) return <ModelPickerWrapper discoveryContext={null} onDone={onDone} />

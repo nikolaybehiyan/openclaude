@@ -37,7 +37,7 @@ import { launchRepl } from './replLauncher.js';
 import { hasGrowthBookEnvOverride, initializeGrowthBook, refreshGrowthBookAfterAuthChange } from './services/analytics/growthbook.js';
 import { fetchBootstrapData } from './services/api/bootstrap.js';
 import { darbCatalogErrorMessage, refreshDarbModels } from './services/api/darbModels.js';
-import { currentDarbCatalog, isDarbManagedInference } from './utils/model/darbModels.js';
+import { currentDarbCatalog, darbSelectedThinking, isDarbCustomInference, isDarbManagedInference } from './utils/model/darbModels.js';
 import { refreshStartupDiscoveryForActiveRoute } from './integrations/discoveryService.js';
 import { prefetchOllamaModels } from './utils/model/ollamaModels.js';
 import { type DownloadResult, downloadSessionFiles, type FilesApiConfig, parseFileSpecs } from './services/api/filesApi.js';
@@ -109,7 +109,7 @@ import type { Message as MessageType } from './types/message.js';
 import { assertMinVersion } from './utils/autoUpdater.js';
 import { CLAUDE_IN_CHROME_SKILL_HINT, CLAUDE_IN_CHROME_SKILL_HINT_WITH_WEBBROWSER } from './utils/claudeInChrome/prompt.js';
 import { setupClaudeInChrome, shouldAutoEnableClaudeInChrome, shouldEnableClaudeInChrome } from './utils/claudeInChrome/setup.js';
-import { getContextWindowForModel } from './utils/context.js';
+import { getContextWindowForModel, getMaxThinkingTokensForModel } from './utils/context.js';
 import { loadConversationForResume } from './utils/conversationRecovery.js';
 import { buildDeepLinkBanner } from './utils/deepLink/banner.js';
 import { hasNodeOption, isBareMode, isEnvTruthy, isInProtectedNamespace } from './utils/envUtils.js';
@@ -2040,6 +2040,7 @@ async function run(): Promise<CommanderCommand> {
         await refreshDarbModels();
       } catch (error) {
         process.stderr.write(`${darbCatalogErrorMessage(error)}\n`);
+        process.exit(1);
       }
     }
 
@@ -2143,6 +2144,10 @@ async function run(): Promise<CommanderCommand> {
     setInitialMainLoopModel(getUserSpecifiedModelSetting() || null);
     const initialMainLoopModel = getInitialMainLoopModel();
     const resolvedInitialModel = parseUserSpecifiedModel(initialMainLoopModel ?? getDefaultMainLoopModel());
+    if (isDarbCustomInference() && !currentDarbCatalog()?.models.some(row => row.id === resolvedInitialModel)) {
+      process.stderr.write('The explicitly requested model is not available in the current Darb connection. Use an exact connected model ID or remove the model override.\n');
+      process.exit(1);
+    }
     let advisorModel: string | undefined;
     if (isAdvisorEnabled()) {
       const advisorOption = canUserConfigureAdvisor() ? (options as {
@@ -2488,15 +2493,24 @@ async function run(): Promise<CommanderCommand> {
     } : {
       type: 'disabled'
     };
+    if (isDarbCustomInference() && darbSelectedThinking(resolvedInitialModel)?.mode === 'extended') {
+      thinkingConfig = { type: 'enabled', budgetTokens: getMaxThinkingTokensForModel(resolvedInitialModel) };
+    }
     if (options.thinking === 'adaptive' || options.thinking === 'enabled') {
       thinkingEnabled = true;
       thinkingConfig = {
         type: 'adaptive'
       };
+      if (isDarbCustomInference()) {
+        thinkingConfig = options.thinking === 'enabled'
+          ? { type: 'enabled', budgetTokens: options.maxThinkingTokens ?? getMaxThinkingTokensForModel(resolvedInitialModel), explicit: true }
+          : { type: 'adaptive', explicit: true };
+      }
     } else if (options.thinking === 'disabled') {
       thinkingEnabled = false;
       thinkingConfig = {
-        type: 'disabled'
+        type: 'disabled',
+        ...(isDarbCustomInference() ? { explicit: true as const } : {})
       };
     } else {
       const maxThinkingTokens = process.env.MAX_THINKING_TOKENS ? parseInt(process.env.MAX_THINKING_TOKENS, 10) : options.maxThinkingTokens;
@@ -2505,12 +2519,14 @@ async function run(): Promise<CommanderCommand> {
           thinkingEnabled = true;
           thinkingConfig = {
             type: 'enabled',
-            budgetTokens: maxThinkingTokens
+            budgetTokens: maxThinkingTokens,
+            ...(isDarbCustomInference() ? { explicit: true as const } : {})
           };
         } else if (maxThinkingTokens === 0) {
           thinkingEnabled = false;
           thinkingConfig = {
-            type: 'disabled'
+            type: 'disabled',
+            ...(isDarbCustomInference() ? { explicit: true as const } : {})
           };
         }
       }

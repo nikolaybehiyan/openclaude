@@ -5,7 +5,7 @@ import type { QuerySource } from '../../constants/querySource.js'
 import type { ToolUseContext } from '../../Tool.js'
 import type { Message } from '../../types/message.js'
 import { getGlobalConfig } from '../../utils/config.js'
-import { getContextWindowForModel } from '../../utils/context.js'
+import { getContextWindowForModel, getKnownDarbInputBudget } from '../../utils/context.js'
 import { logForDebugging } from '../../utils/debug.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { hasExactErrorMessage } from '../../utils/errors.js'
@@ -52,7 +52,11 @@ export function getEffectiveContextWindowSize(model: string): number {
   // negative and fires on every message (issue #635).
   const autocompactBuffer = 13_000 // must match AUTOCOMPACT_BUFFER_TOKENS
   const effectiveContext = contextWindow - reservedTokensForSummary
-  return Math.max(effectiveContext, reservedTokensForSummary + autocompactBuffer)
+  const legacyBudget = Math.max(effectiveContext, reservedTokensForSummary + autocompactBuffer)
+  // A legacy anti-loop floor must never enlarge an authoritative model limit.
+  // Unknown/default models keep the exact previous fallback calculation.
+  const knownBudget = getKnownDarbInputBudget(model, reservedTokensForSummary)
+  return knownBudget === null ? legacyBudget : Math.min(legacyBudget, knownBudget)
 }
 
 export type AutoCompactTrackingState = {
@@ -79,8 +83,10 @@ const MAX_CONSECUTIVE_AUTOCOMPACT_FAILURES = 3
 export function getAutoCompactThreshold(model: string): number {
   const effectiveContextWindow = getEffectiveContextWindowSize(model)
 
-  const autocompactThreshold =
-    effectiveContextWindow - AUTOCOMPACT_BUFFER_TOKENS
+  const buffer = getKnownDarbInputBudget(model, 0) === null
+    ? AUTOCOMPACT_BUFFER_TOKENS
+    : Math.min(AUTOCOMPACT_BUFFER_TOKENS, Math.floor(effectiveContextWindow / 10))
+  const autocompactThreshold = effectiveContextWindow - buffer
 
   // Override for easier testing of autocompact
   const envPercent = process.env.CLAUDE_AUTOCOMPACT_PCT_OVERRIDE
@@ -132,8 +138,10 @@ export function calculateTokenWarningState(
     isAutoCompactEnabled() && tokenUsage >= autoCompactThreshold
 
   const actualContextWindow = getEffectiveContextWindowSize(model)
-  const defaultBlockingLimit =
-    actualContextWindow - MANUAL_COMPACT_BUFFER_TOKENS
+  const blockingBuffer = getKnownDarbInputBudget(model, 0) === null
+    ? MANUAL_COMPACT_BUFFER_TOKENS
+    : Math.min(MANUAL_COMPACT_BUFFER_TOKENS, Math.floor(actualContextWindow / 10))
+  const defaultBlockingLimit = actualContextWindow - blockingBuffer
 
   // Allow override for testing
   const blockingLimitOverride = process.env.CLAUDE_CODE_BLOCKING_LIMIT_OVERRIDE

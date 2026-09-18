@@ -8,7 +8,8 @@ import {
   parseUserSpecifiedModel,
 } from './model.js'
 import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './providers.js'
-import { darbModelLabel, darbModelOptions, isDarbManagedInference, requireDarbModel } from './darbModels.js'
+import { darbModelLabel, darbModelOptions, isDarbCustomInference, requireDarbModel } from './darbModels.js'
+import { getDarbFrozenModelContext } from './darbFrozenContext.js'
 
 export const AGENT_MODEL_OPTIONS = [...MODEL_ALIASES, 'inherit'] as const
 export type AgentModelAlias = (typeof AGENT_MODEL_OPTIONS)[number]
@@ -41,7 +42,11 @@ export function getAgentModel(
   toolSpecifiedModel?: string,
   permissionMode?: PermissionMode,
 ): string {
-  if (isDarbManagedInference()) {
+  if (getDarbFrozenModelContext(parentModel)) {
+    const selected = process.env.CLAUDE_CODE_SUBAGENT_MODEL || toolSpecifiedModel || agentModel
+    return getDarbFrozenModelContext(!selected || selected === 'inherit' ? parentModel : selected)!.model
+  }
+  if (isDarbCustomInference()) {
     const selected = process.env.CLAUDE_CODE_SUBAGENT_MODEL || toolSpecifiedModel || agentModel
     return requireDarbModel(!selected || selected === 'inherit' ? parentModel : selected).id
   }
@@ -153,7 +158,7 @@ function aliasMatchesParentTier(alias: string, parentModel: string): boolean {
  * and custom Anthropic-compatible endpoints (proxies, self-hosted).
  */
 export function checkIsClaudeNativeProvider(): boolean {
-  if (isDarbManagedInference()) return false
+  if (getDarbFrozenModelContext() || isDarbCustomInference()) return false
   const provider = getAPIProvider()
   return (
     provider === 'bedrock' ||
@@ -167,7 +172,7 @@ export function getAgentModelDisplay(model: string | undefined): string {
   // When model is omitted, getDefaultSubagentModel() returns 'inherit' at runtime
   if (!model) return 'Inherit from parent (default)'
   if (model === 'inherit') return 'Inherit from parent'
-  if (isDarbManagedInference()) return darbModelLabel(model)
+  if (isDarbCustomInference()) return darbModelLabel(model)
   return capitalize(model)
 }
 
@@ -175,7 +180,12 @@ export function getAgentModelDisplay(model: string | undefined): string {
  * Get available model options for agents
  */
 export function getAgentModelOptions(): AgentModelOption[] {
-  if (isDarbManagedInference()) return [
+  const frozen = getDarbFrozenModelContext()
+  if (frozen) return [
+    { value: 'inherit', label: 'Inherit from parent', description: 'Use the same selected model and connection' },
+    { value: frozen.model, label: frozen.model, description: frozen.model },
+  ]
+  if (isDarbCustomInference()) return [
     { value: 'inherit', label: 'Inherit from parent', description: 'Use the same selected model and connection' },
     ...darbModelOptions(),
   ]

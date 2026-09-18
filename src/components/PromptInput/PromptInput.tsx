@@ -28,6 +28,9 @@ import { useDoublePress } from '../../hooks/useDoublePress.js';
 import { useHistorySearch } from '../../hooks/useHistorySearch.js';
 import type { IDESelection } from '../../hooks/useIdeSelection.js';
 import { useInputBuffer } from '../../hooks/useInputBuffer.js';
+import { selectDarbConnection } from '../../utils/model/darbSelection.js';
+import { isDarbCustomInference } from '../../utils/model/darbModels.js';
+import type { DarbNativeThinking } from '../../utils/model/darbModelControls.js';
 import { useMainLoopModel } from '../../hooks/useMainLoopModel.js';
 import { usePromptSuggestion } from '../../hooks/usePromptSuggestion.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
@@ -2055,7 +2058,12 @@ function PromptInput({
   // Memoized callbacks for model picker to prevent re-renders when unrelated
   // state (like notifications) changes. This prevents the inline model picker
   // from visually "jumping" when notifications arrive.
-  const handleModelSelect = useCallback((model: string | null, _effort: EffortLevel | undefined) => {
+  const handleModelSelect = useCallback(async (model: string | null, _effort: EffortLevel | undefined, thinking?: DarbNativeThinking | null) => {
+    try { await selectDarbConnection(model, thinking); }
+    catch {
+      addNotification({ key: 'model-switch-failed', text: 'Could not confirm the Darb selection. Run /model refresh before retrying.', priority: 'immediate', timeoutMs: 8000 });
+      return;
+    }
     let wasFastModeDisabled = false;
     setAppState(prev => {
       wasFastModeDisabled = isFastModeEnabled() && !isFastModeSupportedByModel(model) && !!prev.fastMode;
@@ -2063,6 +2071,7 @@ function PromptInput({
         ...prev,
         mainLoopModel: model,
         mainLoopModelForSession: null,
+        ...(isDarbCustomInference() ? { effortValue: undefined } : {}),
         // Turn off fast mode if switching to a model that doesn't support it
         ...(wasFastModeDisabled && {
           fastMode: false
@@ -2097,7 +2106,7 @@ function PromptInput({
   const modelPickerElement = useMemo(() => {
     if (!showModelPicker) return null;
     return <Box flexDirection="column" marginTop={1}>
-        <ModelPicker initial={mainLoopModel_} sessionModel={mainLoopModelForSession} onSelect={handleModelSelect} onCancel={handleModelCancel} isStandaloneCommand showFastModeNotice={isFastModeEnabled() && isFastMode && isFastModeSupportedByModel(mainLoopModel_) && isFastModeAvailable()} />
+        <ModelPicker initial={mainLoopModel_} sessionModel={mainLoopModelForSession} onSelect={handleModelSelect} onManagedSelect={(model, thinking) => { void handleModelSelect(model, undefined, thinking); }} onCancel={handleModelCancel} isStandaloneCommand showFastModeNotice={isFastModeEnabled() && isFastMode && isFastModeSupportedByModel(mainLoopModel_) && isFastModeAvailable()} />
       </Box>;
   }, [showModelPicker, mainLoopModel_, mainLoopModelForSession, handleModelSelect, handleModelCancel]);
   const handleFastModeSelect = useCallback((result?: string) => {

@@ -2,7 +2,7 @@ import { c as _c } from "react-compiler-runtime";
 import * as React from 'react';
 import { Box, Text } from '../../ink.js';
 import { getAgentModelOptions } from '../../utils/model/agent.js';
-import { isDarbManagedInference } from '../../utils/model/darbModels.js';
+import { isDarbCustomInference } from '../../utils/model/darbModels.js';
 import { Select } from '../CustomSelect/select.js';
 interface ModelSelectorProps {
   initialModel?: string;
@@ -20,7 +20,7 @@ export function ModelSelector(t0) {
   if ($[0] !== initialModel) {
     bb0: {
       const base = getAgentModelOptions();
-      if (!isDarbManagedInference() && initialModel && !base.some(o => o.value === initialModel)) {
+      if (!isDarbCustomInference() && initialModel && !base.some(o => o.value === initialModel)) {
         t1 = [{
           value: initialModel,
           label: initialModel,
@@ -36,7 +36,7 @@ export function ModelSelector(t0) {
     t1 = $[1];
   }
   const modelOptions = t1;
-  const defaultModel = initialModel ?? (isDarbManagedInference() ? 'inherit' : "sonnet");
+  const defaultModel = initialModel ?? (isDarbCustomInference() ? 'inherit' : "sonnet");
   let t2;
   if ($[2] === Symbol.for("react.memo_cache_sentinel")) {
     t2 = <Box marginBottom={1}><Text dimColor={true}>Model determines the agent's reasoning capabilities and speed.</Text></Box>;

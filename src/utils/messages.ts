@@ -1,5 +1,6 @@
 import { feature } from 'bun:bundle'
 import { getAPIProvider } from './model/providers.js'
+import { darbToolCallStateFields } from './model/darbToolCallState.js'
 import type { BetaUsage as Usage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
 import type {
   ContentBlock,
@@ -1768,6 +1769,7 @@ export function stripCallerFieldFromAssistantMessage(
           id: block.id,
           name: block.name,
           input: block.input,
+          ...darbToolCallStateFields(block),
           ...(getAPIProvider() === 'gemini' && (block as any).extra_content ? { extra_content: (block as any).extra_content } : {})
         }
       }),
@@ -2231,6 +2233,7 @@ export function normalizeMessagesForAPI(
                       ...restBlock,
                       name: canonicalName,
                       input: normalizedInput,
+                      ...darbToolCallStateFields({ ...block, name: canonicalName }),
                       ...(getAPIProvider() === 'gemini' && extra_content ? { extra_content } : {})
                     }
                   }
@@ -2243,6 +2246,7 @@ export function normalizeMessagesForAPI(
                     id: block.id,
                     name: canonicalName,
                     input: normalizedInput,
+                    ...darbToolCallStateFields({ ...block, name: canonicalName }),
                     ...(getAPIProvider() === 'gemini' && (block as any).extra_content ? { extra_content: (block as any).extra_content } : {})
                   }
                 }

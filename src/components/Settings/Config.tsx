@@ -4,6 +4,10 @@ import { feature } from 'bun:bundle';
 import { Box, Text, useTheme, useThemeSetting, useTerminalFocus } from '../../ink.js';
 import type { KeyboardEvent } from '../../ink/events/keyboard-event.js';
 import * as React from 'react';
+import { selectDarbConnection } from '../../utils/model/darbSelection.js';
+import { darbSelectedThinking, isDarbCustomInference } from '../../utils/model/darbModels.js';
+import type { DarbNativeThinking } from '../../utils/model/darbModelControls.js';
+import { ThinkingToggle } from '../ThinkingToggle.js';
 import { useState, useCallback } from 'react';
 import { useKeybinding, useKeybindings } from '../../keybindings/useKeybinding.js';
 import figures from 'figures';
@@ -81,7 +85,7 @@ type Setting = (SettingBase & {
   onChange(value: string): void;
   type: 'managedEnum';
 });
-type SubMenu = 'Theme' | 'Model' | 'TeammateModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates';
+type SubMenu = 'Theme' | 'Model' | 'Thinking' | 'TeammateModel' | 'ExternalIncludes' | 'OutputStyle' | 'ChannelDowngrade' | 'Language' | 'EnableAutoUpdates';
 export function Config({
   onClose,
   context,
@@ -200,7 +204,9 @@ export function Config({
   const memoryFiles = React.use(getMemoryFiles(true));
   const shouldShowExternalIncludesToggle = hasExternalClaudeMdIncludes(memoryFiles);
   const autoUpdaterDisabledReason = getAutoUpdaterDisabledReason();
-  function onChangeMainModelConfig(value: string | null): void {
+  async function onChangeMainModelConfig(value: string | null, thinking?: DarbNativeThinking | null): Promise<void> {
+    try { await selectDarbConnection(value, thinking); }
+    catch { setChanges(prev => ({ ...prev, model: 'Could not confirm Darb selection; run /model refresh before retrying.' })); return; }
     const previousModel = mainLoopModel;
     logEvent('tengu_config_model_changed', {
       from_model: previousModel as AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS,
@@ -209,7 +215,8 @@ export function Config({
     setAppState(prev => ({
       ...prev,
       mainLoopModel: value,
-      mainLoopModelForSession: null
+      mainLoopModelForSession: null,
+      ...(isDarbCustomInference() ? { effortValue: undefined } : {})
     }));
     setChanges(prev_0 => {
       const valStr = modelDisplayString(value) + (isBilledAsExtraUsage(value, false, isOpus1mMergeEnabled()) ? ' · Billed as extra usage' : '');
@@ -1343,6 +1350,9 @@ export function Config({
     if (!setting_0 || !setting_0.onChange) {
       return;
     }
+    if (setting_0.id === 'thinkingEnabled' && isDarbCustomInference()) {
+      setShowSubmenu('Thinking'); setTabsHidden(true); return;
+    }
     if (setting_0.type === 'boolean') {
       isDirty.current = true;
       setting_0.onChange(!setting_0.value);
@@ -1526,8 +1536,14 @@ export function Config({
               </Byline>
             </Text>
           </Box>
-        </> : showSubmenu === 'Model' ? <>
-          <ModelPicker initial={mainLoopModel} onSelect={(model_0, _effort) => {
+        </> : showSubmenu === 'Thinking' ? <ThinkingToggle currentValue={thinkingEnabled ?? false} onSelect={enabled => {
+          setAppState(prev => ({ ...prev, thinkingEnabled: enabled }));
+          setShowSubmenu(null); setTabsHidden(false);
+        }} onCancel={() => { setShowSubmenu(null); setTabsHidden(false); }} /> : showSubmenu === 'Model' ? <>
+          <ModelPicker initial={mainLoopModel} onManagedSelect={async (model, thinking) => {
+        await onChangeMainModelConfig(model, thinking);
+        setShowSubmenu(null); setTabsHidden(false);
+      }} onSelect={(model_0, _effort) => {
         isDirty.current = true;
         onChangeMainModelConfig(model_0);
         setShowSubmenu(null);

@@ -32,7 +32,7 @@ const SESSION_TITLE_MAX_OUTPUT_TOKENS = 64
 const SESSION_TITLE_TIMEOUT_MS = 12_000
 const MAX_TITLE_RESPONSE_TEXT = 4096
 const MAX_TITLE_CHARS = 60
-const MIN_TITLE_WORDS = 3
+const MIN_TITLE_WORDS = 1
 const MAX_TITLE_WORDS = 4
 const MAX_CANDIDATE_CHARS = 200
 const MAX_CANDIDATE_WORDS = 20
@@ -71,11 +71,13 @@ export function extractConversationText(messages: Message[]): string {
     : text
 }
 
-const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title (3-4 words) that captures the main topic or goal of this coding session. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
+const SESSION_TITLE_PROMPT = `Generate a concise, sentence-case title (1-4 words) that captures the main topic or goal of this coding session. One- or two-word titles are valid when they clearly identify the topic. The title should be clear enough that the user recognizes the session in a list. Use sentence case: capitalize only the first word and proper nouns.
 
 Return JSON with a single "title" field.
 
 Good examples:
+{"title": "Authentication"}
+{"title": "Plugin lifecycle"}
 {"title": "Fix mobile login button"}
 {"title": "Add OAuth authentication"}
 {"title": "Debug failing CI tests"}

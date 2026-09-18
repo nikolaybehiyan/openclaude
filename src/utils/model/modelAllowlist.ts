@@ -2,7 +2,8 @@ import { getSettings_DEPRECATED } from '../settings/settings.js'
 import { isModelAlias, isModelFamilyAlias } from './aliases.js'
 import { parseUserSpecifiedModel } from './model.js'
 import { resolveOverriddenModel } from './modelStrings.js'
-import { isDarbManagedInference } from './darbModels.js'
+import { isDarbCustomInference } from './darbModels.js'
+import { getDarbFrozenModelContext } from './darbFrozenContext.js'
 
 /**
  * Check if a model belongs to a given family by checking if its name
@@ -99,12 +100,14 @@ function familyHasSpecificEntries(
  * 3. Full model IDs ("claude-opus-4-5-20251101") — exact match only
  */
 export function isModelAllowed(model: string): boolean {
+  const frozen = getDarbFrozenModelContext()
+  if (frozen && frozen.model !== model) return false
   const settings = getSettings_DEPRECATED() || {}
   const { availableModels } = settings
   if (!availableModels) {
     return true // No restrictions
   }
-  if (isDarbManagedInference()) return availableModels.includes(model)
+  if (frozen || isDarbCustomInference()) return availableModels.includes(model)
   if (availableModels.length === 0) {
     return false // Empty allowlist blocks all user-specified models
   }

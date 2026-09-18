@@ -13,8 +13,9 @@ import { getModelStrings } from './modelStrings.js'
 import { getCachedOllamaModelOptions, isOllamaProvider } from './ollamaModels.js'
 import { getCachedNvidiaNimModelOptions, isNvidiaNimProvider } from './nvidiaNimModels.js'
 import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels.js'
-import { currentDarbCatalog, isDarbManagedInference } from './darbModels.js'
+import { currentDarbCatalog, isDarbCustomInference } from './darbModels.js'
 import { CONNECT_AI } from './darbCatalog.js'
+import { getDarbFrozenModelContext } from './darbFrozenContext.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -25,7 +26,10 @@ const validModelCache = new Map<string, boolean>()
 export async function validateModel(
   model: string,
 ): Promise<{ valid: boolean; error?: string }> {
-  if (isDarbManagedInference()) {
+  const frozen = getDarbFrozenModelContext()
+  if (frozen) return frozen.model === model && isModelAllowed(model)
+    ? { valid: true } : { valid: false, error: 'Darb frozen model changed; restart the runtime process' }
+  if (isDarbCustomInference()) {
     return currentDarbCatalog()?.models.some(row => row.id === model) && isModelAllowed(model)
       ? { valid: true }
       : { valid: false, error: CONNECT_AI }

@@ -9,13 +9,47 @@ import { Select } from './CustomSelect/index.js';
 import { Byline } from './design-system/Byline.js';
 import { KeyboardShortcutHint } from './design-system/KeyboardShortcutHint.js';
 import { Pane } from './design-system/Pane.js';
+import { useMainLoopModel } from '../hooks/useMainLoopModel.js';
+import { darbSelectedThinking, isDarbCustomInference, requireDarbModel } from '../utils/model/darbModels.js';
+import { darbThinkingModes, darbThinkingWithMode, type DarbNativeThinking } from '../utils/model/darbModelControls.js';
+import { selectDarbConnection } from '../utils/model/darbSelection.js';
 export type Props = {
   currentValue: boolean;
   onSelect: (enabled: boolean) => void;
   onCancel?: () => void;
   isMidConversation?: boolean;
 };
-export function ThinkingToggle(t0) {
+export function ThinkingToggle(props: Props) {
+  return isDarbCustomInference() ? <DarbThinkingToggle {...props} /> : <NativeThinkingToggle {...props} />;
+}
+
+function DarbThinkingToggle(props: Props) {
+  const model = useMainLoopModel();
+  const [error, setError] = useState<string>();
+  const [saving, setSaving] = useState(false);
+  const row = requireDarbModel(model);
+  const selected = darbSelectedThinking(model);
+  const labels = { extended: 'Enabled (explicit thinking budget)', auto: 'Adaptive', off: 'Disabled' };
+  const options = [{ value: 'reset', label: 'Auto (omit thinking request)' }, ...darbThinkingModes(row).map(mode => ({ value: mode, label: labels[mode] }))];
+  return <Pane color="permission"><Box flexDirection="column">
+    <Text bold>Thinking — {model}</Text>
+    <Text dimColor>Explicit model preference. Auto resets the request; it does not choose adaptive.</Text>
+    <Select options={options} defaultValue={selected?.mode ?? 'reset'} defaultFocusValue={selected?.mode ?? 'reset'} visibleOptionCount={4}
+      onCancel={props.onCancel ?? (() => {})} onChange={async value => {
+        if (saving) return;
+        setSaving(true); setError(undefined);
+        const mode = value === 'reset' ? undefined : value as DarbNativeThinking['mode'];
+        try {
+          await selectDarbConnection(model, darbThinkingWithMode(selected, mode));
+          props.onSelect(mode === 'extended' || mode === 'auto');
+        } catch { setError('Could not confirm the Darb preference. Run /model refresh before retrying.'); }
+        finally { setSaving(false); }
+      }} />
+    {saving ? <Text dimColor>Saving…</Text> : null}{error ? <Text color="error">{error}</Text> : null}
+  </Box></Pane>;
+}
+
+function NativeThinkingToggle(t0) {
   const $ = _c(27);
   const {
     currentValue,
@@ -24,7 +58,7 @@ export function ThinkingToggle(t0) {
     isMidConversation
   } = t0;
   const exitState = useExitOnCtrlCDWithKeybindings();
-  const [confirmationPending, setConfirmationPending] = useState(null);
+  const [confirmationPending, setConfirmationPending] = useState<boolean | null>(null);
   let t1;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
     t1 = [{

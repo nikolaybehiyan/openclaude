@@ -69,6 +69,8 @@ import {
   getSonnet1mExpTreatmentEnabled,
 } from '../../utils/context.js'
 import { resolveAppliedEffort } from '../../utils/effort.js'
+import { darbSelectedThinking, isDarbCustomInference, requireDarbModel } from '../../utils/model/darbModels.js'
+import { resolveDarbThinkingRequest } from '../../utils/model/darbModelControls.js'
 import { isEnvTruthy } from '../../utils/envUtils.js'
 import { errorMessage } from '../../utils/errors.js'
 import { computeFingerprintFromMessages } from '../../utils/fingerprint.js'
@@ -1503,7 +1505,10 @@ async function* queryModel(
   // don't flip the beta header and bust the cache key.
   const sonnet1mExpLatched = getSonnet1mExpTreatmentEnabled(options.model)
 
-  const effort = resolveAppliedEffort(options.model, options.effortValue)
+  const effort = resolveAppliedEffort(options.model, options.effortValue, isAgenticQuery)
+  // Capture once for this request/retry lifecycle, not afresh on each retry.
+  const darbControls = isDarbCustomInference() ? requireDarbModel(options.model) : undefined
+  const darbThinking = darbControls && isAgenticQuery ? darbSelectedThinking(options.model) : undefined
 
   if (feature('PROMPT_CACHE_BREAK_DETECTION')) {
     // Exclude defer_loading tools from the hash -- the API strips them from the
@@ -1639,7 +1644,7 @@ async function* queryModel(
       options.maxOutputTokensOverride ||
       getMaxOutputTokensForModel(options.model)
 
-    const hasThinking =
+    let hasThinking =
       thinkingConfig.type !== 'disabled' &&
       !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING)
     let thinking: BetaMessageStreamParams['thinking'] | undefined = undefined
@@ -1648,7 +1653,12 @@ async function* queryModel(
     // IMPORTANT: Do not change the adaptive-vs-budget thinking selection below
     // without notifying the model launch DRI and research. This is a sensitive
     // setting that can greatly affect model quality and bashing.
-    if (hasThinking && modelSupportsThinking(apiModel)) {
+    if (darbControls) {
+      thinking = resolveDarbThinkingRequest(darbControls, darbThinking,
+        isAgenticQuery ? isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_THINKING) ? { type: 'disabled' } : thinkingConfig.explicit ? thinkingConfig : undefined : undefined,
+        getMaxThinkingTokensForModel(apiModel), maxOutputTokens)
+      hasThinking = thinking !== undefined && thinking.type !== 'disabled'
+    } else if (hasThinking && modelSupportsThinking(apiModel)) {
       if (
         !isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING) &&
         modelSupportsAdaptiveThinking(apiModel)

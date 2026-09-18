@@ -78,19 +78,28 @@ function getAutoBackgroundMs(): number {
 
 // Multi-agent type constants are defined inline inside gated blocks to enable dead code elimination
 
-import { isDarbManagedInference } from '../../utils/model/darbModels.js';
+import { isDarbCustomInference } from '../../utils/model/darbModels.js';
+import { getDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js';
+
+// /model refresh can move a standalone managed CLI between explicit default
+// and custom modes. Cache each schema shape independently; the old one-shot
+// cache must not keep the other mode's alias or exact-ID contract after that.
+function lazyModelSchema<T>(factory: () => T): () => T {
+  const native = lazySchema(factory), custom = lazySchema(factory);
+  return () => isDarbCustomInference() ? custom() : native();
+}
 
 // Base input schema without multi-agent parameters
-const baseInputSchema = lazySchema(() => z.object({
+const baseInputSchema = lazyModelSchema(() => z.object({
   description: z.string().describe('A short (3-5 word) description of the task'),
   prompt: z.string().describe('The task for the agent to perform'),
   subagent_type: z.string().optional().describe('The type of specialized agent to use for this task'),
-  model: (isDarbManagedInference() ? z.string().min(1).max(256) : z.enum(['sonnet', 'opus', 'haiku'])).optional().describe(isDarbManagedInference() ? "Optional exact model ID from the available model catalog. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent." : "Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
+  model: (getDarbFrozenModelContext() ? z.literal(getDarbFrozenModelContext()!.model) : isDarbCustomInference() ? z.string().min(1).max(256) : z.enum(['sonnet', 'opus', 'haiku'])).optional().describe(isDarbCustomInference() || getDarbFrozenModelContext() ? "Optional exact model ID from the available model catalog. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent." : "Optional model override for this agent. Takes precedence over the agent definition's model frontmatter. If omitted, uses the agent definition's model, or inherits from the parent."),
   run_in_background: z.boolean().optional().describe('Set to true to run this agent in the background. You will be notified when it completes.')
 }));
 
 // Full schema combining base + multi-agent params + isolation
-const fullInputSchema = lazySchema(() => {
+const fullInputSchema = lazyModelSchema(() => {
   // Multi-agent parameters
   const multiAgentInputSchema = z.object({
     name: z.string().optional().describe('Name for the spawned agent. Makes it addressable via SendMessage({to: name}) while running.'),
@@ -109,7 +118,7 @@ const fullInputSchema = lazySchema(() => {
 // (field type collapses to `unknown`). The ternary return produces a union
 // type, but call() destructures via the explicit AgentToolInput type below
 // which always includes all optional fields.
-export const inputSchema = lazySchema(() => {
+export const inputSchema = lazyModelSchema(() => {
   const schema = feature('KAIROS') ? fullInputSchema() : fullInputSchema().omit({
     cwd: true
   });

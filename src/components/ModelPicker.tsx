@@ -11,7 +11,8 @@ import { useAppState, useSetAppState } from '../state/AppState.js';
 import { convertEffortValueToLevel, type EffortLevel, getDefaultEffortForModel, modelSupportsEffort, modelSupportsMaxEffort, modelSupportsXHighEffort, resolvePickerEffortPersistence, toPersistableEffort } from '../utils/effort.js';
 import { getDefaultMainLoopModel, type ModelSetting, modelDisplayString, parseUserSpecifiedModel } from '../utils/model/model.js';
 import { getModelOptions, type ModelOption } from '../utils/model/modelOptions.js';
-import { isDarbManagedInference } from '../utils/model/darbModels.js';
+import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from '../utils/model/darbModels.js';
+import { darbEffortOptions, type DarbNativeThinking } from '../utils/model/darbModelControls.js';
 import { getAvailableEffortLevels } from '../utils/effort.js';
 import { getSettingsForSource, updateSettingsForSource } from '../utils/settings/settings.js';
 import { ConfigurableShortcutHint } from './ConfigurableShortcutHint.js';
@@ -28,6 +29,8 @@ export type Props = {
   initial: string | null;
   sessionModel?: ModelSetting;
   onSelect: (model: string | null, effort: EffortLevel | undefined) => void;
+  /** Managed owner and session controls, confirmed by the caller before ACK. */
+  onManagedSelect?: (model: string, thinking: DarbNativeThinking | null | undefined) => void;
   onCancel?: () => void;
   isStandaloneCommand?: boolean;
   showFastModeNotice?: boolean;
@@ -58,7 +61,56 @@ function mapDiscoveryToneToColor(tone: ModelPickerDiscoveryState['tone']): 'erro
       return 'subtle';
   }
 }
-export function ModelPicker(t0) {
+export function ModelPicker(props: Props) {
+  return isDarbCustomInference() ? <DarbModelPicker {...props} /> : <NativeModelPicker {...props} />;
+}
+
+function DarbModelPicker(props: Props) {
+  const catalog = currentDarbCustomCatalog();
+  const initial = props.initial ?? catalog?.defaultModel ?? '';
+  const [focused, setFocused] = useState(initial);
+  const [draft, setDraft] = useState<DarbNativeThinking | null | undefined>(undefined);
+  const [edited, setEdited] = useState(false);
+  const row = catalog?.models.find(model => model.id === focused);
+  let selected: DarbNativeThinking | null | undefined;
+  let stateError: string | undefined;
+  try { selected = edited ? draft : darbSelectedThinking(focused); }
+  catch { stateError = 'Saved controls are unavailable. Choose another model or reset the session control.'; }
+  const levels = row ? darbEffortOptions(row) : [];
+  const cycle = (direction: 'left' | 'right') => {
+    if (!props.onManagedSelect || !row || levels.length === 0) return;
+    const choices = [undefined, ...levels];
+    const index = choices.indexOf(selected?.effort);
+    const next = choices[(Math.max(0, index) + (direction === 'right' ? 1 : choices.length - 1)) % choices.length];
+    const mode = selected?.mode;
+    setDraft(next === undefined ? mode ? { type: 'mode', mode } : null : mode ? { type: 'effort_and_mode', mode, effort: next } : { type: 'effort', effort: next });
+    setEdited(true);
+  };
+  useKeybindings({
+    'modelPicker:decreaseEffort': () => cycle('left'),
+    'modelPicker:increaseEffort': () => cycle('right'),
+    ...(props.onRefresh ? { 'modelPicker:refresh': props.onRefresh } : {}),
+  }, { context: 'ModelPicker' });
+  const content = <Box flexDirection="column">
+    <Text color="remember" bold>Select model</Text>
+    <Text dimColor>{props.headerText ?? 'Exact models from your Darb connection. Explicit controls are saved for this model after confirmation.'}</Text>
+    {props.discoveryState ? <Text color={mapDiscoveryToneToColor(props.discoveryState.tone)}>{props.discoveryState.message}</Text> : null}
+    <Select options={catalog?.models.map(model => ({ value: model.id, label: model.display_name === model.id ? model.id : `${model.display_name} (${model.id})`, description: model.id })) ?? []}
+      defaultValue={initial} defaultFocusValue={initial} visibleOptionCount={10}
+      onFocus={value => { setFocused(value); setDraft(undefined); setEdited(false); }}
+      onChange={value => {
+        if (stateError && value === focused && !edited) return;
+        if (props.onManagedSelect) props.onManagedSelect(value, edited ? draft : undefined);
+        else props.onSelect(value, undefined);
+      }} onCancel={props.onCancel ?? (() => {})} />
+    {stateError ? <Text color="error">{stateError}</Text> : null}
+    <Text dimColor>Thinking: {selected?.mode ?? 'auto (not requested)'}</Text>
+    <Text dimColor>Effort: {selected?.effort ?? 'auto (not requested)'}{props.onManagedSelect && levels.length > 0 ? ' · ← → to adjust; auto resets the effort request' : ''}</Text>
+  </Box>;
+  return props.isStandaloneCommand ? <Pane color="permission">{content}</Pane> : content;
+}
+
+function NativeModelPicker(t0) {
   const $ = _c(83);
   const {
     initial,
@@ -101,7 +153,7 @@ export function ModelPicker(t0) {
   const modelOptions = optionsOverride ?? t3;
   let t4;
   bb0: {
-    if (!isDarbManagedInference() && initial !== null && !modelOptions.some(opt => opt.value === initial)) {
+    if (!isDarbCustomInference() && initial !== null && !modelOptions.some(opt => opt.value === initial)) {
       let t5;
       if ($[4] !== initial) {
         t5 = modelDisplayString(initial);
@@ -437,9 +489,9 @@ function EffortLevelIndicator(t0) {
   return t4;
 }
 function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', includeXHigh: boolean, includeMax: boolean, model?: string | null): EffortLevel {
-  const levels: EffortLevel[] = isDarbManagedInference() ? [...getAvailableEffortLevels(model ?? '')] : ['low', 'medium', 'high'];
-  if (!isDarbManagedInference() && includeXHigh) levels.push('xhigh');
-  if (!isDarbManagedInference() && includeMax) levels.push('max');
+  const levels: EffortLevel[] = isDarbCustomInference() ? [...getAvailableEffortLevels(model ?? '')] : ['low', 'medium', 'high'];
+  if (!isDarbCustomInference() && includeXHigh) levels.push('xhigh');
+  if (!isDarbCustomInference() && includeMax) levels.push('max');
   if (levels.length === 0) return current;
   // If the current level isn't in the cycle (e.g. 'max' after switching to a
   // non-Opus model), clamp to 'high'.
@@ -451,9 +503,9 @@ function cycleEffortLevel(current: EffortLevel, direction: 'left' | 'right', inc
     return levels[(currentIndex - 1 + levels.length) % levels.length]!;
   }
 }
+// Used only by NativeModelPicker; managed custom never enters this component.
 function getDefaultEffortLevelForOption(value?: string): EffortLevel {
   const resolved = resolveOptionModel(value) ?? getDefaultMainLoopModel();
-  if (isDarbManagedInference()) return getAvailableEffortLevels(resolved)[0] ?? 'high';
   const defaultValue = getDefaultEffortForModel(resolved);
   return defaultValue !== undefined ? convertEffortValueToLevel(defaultValue) : 'high';
 }

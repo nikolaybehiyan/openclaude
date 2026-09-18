@@ -9,7 +9,8 @@ import { PLAN_AGENT } from './built-in/planAgent.js'
 import { STATUSLINE_SETUP_AGENT } from './built-in/statuslineSetup.js'
 import { VERIFICATION_AGENT } from './built-in/verificationAgent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
-import { isDarbManagedInference } from '../../utils/model/darbModels.js'
+import { isDarbCustomInference } from '../../utils/model/darbModels.js'
+import { getDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
 
 export function areExplorePlanAgentsEnabled(): boolean {
   if (feature('BUILTIN_EXPLORE_PLAN_AGENTS')) {
@@ -72,7 +73,7 @@ export function getBuiltInAgents(): AgentDefinition[] {
   // Built-in tier hints are not user-selected model IDs. With a managed
   // gateway they inherit the parent's approved choice; custom agent models
   // are left untouched and validated as exact IDs during execution.
-  return isDarbManagedInference()
+  return isDarbCustomInference() || getDarbFrozenModelContext()
     ? agents.map(agent => ({ ...agent, model: 'inherit' }))
     : agents
 }

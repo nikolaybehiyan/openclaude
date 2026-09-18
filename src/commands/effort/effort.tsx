@@ -7,6 +7,12 @@ import type { LocalJSXCommandOnDone } from '../../types/command.js';
 import { type EffortValue, getDisplayedEffortLevel, getEffortEnvOverride, getEffortValueDescription, isEffortLevel, isOpenAIEffortLevel, modelUsesOpenAIEffort, openAIEffortToStandard, toPersistableEffort } from '../../utils/effort.js';
 import { EffortPicker } from '../../components/EffortPicker.js';
 import { updateSettingsForSource } from '../../utils/settings/settings.js';
+import { Box, Text } from '../../ink.js';
+import { Select } from '../../components/CustomSelect/index.js';
+import { darbSelectedThinking, isDarbCustomInference, requireDarbModel } from '../../utils/model/darbModels.js';
+import { darbCanSelectEffort, darbEffortOptions, darbThinkingWithEffort } from '../../utils/model/darbModelControls.js';
+import { selectDarbConnection } from '../../utils/model/darbSelection.js';
+import { resolveAppliedEffort } from '../../utils/effort.js';
 const COMMON_HELP_ARGS = ['help', '-h', '--help'];
 type EffortCommandResult = {
   message: string;
@@ -175,6 +181,7 @@ function ApplyEffortAndClose(t0) {
 }
 export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, args?: string): Promise<React.ReactNode> {
   args = args?.trim() || '';
+  if (isDarbCustomInference()) return <DarbEffortCommand args={args} onDone={onDone} />;
   if (COMMON_HELP_ARGS.includes(args)) {
     onDone('Usage: /effort [low|medium|high|xhigh|max|auto]\n\nEffort levels:\n- low: Quick, straightforward implementation\n- medium: Balanced approach with standard testing\n- high: Comprehensive implementation with extensive testing\n- xhigh: Extra-high reasoning for complex coding and agentic tasks\n- max: Maximum capability with deepest reasoning (this session only)\n- auto: Use the default effort level for your model');
     return;
@@ -187,6 +194,46 @@ export async function call(onDone: LocalJSXCommandOnDone, _context: unknown, arg
   }
   const result = executeEffort(args);
   return <ApplyEffortAndClose result={result} onDone={onDone} />;
+}
+
+function DarbEffortCommand({ args, onDone }: { args: string; onDone: LocalJSXCommandOnDone }) {
+  const model = useMainLoopModel();
+  const setAppState = useSetAppState();
+  const [error, setError] = React.useState<string>();
+  const [saving, setSaving] = React.useState(false);
+  const started = React.useRef(false), pending = React.useRef(false);
+  const row = requireDarbModel(model);
+  const selected = darbSelectedThinking(model);
+  async function apply(value: string) {
+    if (pending.current) return;
+    pending.current = true; setSaving(true); setError(undefined);
+    const effort = value === 'auto' || value === 'unset' ? undefined : value;
+    try {
+      if (effort !== undefined && !darbCanSelectEffort(row, effort)) throw new Error('Unavailable effort');
+      await selectDarbConnection(model, darbThinkingWithEffort(selected, effort));
+      // The authoritative per-model state now supplies the value; no global
+      // Claude settings or optimistic AppState update can bleed to model B.
+      setAppState(prev => ({ ...prev, effortValue: undefined }));
+      const env = getEffortEnvOverride();
+      onDone(`Saved effort for ${model}: ${effort ?? 'auto (not requested)'}.${env !== undefined ? ' CLAUDE_CODE_EFFORT_LEVEL still overrides this session.' : ''}`);
+    } catch { setError('Could not confirm the effort preference. Check the exact allowed value and run /model refresh before retrying.'); }
+    finally { pending.current = false; setSaving(false); }
+  }
+  React.useEffect(() => {
+    if (started.current || !args) return;
+    started.current = true;
+    if (COMMON_HELP_ARGS.includes(args)) onDone('Usage: /effort [exact owner value|auto|current]. Auto omits the effort request. Values are model-specific; no automatic high level is selected.');
+    else if (args === 'current' || args === 'status') {
+      try { onDone(`Effort for ${model}: ${resolveAppliedEffort(model, undefined) ?? 'auto (not requested)'}`); }
+      catch { onDone('Saved effort is unavailable; refresh the selector or explicitly reset it.'); }
+    } else void apply(args);
+  }, [args]);
+  const options = [{ value: 'auto', label: 'Auto (omit effort request)' }, ...darbEffortOptions(row).map(value => ({ value, label: value }))];
+  return <Box flexDirection="column"><Text bold>Effort — {model}</Text>
+    {!args || error ? <Select options={options} defaultValue={selected?.effort ?? 'auto'} defaultFocusValue={selected?.effort ?? 'auto'} visibleOptionCount={10}
+      onChange={value => { void apply(value); }} onCancel={() => onDone('Cancelled')} /> : null}
+    {saving ? <Text dimColor>Saving…</Text> : null}{error ? <Text color="error">{error}</Text> : null}
+  </Box>;
 }
 
 function EffortPickerWrapper({ onDone }: { onDone: LocalJSXCommandOnDone }) {

@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url'
 import { asSessionId } from '../../types/ids.js'
 import { getSessionId, switchSession } from '../../bootstrap/state.js'
 import { guardDarbFetch, type DarbModelBinding } from './darbCatalog.js'
-import { makeDarbSessionBinding, parseDarbSessionBinding } from './darbSessionBinding.js'
+import { makeDarbDefaultSessionBinding, makeDarbSessionBinding, parseDarbSessionBinding, readDarbSessionThinking } from './darbSessionBinding.js'
 
 const originalManaged = await import('./darbModels.js')
 let managed = true
@@ -22,7 +22,9 @@ const sid = '00000000-0000-4000-8000-000000000999'
 const scope = JSON.stringify(['https://ai.darbmind.ru', 'account-A', 'org-A'])
 const model: DarbModelBinding = { id: 'Vendor/real-model', display_name: 'Real model',
   connection_id: 'icn_' + 'a'.repeat(32), connection_revision: 3,
-  catalog_revision: 'sha256:' + 'b'.repeat(64), reasoning: true, reasoning_efforts: ['medium'] }
+  catalog_revision: 'sha256:' + 'b'.repeat(64), reasoning: true, reasoning_efforts: ['medium'],
+  reasoning_support: 'supported', effort_support: 'supported', thinking_types: ['enabled'],
+  supports_1m: false, context_window_tokens: 0 }
 const binding = makeDarbSessionBinding(scope, model)
 
 function message(content = 'Synthetic resume test') {
@@ -117,6 +119,37 @@ test('account, organization, connection and revision changes require explicit se
   expect(() => storage.bindDarbSessionConnection(binding)).toThrow('No history was sent')
 })
 
+test('custom/default transitions require explicit reselect and preserve durable history across restore',async()=>{
+  storage.bindDarbSessionConnection(binding)
+  const before=await storage.loadTranscriptFromFile(file),defaultBinding=makeDarbDefaultSessionBinding(scope)
+  expect(parseDarbSessionBinding(defaultBinding)).toEqual(defaultBinding)
+  expect(parseDarbSessionBinding({...defaultBinding,connection_id:model.connection_id})).toBeNull()
+  expect(()=>storage.bindDarbSessionConnection(defaultBinding)).toThrow('No history was sent')
+  storage.bindDarbSessionConnection(defaultBinding,true)
+  const changed=await storage.loadTranscriptFromFile(file)
+  expect(changed.messages).toEqual(before.messages)
+  expect(changed.darbInferenceBinding).toEqual(defaultBinding)
+  storage.resetProjectForTesting();storage.setSessionFileForTesting(file);storage.restoreSessionMetadata(changed)
+  expect(()=>storage.bindDarbSessionConnection(defaultBinding)).not.toThrow()
+  expect(()=>storage.bindDarbSessionConnection(binding)).toThrow('No history was sent')
+  expect(()=>storage.bindDarbSessionConnection(makeDarbDefaultSessionBinding('another account/org'))).toThrow('No history was sent')
+  storage.bindDarbSessionConnection(binding,true)
+  expect((await storage.loadTranscriptFromFile(file)).darbInferenceBinding).toEqual(binding)
+})
+
+test('default SDK request sends no resumed custom history until explicit selection of default',async()=>{
+  storage.restoreSessionMetadata({darbInferenceBinding:binding})
+  const defaultBinding=makeDarbDefaultSessionBinding(scope)
+  let sent=0
+  const fetcher=(async()=>{sent++;return Response.json({id:'msg_default',type:'message',role:'assistant',model:'claude-sonnet-4-6',content:[],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:1,output_tokens:1}})}) as NonNullable<ClientOptions['fetch']>
+  const client=new Anthropic({baseURL:'https://ai.darbmind.ru',apiKey:null,authToken:'fixture-default',maxRetries:0,
+    fetch:guardDarbFetch(fetcher,'https://ai.darbmind.ru',undefined,()=>true,()=>storage.bindDarbSessionConnection(defaultBinding))})
+  const request=async()=>await client.messages.create({model:'claude-sonnet-4-6',max_tokens:64,messages:[{role:'user',content:'Previously custom history'}]})
+  await expect(request()).rejects.toThrow();expect(sent).toBe(0)
+  storage.bindDarbSessionConnection(defaultBinding,true)
+  await request();expect(sent).toBe(1)
+})
+
 test('legacy and malformed saved bindings fail closed, explicit model selection repairs them without changing history', async () => {
   for (const saved of [undefined, null, { ...binding, version: 99 }, { token: 'corrupt' }]) {
     await fixture(saved === undefined ? [message()] : [message(), entry(binding), entry(saved)])
@@ -186,4 +219,37 @@ test('transport rechecks account/session fencing after asynchronous preflight', 
     'https://ai.darbmind.ru', model, () => current, async () => { await Promise.resolve(); current = false })
   await expect(guarded('https://ai.darbmind.ru/v1/messages', { method: 'POST', body: JSON.stringify({ model: model.id }) })).rejects.toThrow()
   expect(sent).toBe(0)
+})
+
+test('per-model controls preserve reset versus off, are durable and do not cross models or scopes', async () => {
+  storage.setDarbSessionThinking(binding, model.id, { type: 'effort_and_mode', mode: 'extended', effort: 'medium' })
+  storage.setDarbSessionThinking(binding, 'Other/Exact[1m]', { type: 'mode', mode: 'off' })
+  expect(readDarbSessionThinking(scope, model)).toEqual({ type: 'effort_and_mode', mode: 'extended', effort: 'medium' })
+  expect(readDarbSessionThinking(scope, { ...model, id: 'Other/Exact[1m]' })).toEqual({ type: 'mode', mode: 'off' })
+  const bytes = await readFile(file, 'utf8')
+  storage.bindDarbSessionConnection(binding)
+  storage.setDarbSessionThinking(binding, model.id, { type: 'effort_and_mode', mode: 'extended', effort: 'medium' })
+  expect(await readFile(file, 'utf8')).toBe(bytes)
+  const log = await storage.loadTranscriptFromFile(file)
+  storage.resetProjectForTesting(); storage.setSessionFileForTesting(file); storage.restoreSessionMetadata(log)
+  expect(readDarbSessionThinking(scope, model)?.mode).toBe('extended')
+  storage.setDarbSessionThinking(binding, model.id, null)
+  expect(readDarbSessionThinking(scope, model)).toBeNull()
+  expect(readDarbSessionThinking(scope, { ...model, id: 'Other/Exact[1m]' })?.mode).toBe('off')
+  for (const other of [{ ...model, connection_revision: 4 }, { ...model, connection_id: 'icn_' + 'c'.repeat(32) }]) expect(readDarbSessionThinking(scope, other)).toBeUndefined()
+  expect(readDarbSessionThinking('another account', model)).toBeUndefined()
+  expect(readDarbSessionThinking(scope, { ...model, id: 'other/exact[1m]' })).toBeUndefined()
+  expect((await storage.loadTranscriptFromFile(file)).messages).toEqual(log.messages)
+})
+
+test('control persistence errors and malformed/revoked session bindings cannot change selected state', async () => {
+  storage.bindDarbSessionConnection(binding)
+  storage.setDarbSessionThinking(binding, model.id, null)
+  storage.setSessionFileForTesting(dirs[0]!)
+  expect(() => storage.setDarbSessionThinking(binding, model.id, { type:'mode', mode:'off' })).toThrow()
+  expect(readDarbSessionThinking(scope, model)).toBeNull()
+  expect(() => storage.setDarbSessionThinking({...binding,connection_revision:4}, model.id, null)).toThrow('No history was sent')
+  storage.restoreSessionMetadata({darbInferenceBinding:null})
+  expect(() => storage.setDarbSessionThinking(binding, model.id, null)).toThrow('No history was sent')
+  for (const controls_by_model of [[{model:model.id,thinking:{type:'mode',mode:'enabled'}}], [{model:model.id,thinking:null},{model:model.id,thinking:null}], [{model:'x\n',thinking:null}]]) expect(parseDarbSessionBinding({...binding,controls_by_model})).toBeNull()
 })

@@ -2,6 +2,23 @@
 // Manually maintained — keep in sync with src/entrypoints/sdk/index.ts
 // Drift is caught by validate-externals.ts (runs in CI)
 
+/** Configure once before creating a session; a different binding requires a new process. */
+export type DarbFrozenModelContext = Readonly<{
+  owner: 'identity-org-service'
+  organization_uuid: string
+  account_uuid: string
+  connection_id: string
+  connection_revision: number
+  catalog_revision: string
+  model: string
+  supports_1m: boolean
+  context_window_tokens: 0 | 1000000
+  max_context_tokens?: number
+  max_input_tokens?: number
+  max_output_tokens?: number
+}>
+export function configureDarbFrozenModelContext(input: unknown): DarbFrozenModelContext
+
 // ============================================================================
 // Error
 // ============================================================================

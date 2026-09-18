@@ -9,9 +9,45 @@ import {
 } from '../integrations/routeMetadata.js'
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
+import { getDarbFrozenModelContext } from './model/darbFrozenContext.js'
+import { isDarbCustomInference, requireDarbModel } from './model/darbModels.js'
 
-// Model context window size (200k tokens for all models right now)
+function managedModelContext(model: string) {
+  const frozen = getDarbFrozenModelContext(model)
+  if (frozen) return frozen
+  return isDarbCustomInference() ? requireDarbModel(model) : undefined
+}
+
+// Legacy internal budgeting fallback. This is not an assertion about the
+// capacity of an unknown custom model; gateway capacity is separate metadata.
 export const MODEL_CONTEXT_WINDOW_DEFAULT = 200_000
+
+export function getKnownDarbModelContextCapacity(model: string): number | null {
+  return managedModelContext(model)?.max_context_tokens ?? null
+}
+
+export function getKnownDarbModelInputCapacity(model: string): number | null {
+  return managedModelContext(model)?.max_input_tokens ?? null
+}
+
+export function getKnownDarbModelOutputCapacity(model: string): number | null {
+  return managedModelContext(model)?.max_output_tokens ?? null
+}
+
+// A total window and a separate input ceiling constrain different things.
+// Consumers reserve their own output budget, then honor both known limits.
+// null deliberately preserves their legacy fallback when neither is known.
+export function getKnownDarbInputBudget(model: string, reservedOutput: number): number | null {
+  const managed = managedModelContext(model)
+  if (!managed || managed.max_context_tokens === undefined && managed.max_input_tokens === undefined) return null
+  if (!Number.isSafeInteger(reservedOutput) || reservedOutput < 0) throw new Error('Invalid Darb output reservation')
+  const available = Math.min(
+    managed.max_input_tokens ?? Infinity,
+    managed.max_context_tokens === undefined ? Infinity : managed.max_context_tokens - reservedOutput,
+  )
+  if (available <= 0) throw new Error('Darb output reservation leaves no input capacity; reduce the output token limit')
+  return available
+}
 
 // Fallback context window for unknown 3P models. Must be large enough that
 // the effective context (this minus output token reservation) stays positive,
@@ -48,6 +84,13 @@ export function is1mContextDisabled(): boolean {
 }
 
 export function has1mContext(model: string): boolean {
+  const managed = managedModelContext(model)
+  if (managed) {
+    if (managed.context_window_tokens === 1_000_000 && is1mContextDisabled()) {
+      throw new Error('Darb selected 1M context is disabled by runtime policy')
+    }
+    return managed.context_window_tokens === 1_000_000
+  }
   if (is1mContextDisabled()) {
     return false
   }
@@ -59,6 +102,8 @@ export function modelSupports1M(model: string): boolean {
   if (is1mContextDisabled()) {
     return false
   }
+  const managed = managedModelContext(model)
+  if (managed) return managed.supports_1m
   const canonical = getCanonicalName(model)
   return canonical.includes('claude-sonnet-4') || canonical.includes('opus-4-6')
 }
@@ -80,6 +125,22 @@ export function getContextWindowForModel(
   model: string,
   betas?: string[],
 ): number {
+  const managed = managedModelContext(model)
+  if (managed) {
+    if (managed.context_window_tokens === 1_000_000) {
+      if (is1mContextDisabled()) throw new Error('Darb selected 1M context is disabled by runtime policy')
+      return 1_000_000
+    }
+    // Zero is the standard variant, not a numeric capacity. Prefer the owner's
+    // total context window; preserve the legacy input-capacity fallback when
+    // no total is supplied, then the unchanged 200k default. Never infer either
+    // numeric field from the opaque model ID or conflate total with input.
+    const capacity = managed.max_context_tokens ?? managed.max_input_tokens
+    if (capacity !== undefined && capacity >= 1_000_000 && is1mContextDisabled()) {
+      return MODEL_CONTEXT_WINDOW_DEFAULT
+    }
+    return capacity ?? MODEL_CONTEXT_WINDOW_DEFAULT
+  }
   // Allow override via environment variable (internal-only)
   // This takes precedence over all other context window resolution, including 1M detection,
   // so users can cap the effective context window for local decisions (auto-compact, etc.)
@@ -194,6 +255,16 @@ export function getModelMaxOutputTokens(model: string): {
   default: number
   upperLimit: number
 } {
+  const managed = managedModelContext(model)
+  if (managed) {
+    // Owner-observed maximum, never a Claude-family or route-name guess. An
+    // unknown model keeps separate legacy request budgets, not a claimed cap.
+    const capacity = managed.max_output_tokens
+    return {
+      default: Math.min(MAX_OUTPUT_TOKENS_DEFAULT, capacity ?? MAX_OUTPUT_TOKENS_DEFAULT),
+      upperLimit: capacity ?? MAX_OUTPUT_TOKENS_UPPER_LIMIT,
+    }
+  }
   let defaultTokens: number
   let upperLimit: number
 

@@ -93,7 +93,8 @@ import { getSettings_DEPRECATED } from './settings/settings.js'
 import { jsonParse, jsonStringify } from './slowOperations.js'
 import type { ContentReplacementRecord } from './toolResultStorage.js'
 import { validateUuid } from './uuid.js'
-import { type DarbSessionBinding, DARB_SESSION_SELECTION_REQUIRED, parseDarbSessionBinding, sameDarbSessionBinding } from './model/darbSessionBinding.js'
+import { type DarbSessionBinding, DARB_SESSION_SELECTION_REQUIRED, parseDarbSessionBinding, sameDarbSessionBinding, registerDarbSessionBindingReader } from './model/darbSessionBinding.js'
+import type { DarbNativeThinking } from './model/darbModelControls.js'
 import { isDarbManagedInference } from './model/darbModels.js'
 
 // Cache MACRO.VERSION at module level to work around bun --define bug in async contexts
@@ -1005,12 +1006,40 @@ class Project {
   }
 
   bindDarbConnection(binding: DarbSessionBinding, explicitSelection: boolean): void {
-    if (sameDarbSessionBinding(this.currentSessionDarbBinding, binding)) return
+    if (sameDarbSessionBinding(this.currentSessionDarbBinding, binding)) {
+      if (!explicitSelection || binding.version !== 1 || binding.controls_by_model === undefined) return
+      const current = this.currentSessionDarbBinding
+      const controls = [...(current?.version === 1 ? current.controls_by_model ?? [] : [])]
+      for (const entry of binding.controls_by_model) {
+        const index = controls.findIndex(old => old.model === entry.model)
+        if (index < 0) controls.push(entry)
+        else controls[index] = entry
+      }
+      const merged = parseDarbSessionBinding({ ...binding, controls_by_model: controls })
+      if (!merged) throw new Error('Invalid Darb session model controls')
+      if (JSON.stringify(merged) === JSON.stringify(current)) return
+      binding = merged
+    }
     if (this.currentSessionDarbBinding !== undefined && !explicitSelection) {
       throw new Error(DARB_SESSION_SELECTION_REQUIRED)
     }
     this.writeDarbBinding(binding)
     this.currentSessionDarbBinding = binding
+  }
+
+  setDarbThinking(binding: DarbSessionBinding, model: string, thinking: DarbNativeThinking | null): void {
+    const current = this.currentSessionDarbBinding
+    if (binding.version !== 1 || current !== undefined && (current?.version !== 1 || !sameDarbSessionBinding(current, binding))) throw new Error(DARB_SESSION_SELECTION_REQUIRED)
+    const base = current ?? binding
+    const entries = [...(base.controls_by_model ?? [])]
+    const index = entries.findIndex(entry => entry.model === model)
+    if (index < 0) entries.push({ model, thinking })
+    else entries[index] = { model, thinking }
+    const next = parseDarbSessionBinding({ ...base, controls_by_model: entries })
+    if (!next) throw new Error('Invalid Darb session model controls')
+    if (JSON.stringify(next) === JSON.stringify(current)) return
+    this.writeDarbBinding(next)
+    this.currentSessionDarbBinding = next
   }
 
   /**
@@ -3124,6 +3153,12 @@ export function bindDarbSessionConnection(binding: DarbSessionBinding, explicitS
   const validated = parseDarbSessionBinding(binding)
   if (!validated) throw new Error(DARB_SESSION_SELECTION_REQUIRED)
   getProject().bindDarbConnection(validated, explicitSelection)
+}
+
+registerDarbSessionBindingReader(() => getProject().currentSessionDarbBinding)
+
+export function setDarbSessionThinking(binding: DarbSessionBinding, model: string, thinking: DarbNativeThinking | null): void {
+  getProject().setDarbThinking(binding, model, thinking)
 }
 
 export async function saveAgentName(

@@ -8,7 +8,8 @@ import { get3PModelCapabilityOverride } from './model/modelSupportOverrides.js'
 import { supportsCodexReasoningEffort } from '../services/api/providerConfig.js'
 import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
-import { currentDarbCatalog, isDarbManagedInference } from './model/darbModels.js'
+import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from './model/darbModels.js'
+import { darbCanSelectEffort, darbEffortOptions, isDarbEffort } from './model/darbModelControls.js'
 
 export type { EffortLevel }
 
@@ -33,7 +34,11 @@ export type PersistedEffortLevel = Exclude<EffortLevel, 'max'>
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
-  if (isDarbManagedInference()) return getAvailableEffortLevels(model).length > 0
+  if (isDarbCustomInference()) {
+    const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
+    return !!row && row.reasoning_support !== 'unsupported' && row.effort_support !== 'unsupported' &&
+      (darbEffortOptions(row).length > 0 || row.parameter_contract?.effort.support !== undefined && row.parameter_contract.effort.support !== 'unsupported')
+  }
   const m = model.toLowerCase()
   if (isEnvTruthy(process.env.CLAUDE_CODE_ALWAYS_ENABLE_EFFORT)) {
     return true
@@ -75,7 +80,7 @@ export function modelSupportsEffort(model: string): boolean {
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
 // Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
 export function modelSupportsMaxEffort(model: string): boolean {
-  if (isDarbManagedInference()) return getAvailableEffortLevels(model).some(level => level === 'max')
+  if (isDarbCustomInference()) return getAvailableEffortLevels(model).some(level => level === 'max')
   const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
   if (supported3P !== undefined) {
     return supported3P
@@ -102,7 +107,7 @@ export function modelSupportsMaxEffort(model: string): boolean {
 // aliases (including Desktop's pinned provider models) carry the authoritative
 // xhigh_effort capability in their environment projection.
 export function modelSupportsXHighEffort(model: string): boolean {
-  if (isDarbManagedInference()) return getAvailableEffortLevels(model).includes('xhigh')
+  if (isDarbCustomInference()) return getAvailableEffortLevels(model).includes('xhigh')
   const supported3P = get3PModelCapabilityOverride(model, 'xhigh_effort')
   if (supported3P !== undefined) {
     return supported3P
@@ -131,9 +136,11 @@ export function modelUsesOpenAIEffort(model: string): boolean {
 }
 
 export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIEffortLevel[] {
-  if (isDarbManagedInference()) {
-    const declared = currentDarbCatalog()?.models.find(row => row.id === model)?.reasoning_efforts ?? []
-    return EFFORT_LEVELS.filter(level => declared.includes(level))
+  if (isDarbCustomInference()) {
+    const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
+    // The native UI typedef is a closed Claude enum; managed values are
+    // validated owner data and must not be filtered through that enum.
+    return (row ? [...darbEffortOptions(row)] : []) as EffortLevel[]
   }
   if (!modelSupportsEffort(model)) {
     return []
@@ -174,6 +181,10 @@ export function parseEffortValue(value: unknown): EffortValue | undefined {
   if (value === undefined || value === null || value === '') {
     return undefined
   }
+  if (isDarbCustomInference()) {
+    if (!isDarbEffort(value)) throw new Error('Invalid explicit Darb effort value')
+    return value as EffortValue
+  }
   if (typeof value === 'number' && isValidNumericEffort(value)) {
     return value
   }
@@ -209,6 +220,7 @@ export function toPersistableEffort(
 }
 
 export function getInitialEffortSetting(): PersistedEffortLevel | undefined {
+  if (isDarbCustomInference()) return undefined // Never inherit another model's global Claude preference.
   // toPersistableEffort validates persisted levels on read, so a manually
   // edited settings.json with an invalid level doesn't leak into a fresh session.
   return toPersistableEffort(getInitialSettings().effortLevel)
@@ -239,6 +251,11 @@ export function resolvePickerEffortPersistence(
 
 export function getEffortEnvOverride(): EffortValue | null | undefined {
   const envOverride = process.env.CLAUDE_CODE_EFFORT_LEVEL
+  if (isDarbCustomInference() && envOverride !== undefined) {
+    if (envOverride === 'unset' || envOverride === 'auto') return null
+    if (!isDarbEffort(envOverride)) throw new Error('Invalid explicit Darb effort value')
+    return envOverride as EffortValue
+  }
   return envOverride?.toLowerCase() === 'unset' ||
     envOverride?.toLowerCase() === 'auto'
     ? null
@@ -256,10 +273,18 @@ export function getEffortEnvOverride(): EffortValue | null | undefined {
 export function resolveAppliedEffort(
   model: string,
   appStateEffortValue: EffortValue | undefined,
+  inheritManagedSelection = true,
 ): EffortValue | undefined {
-  const envOverride = getEffortEnvOverride()
+  const envOverride = isDarbCustomInference() && !inheritManagedSelection ? undefined : getEffortEnvOverride()
   if (envOverride === null) {
     return undefined
+  }
+  if (isDarbCustomInference()) {
+    const resolved = envOverride ?? appStateEffortValue ?? (inheritManagedSelection ? darbSelectedThinking(model)?.effort : undefined)
+    if (resolved === undefined) return undefined
+    const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
+    if (typeof resolved !== 'string' || !row || !darbCanSelectEffort(row, resolved)) throw new Error('Darb selected effort is unavailable; no fallback effort was used')
+    return resolved as EffortValue
   }
   const resolved =
     envOverride ?? appStateEffortValue ?? getDefaultEffortForModel(model)
@@ -291,6 +316,7 @@ export function getDisplayedEffortLevel(
   model: string,
   appStateEffort: EffortValue | undefined,
 ): EffortLevel {
+  if (isDarbCustomInference()) return (resolveAppliedEffort(model, appStateEffort) ?? 'auto') as EffortLevel
   const resolved = resolveAppliedEffort(model, appStateEffort) ?? 'high'
   return convertEffortValueToLevel(resolved)
 }
@@ -317,6 +343,7 @@ export function isValidNumericEffort(value: number): boolean {
 
 export function convertEffortValueToLevel(value: EffortValue): EffortLevel {
   if (typeof value === 'string') {
+    if (isDarbCustomInference() && isDarbEffort(value)) return value as EffortLevel
     // Runtime guard: value may come from remote config (GrowthBook) where
     // TypeScript types can't help us. Coerce unknown strings to 'high'
     // rather than passing them through unchecked.
@@ -364,6 +391,7 @@ export function getEffortValueDescription(value: EffortValue): string {
   }
 
   if (typeof value === 'string') {
+    if (isDarbCustomInference() && !isEffortLevel(value)) return `Provider effort value: ${value}`
     return getEffortLevelDescription(value)
   }
   return 'Balanced approach with standard implementation and testing'
@@ -397,7 +425,7 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 export function getDefaultEffortForModel(
   model: string,
 ): EffortValue | undefined {
-  if (isDarbManagedInference()) return undefined
+  if (isDarbCustomInference()) return darbSelectedThinking(model)?.effort as EffortValue | undefined
   if (process.env.USER_TYPE === 'ant') {
     const config = getAntModelOverrideConfig()
     const isDefaultModel =

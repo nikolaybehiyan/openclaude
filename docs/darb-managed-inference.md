@@ -73,9 +73,40 @@ TypeScript check still has 1,723 diagnostics; comparing normalized diagnostics
 against HEAD in memory added **zero** diagnostics (no worktree or source rollback).
 This is not a claim that the full typecheck passes.
 
+The owner catalog now also supplies `supports_1m` and effective
+`context_window_tokens`. Saved selection may explicitly choose standard (`0`)
+or 1M (`1000000`); omission follows the owner preference. The central context
+accessor uses that selection without suffixing the provider ID. The request
+guard freezes and sends `x-darb-context-window-tokens` alongside the binding.
+An embedding host can use `configureDarbFrozenModelContext` before SDK session
+creation, or the host-protected `DARB_FROZEN_MODEL_CONTEXT_JSON` process bootstrap.
+That process registry is immutable across account/gateway/revision/variant
+changes; a changed binding requires a new process. It carries no credential and
+does not replace server authorization. Built-in helpers inherit its exact model,
+and normalization leaves a literal `[1m]` in a provider ID untouched.
+
+Optional observed `max_input_tokens` flows from the authenticated gateway catalog
+into that same frozen descriptor. Auto/standard (`0`) uses a known input capacity
+exactly (128000, 262144 and 1000000 are covered), without asking the user for a
+limit. Unknown capacity remains absent/null; the existing separate 200000 internal
+budget is retained but is not a verified capacity or a guarantee for unknown
+smaller models. Explicit 1M cannot exceed a known smaller input capacity. Capacity
+changes also require a new frozen binding. These cases and explicit 1M are
+exercised through the real accessor in fresh-process tests.
+Local CLI/SDK builds and compiled SDK bootstrap smoke pass. No upstream
+synchronization was performed for this scoped integration fix.
+
+Optional observed `max_output_tokens` is also frozen and validated independently.
+The actual native output-budget accessor uses it as the upper limit, preserves
+smaller requested values and defaults to at most 32000 tokens. Unknown capacity
+remains absent/null with separate unchanged 32000/64000 runtime request budgets;
+those are not verified provider limits. Default-mode name-based behavior remains
+unchanged, while a custom exact ID never obtains a limit from its spelling.
+
 Not yet established: a live configured gateway inference in the installed CLI,
 TUI acceptance after deployment, concurrent independent writers to one transcript,
-numeric context/output limits and pricing for arbitrary models, or all
+limits not supplied by a verified gateway schema and pricing, every native standard/1M
+picker, or all
 specialized helper/capability paths. The server still retains its unconfigured
 legacy SDK branch for unmigrated clients; this standalone client refuses that
 branch. Other Darb surfaces require their own migration and acceptance. This is
