@@ -4,8 +4,9 @@ export type DarbFrozenModelContext = Readonly<{
   owner: 'identity-org-service'
   organization_uuid: string
   account_uuid: string
-  connection_id: string
-  connection_revision: number
+  mode?: 'default'
+  connection_id?: string
+  connection_revision?: number
   catalog_revision: string
   model: string
   supports_1m: boolean
@@ -21,10 +22,18 @@ function identifier(value: unknown): value is string {
 
 function parseBinding(input: unknown): DarbFrozenModelContext {
   const v = input as Record<string, unknown> | null
+  const serverDefault = v?.mode === 'default'
+  const validRoute = serverDefault
+    ? v.connection_id === undefined && v.connection_revision === undefined &&
+      typeof v.model === 'string' && /^claude-[a-z0-9][a-z0-9._-]*$/.test(v.model) &&
+      v.context_window_tokens === 0 && (!v.supports_1m || Number(v.max_input_tokens) >= 1000000) &&
+      ['max_context_tokens', 'max_input_tokens', 'max_output_tokens'].every(k => Number.isSafeInteger(v[k]) && Number(v[k]) > 0) &&
+      Number(v.max_input_tokens) <= Number(v.max_context_tokens) && Number(v.max_output_tokens) <= Number(v.max_context_tokens)
+    : v?.mode === undefined && typeof v?.connection_id === 'string' && /^icn_[a-f0-9]{32}$/.test(v.connection_id) &&
+      Number.isSafeInteger(v.connection_revision) && Number(v.connection_revision) >= 1
   if (!v || typeof v !== 'object' || Array.isArray(v) || v.owner !== 'identity-org-service' ||
       !identifier(v.organization_uuid) || !identifier(v.account_uuid) ||
-      typeof v.connection_id !== 'string' || !/^icn_[a-f0-9]{32}$/.test(v.connection_id) ||
-      !Number.isSafeInteger(v.connection_revision) || Number(v.connection_revision) < 1 ||
+      !validRoute ||
       typeof v.catalog_revision !== 'string' || !/^sha256:[a-f0-9]{64}$/.test(v.catalog_revision) ||
       typeof v.model !== 'string' || v.model.trim() !== v.model || v.model.length === 0 ||
       Buffer.byteLength(v.model) > 256 || /[\p{Cc}]/u.test(v.model) ||
@@ -39,8 +48,9 @@ function parseBinding(input: unknown): DarbFrozenModelContext {
   // Copy only public binding metadata; never retain an endpoint or credential.
   return Object.freeze({
     owner: 'identity-org-service', organization_uuid: v.organization_uuid,
-    account_uuid: v.account_uuid, connection_id: v.connection_id,
-    connection_revision: v.connection_revision as number, catalog_revision: v.catalog_revision,
+    account_uuid: v.account_uuid,
+    ...(serverDefault ? { mode: 'default' as const } : { connection_id: v.connection_id as string, connection_revision: v.connection_revision as number }),
+    catalog_revision: v.catalog_revision,
     model: v.model, supports_1m: v.supports_1m, context_window_tokens: v.context_window_tokens,
     ...(v.max_context_tokens !== undefined ? { max_context_tokens: v.max_context_tokens as number } : {}),
     ...(v.max_input_tokens !== undefined ? { max_input_tokens: v.max_input_tokens as number } : {}),

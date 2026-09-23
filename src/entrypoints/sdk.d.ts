@@ -7,8 +7,9 @@ export type DarbFrozenModelContext = Readonly<{
   owner: 'identity-org-service'
   organization_uuid: string
   account_uuid: string
-  connection_id: string
-  connection_revision: number
+  mode?: 'default'
+  connection_id?: string
+  connection_revision?: number
   catalog_revision: string
   model: string
   supports_1m: boolean

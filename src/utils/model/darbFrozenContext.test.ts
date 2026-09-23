@@ -13,6 +13,42 @@ const binding = {
   supports_1m: true, context_window_tokens: 1000000,
 }
 
+const serverDefault = {
+  mode: 'default', owner: 'identity-org-service', organization_uuid: 'org-a', account_uuid: 'account-a',
+  catalog_revision: 'sha256:' + 'b'.repeat(64), model: 'claude-sonnet-5',
+  supports_1m: false, context_window_tokens: 0,
+  max_context_tokens: 1000000, max_input_tokens: 983000, max_output_tokens: 128000,
+}
+
+test('server default carries real capacity without pretending to be a BYOK connection', () => {
+  const registry = new DarbFrozenContextRegistry()
+  const frozen = registry.configure(serverDefault)
+  expect(frozen.mode).toBe('default')
+  expect(frozen.connection_id).toBeUndefined()
+  expect(frozen.connection_revision).toBeUndefined()
+  expect(registry.configure(serverDefault)).toBe(frozen)
+  for (const change of [{mode:'custom'}, {connection_id:binding.connection_id}, {connection_revision:1},
+    {max_input_tokens:undefined}, {max_output_tokens:1000001}, {model:'qwen3.8-max'}, {supports_1m:true}, {context_window_tokens:1000000}]) {
+    expect(() => new DarbFrozenContextRegistry().configure({...serverDefault,...change})).toThrow('invalid')
+  }
+  expect(() => registry.configure({...binding,model:serverDefault.model})).toThrow('restart')
+})
+
+test('server default drives actual context and agent helpers without a provider or user-type switch', () => {
+  const context = runAccessor(serverDefault,{TEST_EXACT_MODEL:serverDefault.model})
+  expect(context.status,context.stderr).toBe(0)
+  expect(JSON.parse(context.stdout)).toEqual({window:1000000,oneM:false,supported:false,capacity:983000})
+  const helpers = runAccessor(serverDefault,{TEST_EXACT_MODEL:serverDefault.model, TEST_FROZEN_HELPERS:'1'})
+  expect(helpers.status,helpers.stderr).toBe(0)
+  expect(JSON.parse(helpers.stdout).helpers).toEqual(Array(6).fill(serverDefault.model))
+  const compact = runAccessor(serverDefault,{TEST_EXACT_MODEL:serverDefault.model,TEST_INPUT_BUDGET:'1'})
+  expect(compact.status,compact.stderr).toBe(0)
+  const budget=JSON.parse(compact.stdout)
+  expect(budget.budget).toBe(983000)
+  expect(budget.effective).toBe(980000)
+  expect(budget.threshold).toBe(967000) // Existing 13k safety buffer, not a new percentage.
+},30000)
+
 test('context binding is exact, immutable and idempotent without retaining secrets', () => {
   const registry = new DarbFrozenContextRegistry()
   expect(registry.get('unknown')).toBeUndefined()
