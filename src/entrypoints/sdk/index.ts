@@ -14,7 +14,7 @@ import { getTools } from '../../tools.js'
 import { init } from '../init.js'
 
 export { configureDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
-export type { DarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
+export type { DarbFrozenModelContext, DarbNativeParameters } from '../../utils/model/darbFrozenContext.js'
 
 // ============================================================================
 // Stub leak detection
