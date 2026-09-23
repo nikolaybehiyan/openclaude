@@ -4,7 +4,12 @@ import {
   isFirstPartyAnthropicBaseUrl,
 } from 'src/utils/model/providers.js'
 
-export type ProviderOverride = { model: string; baseURL: string; apiKey: string }
+export type ProviderOverride = {
+  model: string; baseURL: string; apiKey: string
+  apiFormat?: 'chat_completions' | 'anthropic'
+  /** Host-only transport closure; never read from model/provider data. */
+  fetch?: typeof globalThis.fetch
+}
 
 export function shouldUseFirstPartyAnthropicAuthForProvider({
   providerOverride,

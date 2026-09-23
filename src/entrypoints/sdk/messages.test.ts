@@ -1,5 +1,31 @@
 import { expect, test } from 'bun:test'
 import { unstable_messagesCreate } from './messages.ts'
+import { getDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
+
+test('native artifact invocations isolate owner/model context across concurrent tool loops', async () => {
+  const run = (account: string, model: string) => {
+    const frozenModelContext = {owner:'identity-org-service' as const, mode:'default' as const, organization_uuid:'org',account_uuid:account,
+      model,catalog_revision:'sha256:'+'a'.repeat(64),supports_1m:false,context_window_tokens:0 as const,
+      max_context_tokens:1000000,max_input_tokens:983000,max_output_tokens:128000}
+    return unstable_messagesCreate({model,max_tokens:1000,messages:[{role:'user',content:'synthetic'}]}, {
+      systemPrompt:'Synthetic isolated test.',frozenModelContext,
+      providerOverride:{model,baseURL:'https://darb-artifact-inference.invalid',apiKey:'sentinel',apiFormat:'anthropic',fetch:globalThis.fetch},
+      _sessionFactory: options => {
+        expect(options.providerOverride?.apiFormat).toBe('anthropic')
+        expect(options.providerOverride?.fetch).toBe(globalThis.fetch)
+        expect(getDarbFrozenModelContext()?.account_uuid).toBe(account)
+        return {unstable_syncMessages(){},close(){},async *sendMessage(){
+          await new Promise(resolve=>setTimeout(resolve,5))
+          expect(getDarbFrozenModelContext()?.account_uuid).toBe(account)
+          expect(getDarbFrozenModelContext(model)?.model).toBe(model)
+          yield {type:'result',subtype:'success',result:'ok',usage:{input_tokens:1,output_tokens:1}}
+        }}
+      },
+    })
+  }
+  await Promise.all([run('alice','claude-one'),run('bob','claude-two')])
+  expect(getDarbFrozenModelContext()).toBeUndefined()
+})
 
 test('messages adapter delegates the only model/tool loop to an isolated OpenClaude SDK session', async () => {
   let capturedOptions: Record<string, unknown> | undefined

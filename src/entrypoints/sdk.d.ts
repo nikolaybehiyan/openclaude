@@ -3,6 +3,11 @@
 // Drift is caught by validate-externals.ts (runs in CI)
 
 /** Configure once before creating a session; a different binding requires a new process. */
+export type DarbNativeParameters = Readonly<{
+  version: 1
+  thinking_types: readonly ('enabled' | 'disabled' | 'adaptive')[]
+  effort_values: readonly ('low' | 'medium' | 'high' | 'xhigh' | 'max')[]
+}>
 export type DarbFrozenModelContext = Readonly<{
   owner: 'identity-org-service'
   organization_uuid: string
@@ -17,6 +22,7 @@ export type DarbFrozenModelContext = Readonly<{
   max_context_tokens?: number
   max_input_tokens?: number
   max_output_tokens?: number
+  native_parameters?: DarbNativeParameters
 }>
 export function configureDarbFrozenModelContext(input: unknown): DarbFrozenModelContext
 
@@ -165,11 +171,13 @@ export type SDKMessagesProviderOverride = {
   model: string
   baseURL: string
   apiKey: string
-  apiFormat?: 'chat_completions'
+  apiFormat?: 'chat_completions' | 'anthropic'
+  fetch?: typeof globalThis.fetch
 }
 
 export type SDKMessagesRuntimeOptions = {
   providerOverride: SDKMessagesProviderOverride
+  frozenModelContext?: DarbFrozenModelContext
   systemPrompt: string
   resolvedMcpServers?: SDKResolvedMcpServer[]
   signal?: AbortSignal
@@ -509,7 +517,7 @@ export type SDKSessionOptions = {
   /** Bound the number of model/tool turns for this SDK session. */
   maxTurns?: number
   /** Route this SDK session through a specific OpenAI-compatible provider. */
-  providerOverride?: { model: string; baseURL: string; apiKey: string }
+  providerOverride?: SDKMessagesProviderOverride
   /** Persist this SDK session transcript. Defaults to the normal OpenClaude policy. */
   persistSession?: boolean
   /** In-memory flag settings for this session. Used by managed/headless hosts. */

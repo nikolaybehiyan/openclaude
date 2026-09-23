@@ -10,6 +10,7 @@ import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from './model/darbModels.js'
 import { darbCanSelectEffort, darbEffortOptions, isDarbEffort } from './model/darbModelControls.js'
+import { getDarbNativeParameters } from './model/darbFrozenContext.js'
 
 export type { EffortLevel }
 
@@ -34,6 +35,8 @@ export type PersistedEffortLevel = Exclude<EffortLevel, 'max'>
 
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports the effort parameter.
 export function modelSupportsEffort(model: string): boolean {
+  const native = getDarbNativeParameters(model)
+  if (native) return native.effort_values.length > 0
   if (isDarbCustomInference()) {
     const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
     return !!row && row.reasoning_support !== 'unsupported' && row.effort_support !== 'unsupported' &&
@@ -80,6 +83,8 @@ export function modelSupportsEffort(model: string): boolean {
 // @[MODEL LAUNCH]: Add the new model to the allowlist if it supports 'max' effort.
 // Per API docs, 'max' is Opus 4.6 only for public models — other models return an error.
 export function modelSupportsMaxEffort(model: string): boolean {
+  const native = getDarbNativeParameters(model)
+  if (native) return native.effort_values.includes('max')
   if (isDarbCustomInference()) return getAvailableEffortLevels(model).some(level => level === 'max')
   const supported3P = get3PModelCapabilityOverride(model, 'max_effort')
   if (supported3P !== undefined) {
@@ -107,6 +112,8 @@ export function modelSupportsMaxEffort(model: string): boolean {
 // aliases (including Desktop's pinned provider models) carry the authoritative
 // xhigh_effort capability in their environment projection.
 export function modelSupportsXHighEffort(model: string): boolean {
+  const native = getDarbNativeParameters(model)
+  if (native) return native.effort_values.includes('xhigh')
   if (isDarbCustomInference()) return getAvailableEffortLevels(model).includes('xhigh')
   const supported3P = get3PModelCapabilityOverride(model, 'xhigh_effort')
   if (supported3P !== undefined) {
@@ -136,6 +143,8 @@ export function modelUsesOpenAIEffort(model: string): boolean {
 }
 
 export function getAvailableEffortLevels(model: string): EffortLevel[] | OpenAIEffortLevel[] {
+  const native = getDarbNativeParameters(model)
+  if (native) return [...native.effort_values]
   if (isDarbCustomInference()) {
     const row = currentDarbCustomCatalog()?.models.find(row => row.id === model)
     // The native UI typedef is a closed Claude enum; managed values are
@@ -278,6 +287,15 @@ export function resolveAppliedEffort(
   const envOverride = isDarbCustomInference() && !inheritManagedSelection ? undefined : getEffortEnvOverride()
   if (envOverride === null) {
     return undefined
+  }
+  const native = getDarbNativeParameters(model)
+  if (native) {
+    const requested = envOverride ?? appStateEffortValue
+    if (requested === undefined) return undefined // Keep the provider's own default.
+    if (typeof requested !== 'string' || !native.effort_values.includes(requested as EffortLevel)) {
+      throw new Error('Darb selected effort is unavailable; no fallback effort was used')
+    }
+    return requested
   }
   if (isDarbCustomInference()) {
     const resolved = envOverride ?? appStateEffortValue ?? (inheritManagedSelection ? darbSelectedThinking(model)?.effort : undefined)
@@ -430,6 +448,7 @@ export function getOpusDefaultEffortConfig(): OpusDefaultEffortConfig {
 export function getDefaultEffortForModel(
   model: string,
 ): EffortValue | undefined {
+  if (getDarbNativeParameters(model)) return undefined
   if (isDarbCustomInference()) return darbSelectedThinking(model)?.effort as EffortValue | undefined
   if (process.env.USER_TYPE === 'ant') {
     const config = getAntModelOverrideConfig()

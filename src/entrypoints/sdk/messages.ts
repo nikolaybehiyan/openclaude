@@ -1,6 +1,8 @@
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { buildMcpToolName } from '../../services/mcp/mcpStringUtils.js'
 import type { SDKSessionOptions } from './v2.js'
+import { runWithDarbFrozenModelContext, type DarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
+import type { ProviderOverride } from '../../services/api/authRouting.js'
 
 export type SDKMessagesContentBlock = Record<string, unknown>
 
@@ -48,12 +50,7 @@ export type SDKResolvedMcpServer = {
   headers?: Record<string, string>
 }
 
-export type SDKMessagesProviderOverride = {
-  model: string
-  baseURL: string
-  apiKey: string
-  apiFormat?: 'chat_completions'
-}
+export type SDKMessagesProviderOverride = ProviderOverride
 
 type SDKMessagesSession = {
   unstable_syncMessages(messages: unknown[]): void
@@ -65,6 +62,7 @@ type SDKMessagesSessionFactory = (options: SDKSessionOptions) => SDKMessagesSess
 
 export type SDKMessagesRuntimeOptions = {
   providerOverride: SDKMessagesProviderOverride
+  frozenModelContext?: DarbFrozenModelContext
   systemPrompt: string
   resolvedMcpServers?: SDKResolvedMcpServer[]
   signal?: AbortSignal
@@ -350,6 +348,17 @@ export async function unstable_messagesCreate(
   params: SDKMessagesCreateParams,
   options: SDKMessagesRuntimeOptions,
 ): Promise<SDKMessagesResponse> {
+  if (options.frozenModelContext) {
+    if (options.providerOverride?.apiFormat !== 'anthropic' || typeof options.providerOverride.fetch !== 'function' ||
+        options.providerOverride.model !== options.frozenModelContext.model || params.model !== options.frozenModelContext.model) {
+      throw new Error('artifact frozen model requires an exact host-owned native transport')
+    }
+    return runWithDarbFrozenModelContext(options.frozenModelContext, () => messagesCreateInScope(params, options))
+  }
+  return messagesCreateInScope(params, options)
+}
+
+async function messagesCreateInScope(params: SDKMessagesCreateParams, options: SDKMessagesRuntimeOptions): Promise<SDKMessagesResponse> {
 	const traceStartedAt = Date.now()
 	const trace = (event: Omit<SDKMessagesTraceEvent, 'elapsedMs'>) => {
 	  try {
@@ -411,6 +420,7 @@ export async function unstable_messagesCreate(
       model: providerModel,
       baseURL: providerBaseURL,
       apiKey: providerAPIKey,
+      ...(options.providerOverride.apiFormat === 'anthropic' ? {apiFormat: 'anthropic', fetch: options.providerOverride.fetch} : {}),
     },
     persistSession: false,
     maxTurns: 32,

@@ -12,6 +12,20 @@ type ShimClient = {
 }
 
 const originalFetch = globalThis.fetch
+
+test('native host provider override uses Anthropic wire and only the supplied transport credential', async () => {
+  let captured: Request | undefined
+  const nativeFetch = (async (input: any, init?: RequestInit) => {
+    captured = new Request(input,init)
+    return new Response(JSON.stringify({id:'msg_test',type:'message',role:'assistant',model:'claude-test',content:[{type:'text',text:'ok'}],stop_reason:'end_turn',stop_sequence:null,usage:{input_tokens:1,output_tokens:1}}),{headers:{'content-type':'application/json'}})
+  }) as FetchType
+  const client=await getAnthropicClient({maxRetries:0,model:'claude-test',providerOverride:{model:'claude-test',baseURL:'https://artifact-native.invalid',apiKey:'scoped-sentinel',apiFormat:'anthropic',fetch:nativeFetch}})
+  const result=await client.messages.create({model:'claude-test',max_tokens:1000,messages:[{role:'user',content:'synthetic'}]})
+  expect(result.content[0]?.type).toBe('text')
+  expect(captured?.url).toBe('https://artifact-native.invalid/v1/messages')
+  expect(captured?.headers.get('x-api-key')).toBe('scoped-sentinel')
+  expect(captured?.headers.get('authorization')).toBeNull()
+})
 const originalMacro = (globalThis as Record<string, unknown>).MACRO
 const originalEnv = {
   CLAUDE_CODE_USE_OPENAI: process.env.CLAUDE_CODE_USE_OPENAI,

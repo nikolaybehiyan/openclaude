@@ -202,7 +202,7 @@ export type SDKSessionOptions = {
   /** Bound the number of model/tool turns for this SDK session. */
   maxTurns?: number
   /** Route this SDK session through a specific OpenAI-compatible provider. */
-  providerOverride?: { model: string; baseURL: string; apiKey: string }
+  providerOverride?: import('../../services/api/authRouting.js').ProviderOverride
   /** Persist this SDK session transcript. Defaults to the normal OpenClaude policy. */
   persistSession?: boolean
   /** In-memory flag settings for this session. Used by managed/headless hosts. */

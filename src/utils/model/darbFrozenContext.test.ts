@@ -112,7 +112,13 @@ function runAccessor(frozen: unknown, extra: Record<string, string> = {}) {
     return spawnSync(process.execPath, ['-e', `
       const c = await import('./src/utils/context.ts');
       const exact = process.env.TEST_EXACT_MODEL;
-      if (process.env.TEST_INPUT_BUDGET) {
+      if (process.env.TEST_NATIVE_PARAMETERS) {
+        const t = await import('./src/utils/thinking.ts');
+        const e = await import('./src/utils/effort.ts');
+        let rejected = false;
+        try { e.resolveAppliedEffort(exact,'medium') } catch { rejected = true }
+        console.log(JSON.stringify({thinking:t.modelSupportsThinking(exact),adaptive:t.modelSupportsAdaptiveThinking(exact),efforts:e.getAvailableEffortLevels(exact),default:e.getDefaultEffortForModel(exact)??null,applied:e.resolveAppliedEffort(exact,undefined)??null,rejected}));
+      } else if (process.env.TEST_INPUT_BUDGET) {
         const compact = await import('./src/services/compact/autoCompact.ts');
         console.log(JSON.stringify({budget:c.getKnownDarbInputBudget(exact,8192),effective:compact.getEffectiveContextWindowSize(exact),threshold:compact.getAutoCompactThreshold(exact)}));
       } else if (process.env.TEST_OUTPUT_CAPACITY) {
@@ -138,6 +144,27 @@ function runAccessor(frozen: unknown, extra: Record<string, string> = {}) {
     })
   } finally { rmSync(directory, { recursive: true, force: true }) }
 }
+
+test('server native parameters are exact, immutable and never silently downgraded', () => {
+  const native_parameters = {version:1, thinking_types:['enabled','disabled'], effort_values:['low','high','max']}
+  const registry = new DarbFrozenContextRegistry()
+  const frozen=registry.configure({...serverDefault,native_parameters})
+  native_parameters.effort_values.push('medium')
+  expect(frozen.native_parameters?.effort_values).toEqual(['low','high','max'])
+  expect(Object.isFrozen(frozen.native_parameters?.effort_values)).toBe(true)
+  expect(()=>registry.configure({...serverDefault,native_parameters})).toThrow('restart')
+  for (const invalid of [null, {version:2}, {version:1,thinking_types:['adaptive','adaptive'],effort_values:[]},
+    {version:1,thinking_types:['enabled'],effort_values:['extra']}, {version:1,thinking_types:[],effort_values:[],endpoint:'secret'}]) {
+    expect(()=>new DarbFrozenContextRegistry().configure({...serverDefault,native_parameters:invalid})).toThrow('invalid')
+  }
+  expect(()=>new DarbFrozenContextRegistry().configure({...binding,native_parameters})).toThrow('server default')
+  const result=runAccessor(frozen,{TEST_EXACT_MODEL:serverDefault.model,TEST_NATIVE_PARAMETERS:'1'})
+  expect(result.status,result.stderr).toBe(0)
+  expect(JSON.parse(result.stdout)).toEqual({thinking:true,adaptive:false,efforts:['low','high','max'],default:null,applied:null,rejected:true})
+  const noEffort=runAccessor({...serverDefault,native_parameters:{version:1,thinking_types:['enabled','disabled'],effort_values:[]}},{TEST_EXACT_MODEL:serverDefault.model,TEST_NATIVE_PARAMETERS:'1'})
+  expect(noEffort.status,noEffort.stderr).toBe(0)
+  expect(JSON.parse(noEffort.stdout).efforts).toEqual([])
+},30000)
 
 test('total context is optional, strict and distinct from input/output and variant', () => {
   for (const max_context_tokens of [0, -1, 0.5, '131072', null, Number.MAX_SAFE_INTEGER + 1]) {
