@@ -17,7 +17,7 @@ import {
 } from './model/providers.js'
 import { getSettingsWithErrors } from './settings/settings.js'
 import { darbDefaultModel, darbModelReasoning, darbModelThinking, darbSelectedThinking, isDarbCustomInference } from './model/darbModels.js'
-import { getDarbNativeParameters } from './model/darbFrozenContext.js'
+import { getDarbEffectiveNativeParameters as getDarbNativeParameters } from './model/darbModels.js'
 
 export type ThinkingConfig = (
   | { type: 'adaptive' }

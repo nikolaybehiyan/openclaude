@@ -10,7 +10,7 @@ import { isEnvTruthy } from './envUtils.js'
 import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from './model/darbModels.js'
 import { darbCanSelectEffort, darbEffortOptions, isDarbEffort } from './model/darbModelControls.js'
-import { getDarbNativeParameters } from './model/darbFrozenContext.js'
+import { getDarbEffectiveNativeParameters as getDarbNativeParameters } from './model/darbModels.js'
 
 export type { EffortLevel }
 

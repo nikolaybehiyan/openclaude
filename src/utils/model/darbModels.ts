@@ -1,5 +1,5 @@
 import { CONNECT_AI, CONFIRM_MODEL, darbCatalogSession } from './darbCatalog.js'
-import { getDarbFrozenModelContext } from './darbFrozenContext.js'
+import { getDarbFrozenModelContext, getDarbNativeParameters } from './darbFrozenContext.js'
 import { getGlobalConfig } from '../config.js'
 import { getAPIProvider } from './providers.js'
 import { darbCanSelectThinking, validateDarbNativeThinking, type DarbThinkingType } from './darbModelControls.js'
@@ -44,6 +44,24 @@ export function isDarbCustomInference(): boolean {
 export function currentDarbCustomCatalog() {
   const catalog = currentDarbCatalog()
   return catalog?.mode === 'custom' ? catalog : undefined
+}
+
+// Public server-default metadata is not a BYOK binding. Keep 1P auth, selection
+// and rendering; only replace model-family guesses with the owner's exact facts.
+export function currentDarbDefaultModel(model: string) {
+  const catalog = currentDarbCatalog()
+  if (catalog?.mode !== 'default') return undefined
+  const exact = catalog.models.find(row => row.id === model)
+  if (exact) return exact
+  // The native 1P CLI appends this opt-in suffix locally. It is not a different
+  // owner catalog ID and must not discard confirmed limits or imply a capacity.
+  // Never normalize opaque custom-provider IDs here.
+  const canonical = /^(claude-[a-z0-9][a-z0-9._-]*)\[1m\]$/.exec(model)?.[1]
+  return canonical ? catalog.models.find(row => row.id === canonical) : undefined
+}
+
+export function getDarbEffectiveNativeParameters(model: string) {
+  return getDarbNativeParameters(model) ?? currentDarbDefaultModel(model)?.native_parameters
 }
 
 export function darbDefaultModel(): string {

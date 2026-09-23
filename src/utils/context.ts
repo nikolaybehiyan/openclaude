@@ -10,7 +10,7 @@ import {
 import { getCanonicalName } from './model/model.js'
 import { getModelCapability } from './model/modelCapabilities.js'
 import { getDarbFrozenModelContext } from './model/darbFrozenContext.js'
-import { currentDarbCustomCatalog, isDarbCustomInference } from './model/darbModels.js'
+import { currentDarbCustomCatalog, currentDarbDefaultModel, isDarbCustomInference } from './model/darbModels.js'
 import type { DarbModelBinding } from './model/darbCatalog.js'
 
 type ManagedModelCapacity = Pick<DarbModelBinding, 'supports_1m' | 'context_window_tokens' | 'max_context_tokens' | 'max_input_tokens' | 'max_output_tokens'>
@@ -19,6 +19,10 @@ const UNKNOWN_MANAGED_CAPACITY: ManagedModelCapacity = Object.freeze({ supports_
 function managedModelContext(model: string): ManagedModelCapacity | undefined {
   const frozen = getDarbFrozenModelContext(model)
   if (frozen) return frozen
+  const serverDefault = currentDarbDefaultModel(model)
+  if (serverDefault?.max_context_tokens !== undefined) return {
+    ...serverDefault, supports_1m: Number(serverDefault.max_input_tokens) >= 1000000, context_window_tokens: 0,
+  }
   if (!isDarbCustomInference()) return undefined
   // Budget readers also run while /model refresh clears the catalog, or a
   // saved selection is no longer available. They are not authorization checks:

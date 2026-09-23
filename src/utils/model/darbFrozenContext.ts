@@ -24,7 +24,7 @@ export type DarbFrozenModelContext = Readonly<{
   native_parameters?: DarbNativeParameters
 }>
 
-function nativeParameters(input: unknown): DarbNativeParameters | undefined {
+export function parseDarbNativeParameters(input: unknown): DarbNativeParameters | undefined {
   if (input === undefined) return undefined
   const v = input as DarbNativeParameters
   const validList = (value: unknown, allowed: string[]) => Array.isArray(value) &&
@@ -45,7 +45,7 @@ function identifier(value: unknown): value is string {
 function parseBinding(input: unknown): DarbFrozenModelContext {
   const v = input as Record<string, unknown> | null
   const serverDefault = v?.mode === 'default'
-  const parameters = nativeParameters(v?.native_parameters)
+  const parameters = parseDarbNativeParameters(v?.native_parameters)
   if (parameters && !serverDefault) throw new Error('Darb native parameters require a server default binding')
   const validRoute = serverDefault
     ? v.connection_id === undefined && v.connection_revision === undefined &&

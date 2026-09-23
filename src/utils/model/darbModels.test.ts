@@ -23,6 +23,7 @@ const { getAvailableEffortLevels, modelSupportsEffort, modelSupportsMaxEffort } 
 const { modelSupportsThinking, modelSupportsAdaptiveThinking } = await import('../thinking.js')
 const { getAgentModel, getAgentModelOptions } = await import('./agent.js')
 const { setMainLoopModelOverride } = await import('../../bootstrap/state.js')
+const { getContextWindowForModel, getKnownDarbModelInputCapacity, getKnownDarbModelOutputCapacity } = await import('../context.js')
 
 function install(id = 'Vendor/DeepSeek-V3[1m]', status = 'ready') {
   const scope = managed.darbModelScope()!
@@ -62,6 +63,25 @@ afterAll(() => {
 })
 
 describe('Darb CLI model consumers', () => {
+  test('default owner metadata updates budgets and native controls without entering BYOK mode', () => {
+    const scope=managed.darbModelScope()!, version=managed.darbCatalogSession.begin(scope)
+    managed.darbCatalogSession.complete(scope,version,{configuration_mode:'default',has_more:false,data:[{
+      id:'claude-sonnet-4-6',type:'model',display_name:'GLM-5.3',
+      max_context_tokens:1048576,max_input_tokens:1048576,max_output_tokens:131072,
+      native_parameters:{version:1,thinking_types:['enabled'],effort_values:['low','high','max']},
+    }]})
+    expect(managed.isDarbCustomInference()).toBe(false)
+    expect(getContextWindowForModel('claude-sonnet-4-6')).toBe(1048576)
+    expect(getKnownDarbModelInputCapacity('claude-sonnet-4-6')).toBe(1048576)
+    expect(getKnownDarbModelOutputCapacity('claude-sonnet-4-6')).toBe(131072)
+    expect(modelSupportsAdaptiveThinking('claude-sonnet-4-6')).toBe(false)
+    expect(getAvailableEffortLevels('claude-sonnet-4-6')).toEqual(['low','high','max'])
+    expect(getContextWindowForModel('claude-sonnet-4-6[1m]')).toBe(1048576)
+    expect(getAvailableEffortLevels('claude-sonnet-4-6[1m]')).toEqual(['low','high','max'])
+    expect(managed.currentDarbDefaultModel('claude-sonnet-4-6[1m]-other')).toBeUndefined()
+    config.oauthAccount.organizationUuid='org-B'
+    expect(managed.currentDarbDefaultModel('claude-sonnet-4-6')).toBeUndefined()
+  })
   test('changed catalog allows selection candidates without authorizing inference or agents', () => {
     install('Vendor/Exact','selection_required')
     expect(managed.requireDarbModelCandidate('Vendor/Exact').id).toBe('Vendor/Exact')

@@ -1,4 +1,5 @@
 import type { ClientOptions } from '@anthropic-ai/sdk'
+import { parseDarbNativeParameters, type DarbNativeParameters } from './darbFrozenContext.js'
 import { parseDarbModelControls, parseDarbNativeThinking, parseDarbThinkingOptions, validateDarbNativeThinking, type DarbModelControls, type DarbNativeThinking } from './darbModelControls.js'
 
 type DarbFetch = NonNullable<ClientOptions['fetch']>
@@ -21,7 +22,11 @@ export type DarbModelBinding = DarbModelControls & Readonly<{
   max_output_tokens?: number
 }>
 
-export type DarbDefaultModel = Readonly<{ id: string; display_name: string; type: 'model'; created_at?: string }>
+export type DarbDefaultModel = Readonly<{
+  id: string; display_name: string; type: 'model'; created_at?: string
+  max_context_tokens?: number; max_input_tokens?: number; max_output_tokens?: number
+  native_parameters?: DarbNativeParameters
+}>
 
 export type DarbCatalog = Readonly<{
   mode: 'custom'
@@ -69,7 +74,17 @@ export function parseDarbCatalog(payload: unknown): DarbCatalog {
           (row.created_at !== undefined && !text(row.created_at, 128))) {
         throw new Error('Invalid Darb default model catalog')
       }
+      const capacity = ['max_context_tokens', 'max_input_tokens', 'max_output_tokens'] as const
+      const hasCapacity = capacity.some(key => row[key] !== undefined)
+      if (hasCapacity && (capacity.some(key => !Number.isSafeInteger(row[key]) || Number(row[key]) <= 0) ||
+          Number(row.max_input_tokens) > Number(row.max_context_tokens) || Number(row.max_output_tokens) > Number(row.max_context_tokens))) {
+        throw new Error('Invalid Darb default model capacity')
+      }
+      const native = parseDarbNativeParameters(row.native_parameters)
+      if (native && !hasCapacity) throw new Error('Invalid Darb default model capacity')
       return Object.freeze({ id: row.id, display_name: row.display_name, type: 'model' as const,
+        ...(hasCapacity ? {max_context_tokens: row.max_context_tokens as number, max_input_tokens: row.max_input_tokens as number, max_output_tokens: row.max_output_tokens as number} : {}),
+        ...(native ? {native_parameters: native} : {}),
         ...(row.created_at !== undefined ? { created_at: row.created_at as string } : {}) })
     })
     if (new Set(models.map(row => row.id)).size !== models.length) throw new Error('Invalid Darb default model catalog')
