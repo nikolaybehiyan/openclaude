@@ -8,6 +8,10 @@ import vm from 'node:vm';
 import {createRequire} from 'node:module';
 import path from 'node:path';
 import {applyNativeReasoningFlags, findUltracodeKeyword, workflowAvailability, workflowsEnabled} from '../src/utils/ultracodePolicy.ts';
+import * as acorn from 'acorn';
+import * as walk from 'acorn-walk';
+import {parseWorkflowScript} from '../src/tools/WorkflowTool/scriptParser.ts';
+import {rewriteWorkflowAsync, compileWorkflowScript} from '../src/tools/WorkflowTool/compiler.ts';
 
 const [binaryPath, parserRoot] = process.argv.slice(2);
 if (!binaryPath || !parserRoot) throw Error('Usage: bun scripts/verify-claude-code-226-ultracode.mjs <official-2.1.226-darwin-arm64> <babel-package-root>');
@@ -74,4 +78,41 @@ for (const initial of [{}, {effortValue: 'high'}, {effortValue: 'xhigh', ultraco
   assert.deepEqual(clone(applyNativeReasoningFlags(initial, incoming, parse)), clone(state));
   cases++;
 }
-console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state; NOT workflow executor or full parity'}, null, 2));
+const scriptContext = vm.createContext({Error, SyntaxError, bHo: () => acorn, Rha: () => walk, uy: '__wRg$',
+  KD: 524288, oFs: 80, kgy: new Set(['__proto__', 'constructor', 'prototype']), sg: (text, count) => text.repeat(count),
+  uZo: vm, Te: () => {}, fe: () => {}, Lze: message => Error(message)}, {codeGeneration: {strings: true, wasm: false}});
+// Only compiler/parser declarations run here; generated scripts are inspected
+// and compared, never run with a host capability or a user-provided body.
+vm.runInContext(['pP', 'Pgy', 'Zfd', 'Qfd', 'Ogy', 'Dgy', 'Hgy', 'Igy', 'xgy', 'jBb', 'Fwt'].map(declaration).join('\n'), scriptContext);
+const metas = ["name:'n',description:'d'", "name:'',description:'d'", "name:2,description:'d'", "name:'n'", "name:'n',description:''",
+  "name:'n',description:'d',phases:[null,{}, {title:'',detail:3,model:'m'}]", "name:`n`,description:'d',title:'',whenToUse:''",
+  "name:'n',description:'d',x:[1,-2,null,{a:'b'}]", "name:run(),description:'d'", "get name(){return 'n'},description:'d'",
+  "name:'n',description:'d',...extra", "['name']:'n',description:'d'", "name:'n',description:'d',__proto__:{}",
+  "name:'n',description:'d',x:{constructor:'x'}", "name:'n',description:'d',x:[,1]", "name:`${run()}`,description:'d'",
+  "name:'n',description:'d',x:undefined", "name:'n',description:'d',x:+1", "name:'n',description:'d',x:[...a]"];
+for (const meta of metas) for (const before of ['', '// comment\n', ';', "'use strict';"]) {
+  const input = before + `export const meta={${meta}};\nreturn 42`;
+  assert.deepEqual(clone(parseWorkflowScript(input)), clone(scriptContext.pP(input)), input); cases++;
+}
+for (const input of ['', ' '.repeat(524289), 'export let meta={name:"n",description:"d"}',
+  'export const meta={name:"n",description:"d"};const x: number=1']) {
+  assert.deepEqual(clone(parseWorkflowScript(input)), clone(scriptContext.pP(input))); cases++;
+}
+const bodies = ['return 42', 'const f=async x=>x;return await f(2)', 'async function f(){return await 2};return f()',
+  'function f(){return 1}; return f()', 'async function* f(){yield await 2;yield* [1,2];return 3};return f()',
+  'let n=0;for await(const x of [1,2])n+=x;return n', 'return (async()=>await 1)()', 'return await (async()=>1)()',
+  'const __wRg$evil=1', "return import('node:fs')", 'with({}){}', 'const x: number=1', 'const f=async()=>({a:1});return f()',
+  'return await await 42', 'for await(const x of (async function*(){yield 1})()){if(x)break};return 0'];
+for (const input of bodies) {
+  const ours = compileWorkflowScript(input), theirs = scriptContext.Fwt(input);
+  assert.equal(ours.ok, theirs.ok, input);
+  if (ours.ok) {
+    assert.equal(rewriteWorkflowAsync(input), scriptContext.jBb(input), input);
+    const emptyContext = () => vm.createContext({}, {codeGeneration: {strings: false, wasm: false}});
+    assert.deepEqual(clone(await ours.vmScript.runInContext(emptyContext(), {timeout: 100})),
+      clone(await theirs.vmScript.runInContext(emptyContext(), {timeout: 100})), input);
+  }
+  // Parser errors depend on the compile-validation realm; both must refuse.
+  cases++;
+}
+console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, workflow metadata and async rewrite; NOT workflow executor or full parity'}, null, 2));

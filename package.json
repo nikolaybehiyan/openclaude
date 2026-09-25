@@ -93,6 +93,8 @@
     "@opentelemetry/sdk-trace-node": "2.6.1",
     "@opentelemetry/semantic-conventions": "1.40.0",
     "@vscode/ripgrep": "^1.17.1",
+    "acorn": "8.15.0",
+    "acorn-walk": "8.3.4",
     "ajv": "8.18.0",
     "auto-bind": "5.0.1",
     "axios": "1.15.0",
