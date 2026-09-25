@@ -1,6 +1,6 @@
 import {createContext, runInContext, type Script} from 'node:vm'
 import {hardenWorkflowContext, createWorkflowVMBridge, type WorkflowVMBridge, type WorkflowVMFunction} from './vmBoundary.ts'
-import {createWorkflowTimers, wrapWorkflowHostAsync, wrapWorkflowHostSync} from './hostBoundary.ts'
+import {createWorkflowTimers, workflowHostError, wrapWorkflowHostAsync, wrapWorkflowHostSync} from './hostBoundary.ts'
 
 export interface WorkflowBudget {total?: number | null; getTurnSpent(): number}
 export interface WorkflowHooks {
@@ -69,15 +69,17 @@ export async function executeWorkflowVM(script: Script, hooks: WorkflowHooks, op
 } = {}): Promise<WorkflowVMResult> {
   const started = Date.now(), logs: string[] = []
   const record = (message: string) => {if (logs.length < 1000) logs.push(message); options.onLog?.(message)}
-  let bridge: WorkflowVMBridge
+  let bridge: WorkflowVMBridge | undefined
   const timers = createWorkflowTimers(options.signal)
+  let removeAbort: (()=>void) | undefined
+  try {
   const budget = Object.freeze({__proto__: null, total:options.budget?.total ?? null,
     spent:wrapWorkflowHostSync(()=>options.budget?.getTurnSpent() ?? 0),
     remaining:wrapWorkflowHostSync(()=>options.budget?.total == null ? Infinity : Math.max(0,options.budget.total-options.budget.getTurnSpent()))})
   const context = createContext({__proto__: null,
     log:wrapWorkflowHostSync((value: unknown)=>{hooks.log(value);record(inertString(value))}),
     phase:wrapWorkflowHostSync(hooks.phase),
-    console:workflowConsole(record,()=>bridge),budget,
+    console:workflowConsole(record,()=>{if (!bridge) throw Error('Workflow boundary is not initialized');return bridge}),budget,
     setTimeout:timers.setTimeout,clearTimeout:timers.clearTimeout,
   }, {codeGeneration:{strings:false,wasm:false}})
   hardenWorkflowContext(context)
@@ -87,8 +89,6 @@ export async function executeWorkflowVM(script: Script, hooks: WorkflowHooks, op
     Object.defineProperty(context,name,{value:bridge.wrapAsync(wrapWorkflowHostAsync(hooks[name])),writable:true,enumerable:true,configurable:true})
   }
   hooks.bindVMAwait(bridge)
-  let removeAbort: (()=>void) | undefined
-  try {
     const args = options.args === undefined ? undefined : JSON.stringify(options.args)
     Object.defineProperty(context,'args',{value:args === undefined ? undefined : runInContext(`JSON.parse(${JSON.stringify(args)})`,context),writable:true,enumerable:true,configurable:true})
     if (options.signal?.aborted) throw Error('Workflow aborted')
@@ -114,7 +114,7 @@ export async function executeWorkflowVM(script: Script, hooks: WorkflowHooks, op
     JSON.stringify(result)
     return {result,agentCount:hooks.getAgentCount(),logs,failures:hooks.getFailures(),durationMs:Date.now()-started}
   } catch (error) {
-    const fields = bridge.readError(error)
+    const fields = bridge ? bridge.readError(error) : workflowHostError(error)
     let text = fields.message ? `${fields.name}: ${fields.message}` : fields.name
     if (fields.stack) {
       const lines = fields.stack.split('\n'), frames = lines.slice(1).filter(line=>line.trim().startsWith('at '))

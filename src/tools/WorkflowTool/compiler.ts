@@ -20,7 +20,7 @@ export function rewriteWorkflowAsync(script: string): string {
     if (current.type === 'ImportExpression') throw SyntaxError('import() is not available in workflow scripts.')
   })
   const edits: [number, string][] = []
-  const wrap = (node: Node | null, helper = prefix, awaitResult = false) => {
+  const wrap = (node: Node | null | undefined, helper = prefix, awaitResult = false) => {
     if (node) edits.push([node.start, ` ${awaitResult ? 'await ' : ''}${helper}((`], [node.end, '))'])
   }
   function enclosingFunction(parents: Node[]): AST | undefined {

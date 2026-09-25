@@ -1,5 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import {getEventListeners} from 'node:events'
 import {compileWorkflowScript} from './compiler.ts'
 import {executeWorkflowVM, type WorkflowHooks} from './vmRunner.ts'
 import type {WorkflowVMBridge} from './vmBoundary.ts'
@@ -57,4 +58,16 @@ test('budget is read-only and console logging is capped without escaping guest v
   assert.deepEqual(result.result,[100,25,75])
   assert.equal(result.logs.length,1000)
   assert.equal(result.logs[0],'[warn] {"safe":1}')
+})
+
+test('setup failure releases the parent abort listener before any guest executes',async()=>{
+  const controller=new AbortController(),compiled=compileWorkflowScript('throw Error("guest must not run")')
+  assert.equal(compiled.ok,true)
+  if(!compiled.ok)throw Error(compiled.error)
+  const before=getEventListeners(controller.signal,'abort').length
+  const hooks:WorkflowHooks={agent:()=>{},parallel:()=>{},pipeline:()=>{},workflow:()=>{},log:()=>{},phase:()=>{},
+    bindVMAwait:()=>{throw Error('setup failed')},getAgentCount:()=>0,getFailures:()=>[]}
+  const result=await executeWorkflowVM(compiled.vmScript,hooks,{signal:controller.signal})
+  assert.match(result.error!,/setup failed/)
+  assert.equal(getEventListeners(controller.signal,'abort').length,before)
 })
