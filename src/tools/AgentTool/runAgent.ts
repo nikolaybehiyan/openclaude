@@ -57,6 +57,9 @@ import { clearSessionHooks } from '../../utils/hooks/sessionHooks.js'
 import { executeSubagentStartHooks } from '../../utils/hooks.js'
 import { createUserMessage } from '../../utils/messages.js'
 import { getAgentModel } from '../../utils/model/agent.js'
+import { isModelAllowed } from '../../utils/model/modelAllowlist.js'
+import { getDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
+import { isDarbCustomInference } from '../../utils/model/darbModels.js'
 import { resolveAgentProvider } from '../../services/api/agentRouting.js'
 import { getInitialSettings } from '../../utils/settings/settings.js'
 import type { ModelAlias } from '../../utils/model/aliases.js'
@@ -274,6 +277,7 @@ export async function* runAgent({
   description,
   transcriptSubdir,
   onQueryProgress,
+  onModelRestricted,
   agentName,
 }: {
   agentDefinition: AgentDefinition
@@ -339,6 +343,7 @@ export async function* runAgent({
    * during long single-block streams (e.g. thinking) where no assistant
    * message is yielded for >60s. */
   onQueryProgress?: () => void
+  onModelRestricted?: (requested: string, resolved: string) => void
   /** Agent name (team member name) for routing resolution */
   agentName?: string
 }): AsyncGenerator<Message, void> {
@@ -352,20 +357,30 @@ export async function* runAgent({
   const rootSetAppState =
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState
 
-  const resolvedAgentModel = getAgentModel(
-    agentDefinition.model,
-    toolUseContext.options.mainLoopModel,
-    model,
-    permissionMode,
-  )
-
   // Resolve per-agent provider routing from settings
   const providerOverride = resolveAgentProvider(
     agentName,
     agentDefinition.agentType,
     getInitialSettings(),
   )
-  const effectiveModel = providerOverride ? providerOverride.model : resolvedAgentModel
+  if (providerOverride) {
+    // A configured route is an exact model/endpoint binding. Never send a
+    // fallback model to an unrelated provider endpoint or evade policy here.
+    if (getDarbFrozenModelContext() || isDarbCustomInference()) {
+      throw new Error('Configured agent routing cannot override the selected Darb model and connection')
+    }
+    if (!isModelAllowed(providerOverride.model)) {
+      throw new Error(`Configured agent route model "${providerOverride.model}" is restricted by the availableModels policy`)
+    }
+  }
+  const resolvedAgentModel = providerOverride?.model ?? getAgentModel(
+    agentDefinition.model,
+    toolUseContext.options.mainLoopModel,
+    model,
+    permissionMode,
+    onModelRestricted,
+  )
+  const effectiveModel = resolvedAgentModel
 
   const agentId = override?.agentId ? override.agentId : createAgentId()
 

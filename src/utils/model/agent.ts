@@ -10,6 +10,9 @@ import {
 import { getAPIProvider, isFirstPartyAnthropicBaseUrl } from './providers.js'
 import { darbModelLabel, darbModelOptions, isDarbCustomInference, requireDarbModel } from './darbModels.js'
 import { getDarbFrozenModelContext } from './darbFrozenContext.js'
+import { isModelAllowed } from './modelAllowlist.js'
+import { getNewestAllowedModelInFamily } from './allowedFamilyFallback.js'
+import { logForDebugging } from '../debug.js'
 
 export const AGENT_MODEL_OPTIONS = [...MODEL_ALIASES, 'inherit'] as const
 export type AgentModelAlias = (typeof AGENT_MODEL_OPTIONS)[number]
@@ -41,18 +44,48 @@ export function getAgentModel(
   parentModel: string,
   toolSpecifiedModel?: string,
   permissionMode?: PermissionMode,
+  onModelRestricted?: (requested: string, resolved: string) => void,
 ): string {
+  const envModel = process.env.CLAUDE_CODE_SUBAGENT_MODEL
+  const envOverride = envModel && envModel !== 'inherit' ? envModel : undefined
+  const selected = envOverride || toolSpecifiedModel || agentModel
+  const requireAllowed = (model: string): string => {
+    if (!isModelAllowed(model)) {
+      throw new Error(`Subagent model "${model}" is restricted by the availableModels policy; no permitted fallback is available`)
+    }
+    return model
+  }
   if (getDarbFrozenModelContext(parentModel)) {
-    const selected = process.env.CLAUDE_CODE_SUBAGENT_MODEL || toolSpecifiedModel || agentModel
-    return getDarbFrozenModelContext(!selected || selected === 'inherit' ? parentModel : selected)!.model
+    return requireAllowed(getDarbFrozenModelContext(!selected || selected === 'inherit' ? parentModel : selected)!.model)
   }
   if (isDarbCustomInference()) {
-    const selected = process.env.CLAUDE_CODE_SUBAGENT_MODEL || toolSpecifiedModel || agentModel
-    return requireDarbModel(!selected || selected === 'inherit' ? parentModel : selected).id
+    return requireAllowed(requireDarbModel(!selected || selected === 'inherit' ? parentModel : selected).id)
   }
-  if (process.env.CLAUDE_CODE_SUBAGENT_MODEL) {
-    return parseUserSpecifiedModel(process.env.CLAUDE_CODE_SUBAGENT_MODEL)
+
+  const inherit = (): string => {
+    const runtime = getRuntimeMainLoopModel({
+      permissionMode: permissionMode ?? 'default',
+      mainLoopModel: parentModel,
+      exceeds200kTokens: false,
+    })
+    if (isModelAllowed(runtime)) return runtime
+    // The parent was already selected; a plan-mode upgrade cannot bypass an
+    // updated restriction. Never fall back to another forbidden model.
+    return requireAllowed(parentModel)
   }
+  const enforce = (requested: string, resolved: string): string => {
+    if (isModelAllowed(resolved)) return resolved
+    const familyFallback = getNewestAllowedModelInFamily(requested)
+    const fallback = familyFallback ?? inherit()
+    logForDebugging(
+      `Subagent model "${requested}" is not in the availableModels allowlist; ${familyFallback ? 'using the newest allowed model in its family' : 'inheriting the parent model'} instead`,
+      { level: 'warn' },
+    )
+    const comparable = (value: string) => value.replace(/\[1m\]$/i, '').toLowerCase()
+    if (comparable(resolved) !== comparable(fallback)) onModelRestricted?.(requested, fallback)
+    return fallback
+  }
+  if (envOverride) return enforce(envOverride, parseUserSpecifiedModel(envOverride))
 
   // Extract Bedrock region prefix from parent model to inherit for subagents.
   // This ensures subagents use the same cross-region inference profile (e.g., "eu.", "us.")
@@ -78,11 +111,12 @@ export function getAgentModel(
 
   // Prioritize tool-specified model if provided
   if (toolSpecifiedModel) {
+    if (toolSpecifiedModel === 'inherit') return inherit()
     if (aliasMatchesParentTier(toolSpecifiedModel, parentModel)) {
-      return parentModel
+      return enforce(toolSpecifiedModel, parentModel)
     }
     const model = parseUserSpecifiedModel(toolSpecifiedModel)
-    return applyParentRegionPrefix(model, toolSpecifiedModel)
+    return enforce(toolSpecifiedModel, applyParentRegionPrefix(model, toolSpecifiedModel))
   }
 
   const agentModelWithExp = agentModel ?? getDefaultSubagentModel()
@@ -100,28 +134,20 @@ export function getAgentModel(
     !checkIsClaudeNativeProvider()
   ) {
     // Non-Claude-native provider → inherit parent model
-    return getRuntimeMainLoopModel({
-      permissionMode: permissionMode ?? 'default',
-      mainLoopModel: parentModel,
-      exceeds200kTokens: false,
-    })
+    return inherit()
   }
 
   if (agentModelWithExp === 'inherit') {
     // Apply runtime model resolution for inherit to get the effective model
     // This ensures agents using 'inherit' get opusplan→Opus resolution in plan mode
-    return getRuntimeMainLoopModel({
-      permissionMode: permissionMode ?? 'default',
-      mainLoopModel: parentModel,
-      exceeds200kTokens: false,
-    })
+    return inherit()
   }
 
   if (aliasMatchesParentTier(agentModelWithExp, parentModel)) {
-    return parentModel
+    return enforce(agentModelWithExp, parentModel)
   }
   const model = parseUserSpecifiedModel(agentModelWithExp)
-  return applyParentRegionPrefix(model, agentModelWithExp)
+  return enforce(agentModelWithExp, applyParentRegionPrefix(model, agentModelWithExp))
 }
 
 /**

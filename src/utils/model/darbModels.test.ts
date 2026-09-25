@@ -57,6 +57,7 @@ beforeEach(() => {
 })
 
 afterAll(() => {
+  settings = {}
   mock.restore()
   for (const key of Object.keys(process.env)) if (!(key in oldEnv)) delete process.env[key]
   Object.assign(process.env, oldEnv)
@@ -239,5 +240,16 @@ describe('Darb CLI model consumers', () => {
     expect(() => getAgentModel('haiku', id)).toThrow('Connect AI')
     expect(getAgentModelOptions().map(row => row.value)).toEqual(['inherit', id])
     expect(model.getRuntimeMainLoopModel({ permissionMode: 'plan', mainLoopModel: id })).toBe(id)
+  })
+
+  test('agent policy cannot substitute a different custom binding or weaken exact allowlist IDs', () => {
+    const id = 'Vendor/DeepSeek-V3[1m]'
+    settings.availableModels = [id]
+    process.env.CLAUDE_CODE_SUBAGENT_MODEL = 'inherit'
+    expect(getAgentModel('haiku', id, id)).toBe(id)
+    expect(() => getAgentModel('inherit', id, 'vendor/deepseek-v3[1m]')).toThrow()
+    settings.availableModels = ['vendor/deepseek-v3[1m]']
+    expect(() => getAgentModel('inherit', id)).toThrow('restricted')
+    delete process.env.CLAUDE_CODE_SUBAGENT_MODEL
   })
 })
