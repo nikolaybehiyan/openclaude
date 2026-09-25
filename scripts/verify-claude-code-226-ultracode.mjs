@@ -14,6 +14,7 @@ import {parseWorkflowScript} from '../src/tools/WorkflowTool/scriptParser.ts';
 import {rewriteWorkflowAsync, compileWorkflowScript} from '../src/tools/WorkflowTool/compiler.ts';
 import {workflowInvocationKey, workflowInvocationOptions, indexWorkflowJournal} from '../src/tools/WorkflowTool/journal.ts';
 import {hardenWorkflowContext, createWorkflowVMBridge} from '../src/tools/WorkflowTool/vmBoundary.ts';
+import {workflowHostError, wrapWorkflowHostSync, wrapWorkflowHostAsync} from '../src/tools/WorkflowTool/hostBoundary.ts';
 
 const [binaryPath, parserRoot] = process.argv.slice(2);
 if (!binaryPath || !parserRoot) throw Error('Usage: bun scripts/verify-claude-code-226-ultracode.mjs <official-2.1.226-darwin-arm64> <babel-package-root>');
@@ -163,4 +164,22 @@ for(const expression of boundaryInputs) {
     cases++;
   }
 }
-console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, metadata, async compiler, journal identity/index, hardened VM value boundary; NOT workflow executor or full parity'}, null, 2));
+boundaryOracle.Bfa = undefined;
+vm.runInContext(['J$b','NAn','Lze','NRe','HXo'].map(declaration).join('\n'),boundaryOracle);
+for(const expression of ['null','undefined','42','"literal"','12n','({name:"Custom",message:"safe",stack:"stack"})',
+  '({get name(){throw 1},message:"safe",get stack(){throw 2}})', 'new Proxy({}, {get(){throw 42}})']) {
+  const input = vm.runInContext(expression,referenceRealm,{timeout:100});
+  const fields = boundaryOracle.NAn(input);
+  const reference = boundaryOracle.Lze(fields.msg,fields.name,fields.stack);
+  const ours = workflowHostError(input);
+  assert.deepEqual({...ours,toString:ours.toString()}, {...reference,toString:reference.toString()});
+  assert.equal(Object.getPrototypeOf(ours),null);assert.equal(Object.getPrototypeOf(ours.toString),null);
+  for(const [ownWrap,refWrap] of [[wrapWorkflowHostSync,boundaryOracle.NRe],[wrapWorkflowHostAsync,boundaryOracle.HXo]]) {
+    const throwing=()=>{throw input};
+    const own=ownWrap(throwing),ref=refWrap(throwing);
+    const failure=async fn=>{try{await fn();throw Error('did not throw')}catch(e){return {name:e.name,message:e.message,stack:e.stack}}};
+    assert.deepEqual(await failure(own),await failure(ref));cases++;
+  }
+  cases++;
+}
+console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, metadata, async compiler, journal identity/index, hardened VM value boundary and host errors; NOT workflow executor or full parity'}, null, 2));
