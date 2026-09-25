@@ -6,7 +6,7 @@ import { afterEach, expect, test } from 'bun:test'
   VERSION: '99.0.0',
   DISPLAY_VERSION: '0.0.0-test',
   BUILD_TIME: new Date().toISOString(),
-  ISSUES_EXPLAINER: 'report the issue at https://github.com/Gitlawb/openclaude/issues',
+  ISSUES_EXPLAINER: 'report the issue at https://ai.darbmind.ru',
   PACKAGE_URL: '@gitlawb/openclaude',
   NATIVE_PACKAGE_URL: undefined,
 }
@@ -20,11 +20,18 @@ import { EXPLORE_AGENT } from '../tools/AgentTool/built-in/exploreAgent.js'
 import { PLAN_AGENT } from '../tools/AgentTool/built-in/planAgent.js'
 import { STATUSLINE_SETUP_AGENT } from '../tools/AgentTool/built-in/statuslineSetup.js'
 import { getCoordinatorSystemPrompt } from '../coordinator/coordinatorMode.js'
+import { getSimplePrompt as getBashPrompt } from '../tools/BashTool/prompt.js'
 
 const originalSimpleEnv = process.env.CLAUDE_CODE_SIMPLE
+const originalGitInstructionsEnv = process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS
 
 afterEach(() => {
   process.env.CLAUDE_CODE_SIMPLE = originalSimpleEnv
+  if (originalGitInstructionsEnv === undefined) {
+    delete process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS
+  } else {
+    process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = originalGitInstructionsEnv
+  }
   clearSystemPromptSections()
 })
 
@@ -61,6 +68,8 @@ test('system prompt model identity updates when model changes mid-session', asyn
   const firstText = firstPrompt.join('\n')
   const secondText = secondPrompt.join('\n')
 
+  expect(firstText).toContain('https://ai.darbmind.ru')
+  expect(firstText).not.toMatch(/gitlawb/i)
   expect(firstText).toContain('You are powered by the model old-test-model.')
   expect(secondText).toContain('You are powered by the model new-test-model.')
   expect(secondText).not.toContain('You are powered by the model old-test-model.')
@@ -108,6 +117,8 @@ test('built-in agent prompts describe Darb instead of Claude Code', () => {
   })
   expect(guidePrompt).toContain('Darb')
   expect(guidePrompt).toContain('You are the Darb guide agent.')
+  expect(guidePrompt).toContain('https://ai.darbmind.ru')
+  expect(guidePrompt).not.toMatch(/gitlawb/i)
   expect(guidePrompt).toContain('**Darb** (the CLI tool)')
   expect(guidePrompt).not.toContain('You are the Claude guide agent.')
   expect(guidePrompt).not.toContain('**Claude Code** (the CLI tool)')
@@ -124,4 +135,11 @@ test('all runtime request identity modes are Darb', () => {
     expect(getCLISyspromptPrefix(options)).toStartWith('You are Darb,')
   }
   expect(getCoordinatorSystemPrompt()).toStartWith('You are Darb,')
+})
+
+test('model-facing git instructions link to Darb', () => {
+  process.env.CLAUDE_CODE_DISABLE_GIT_INSTRUCTIONS = '0'
+  const prompt = getBashPrompt()
+  expect(prompt).toContain('[Darb](https://ai.darbmind.ru)')
+  expect(prompt).not.toMatch(/gitlawb/i)
 })

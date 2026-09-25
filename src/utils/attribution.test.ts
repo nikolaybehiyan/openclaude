@@ -55,12 +55,12 @@ describe('getDefaultCommitCoAuthorName', () => {
     ).toBe('Darb (Claude Opus 4.6)')
   })
 
-  it('uses the OpenClaude email for commit attribution across providers', () => {
+  it('uses the Darb email for commit attribution across providers', () => {
     expect(getDefaultCommitCoAuthorEmail('openai')).toBe(
-      'openclaude@gitlawb.com',
+      'noreply@darbmind.ru',
     )
     expect(getDefaultCommitCoAuthorEmail('firstParty')).toBe(
-      'openclaude@gitlawb.com',
+      'noreply@darbmind.ru',
     )
   })
 })

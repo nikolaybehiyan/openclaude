@@ -40,7 +40,7 @@ function detectStubLeaks(): void {
       throw new Error(
         `SDK init error: "${name}" resolved to a build stub at runtime. ` +
         `This means a TUI/CLI dependency leaked into the SDK bundle. ` +
-        `Report this at https://github.com/Gitlawb/openclaude/issues`,
+        `Report this at https://ai.darbmind.ru`,
       )
     }
   }
