@@ -82,6 +82,36 @@ export function getLastAchievedGoal(messages: readonly Message[]): GoalStatusAtt
   return null
 }
 
+// 2.1.226 roh/HTv: the most recent goal marker wins, including clear/failure.
+export function findGoalToRestore(messages: readonly Message[] | undefined): string | null {
+  for (let index = (messages?.length ?? 0) - 1; index >= 0; index--) {
+    const message = messages![index]
+    if (message?.type !== 'attachment' || message.attachment?.type !== 'goal_status') continue
+    const status = message.attachment as GoalStatusAttachment
+    return status.met || status.failed ? null : status.condition
+  }
+  return null
+}
+
+/** Call after switching session IDs and restoring cost counters. No new user
+ * message is emitted: the retained transcript is the source of this goal. */
+export function restoreGoalFromTranscript(messages: readonly Message[] | undefined,
+  setAppState: ToolUseContext['setAppState']): void {
+  const pending = findGoalToRestore(messages)
+  const condition = pending !== null && goalUnavailableReason() === null ? pending : null
+  const sessionId = getSessionId()
+  setAppState(state => {
+    let next = state
+    const update: ToolUseContext['setAppState'] = fn => { next = fn(next) }
+    // Idempotent restore also removes a stale goal from an earlier resume.
+    for (const hook of getGoalHooks(next, sessionId)) removeSessionHook(update, sessionId, 'Stop', hook)
+    if (condition !== null) addSessionHook(update, sessionId, 'Stop', '', {type: 'prompt', prompt: condition})
+    return {...next, activeGoal: condition === null ? undefined : {
+      condition, iterations: 0, setAt: Date.now(), tokensAtStart: getTotalOutputTokens(),
+    }}
+  })
+}
+
 // HJe/Evo: pending work also defers evaluation; idle peers and long-running
 // remote agents do not keep a goal from being checked indefinitely.
 export function hasGoalBackgroundWork(tasks: Readonly<Record<string, {

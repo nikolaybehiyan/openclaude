@@ -969,7 +969,8 @@ export async function runHeadless(
       message.type !== 'keep_alive' &&
       message.type !== 'streamlined_text' &&
       message.type !== 'streamlined_tool_use_summary' &&
-      message.type !== 'prompt_suggestion'
+      message.type !== 'prompt_suggestion' &&
+      message.type !== 'active_goal'
     ) {
       if (needsFullArray) {
         messages.push(message)

@@ -1,3 +1,4 @@
+import { restoreGoalFromTranscript } from '../utils/goal.js';
 import { c as _c } from "react-compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle';
@@ -1834,7 +1835,7 @@ export function REPL({
       }
 
       // Restore file history and attribution state from the resumed conversation
-      restoreSessionStateFromLog(log, setAppState);
+      restoreSessionStateFromLog(log, setAppState, false);
       if (log.fileHistorySnapshots) {
         void copyFileHistoryForResume(log);
       }
@@ -1945,6 +1946,8 @@ export function REPL({
       if (targetSessionCosts) {
         setCostStateForRestore(targetSessionCosts);
       }
+      // Bind the resumed goal to the target session and its restored counters.
+      restoreGoalFromTranscript(messages, setAppState);
 
       // Reconstruct replacement state for the resumed session. Runs after
       // setSessionId so any NEW replacements post-resume write to the

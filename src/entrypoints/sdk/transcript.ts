@@ -1,3 +1,4 @@
+import { withTrailingGoalStatuses } from '../../utils/goalTranscript.js'
 /**
  * Transcript chain utilities for SDK session loading.
  *
@@ -137,6 +138,7 @@ export function applyPreservedSegmentRelinks(
 export function buildConversationChain(
   byUuid: Map<string, JsonlEntry & { parentUuid?: string | null }>,
   leaf: JsonlEntry & { parentUuid?: string | null },
+  includeTrailingGoalStatuses = true,
 ): (JsonlEntry & { parentUuid?: string | null })[] {
   const chain: (JsonlEntry & { parentUuid?: string | null })[] = []
   const seen = new Set<string>()
@@ -148,7 +150,7 @@ export function buildConversationChain(
     current = current.parentUuid ? byUuid.get(current.parentUuid) : undefined
   }
   chain.reverse()
-  return chain
+  return includeTrailingGoalStatuses ? withTrailingGoalStatuses(byUuid, chain) : chain
 }
 
 // ============================================================================
@@ -169,4 +171,31 @@ export function stripExtraFields(
       const { isSidechain, parentUuid, logicalParentUuid, ...rest } = m as Record<string, unknown> & { isSidechain?: boolean; parentUuid?: string | null; logicalParentUuid?: string | null }
       return rest
     })
+}
+/** Metadata children do not erase their user/assistant ancestor as a candidate.
+ * Mark every conversational ancestor of each terminal chain, then select the
+ * newest leaf. A separate terminal goal marker stays in that selected branch. */
+export function latestConversationLeaf(byUuid: Map<string, JsonlEntry & {parentUuid?: string | null}>): (JsonlEntry & {parentUuid?: string | null}) | undefined {
+  const ancestors = new Set<string>()
+  for (const entry of byUuid.values()) {
+    if (entry.type !== 'user' && entry.type !== 'assistant') continue
+    const seen = new Set<string>([entry.uuid!])
+    let parent = entry.parentUuid
+    while (parent && !seen.has(parent)) {
+      seen.add(parent)
+      const value = byUuid.get(parent)
+      if (!value) break
+      if (value.type === 'user' || value.type === 'assistant') { ancestors.add(parent); break }
+      parent = value.parentUuid
+    }
+  }
+  let leaf: (JsonlEntry & {parentUuid?: string | null}) | undefined
+  let best = -Infinity
+  for (const entry of byUuid.values()) {
+    if ((entry.type !== 'user' && entry.type !== 'assistant') || ancestors.has(entry.uuid!)) continue
+    const parsed = Date.parse(String(entry.timestamp ?? ''))
+    const timestamp = Number.isFinite(parsed) ? parsed : 0
+    if (timestamp >= best) { leaf = entry; best = timestamp }
+  }
+  return leaf
 }

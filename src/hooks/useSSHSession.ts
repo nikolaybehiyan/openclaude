@@ -11,6 +11,8 @@
 
 import { randomUUID } from 'crypto'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useSetAppState } from '../state/AppState.js'
+import { createRemoteGoalController } from '../commands/goal/remote.js'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
 import {
   createSyntheticAssistantMessage,
@@ -54,6 +56,8 @@ export function useSSHSession({
 }: UseSSHSessionProps): UseSSHSessionResult {
   const isRemoteMode = !!session
 
+  const setAppState = useSetAppState()
+  const goalRef = useRef<ReturnType<typeof createRemoteGoalController> | null>(null)
   const managerRef = useRef<SSHSessionManager | null>(null)
   const hasReceivedInitRef = useRef(false)
   const isConnectedRef = useRef(false)
@@ -69,8 +73,12 @@ export function useSSHSession({
     hasReceivedInitRef.current = false
     logForDebugging('[useSSHSession] wiring SSH session manager')
 
+    const goal = createRemoteGoalController(setAppState)
+    goal.clear()
+    goalRef.current = goal
     const manager = session.createManager({
       onMessage: sdkMessage => {
+        if (goal.receive(sdkMessage)) return
         if (isSessionEndMessage(sdkMessage)) {
           setIsLoading(false)
         }
@@ -160,6 +168,7 @@ export function useSSHSession({
         isConnectedRef.current = true
       },
       onReconnecting: (attempt, max) => {
+        goal.clear()
         logForDebugging(
           `[useSSHSession] ssh dropped, reconnecting (${attempt}/${max})`,
         )
@@ -180,6 +189,7 @@ export function useSSHSession({
         setMessages(prev => [...prev, msg])
       },
       onDisconnected: () => {
+        goal.clear()
         logForDebugging('[useSSHSession] ssh process exited (giving up)')
         const stderr = session.getStderrTail().trim()
         const connected = isConnectedRef.current
@@ -207,11 +217,13 @@ export function useSSHSession({
 
     return () => {
       logForDebugging('[useSSHSession] cleanup')
+      goal.dispose()
+      if (goalRef.current === goal) goalRef.current = null
       manager.disconnect()
       session.proxy.stop()
       managerRef.current = null
     }
-  }, [session, setMessages, setIsLoading, setToolUseConfirmQueue])
+  }, [session, setAppState, setMessages, setIsLoading, setToolUseConfirmQueue])
 
   const sendMessage = useCallback(
     async (content: RemoteMessageContent): Promise<boolean> => {
@@ -229,6 +241,8 @@ export function useSSHSession({
   }, [setIsLoading])
 
   const disconnect = useCallback(() => {
+    goalRef.current?.dispose()
+    goalRef.current = null
     managerRef.current?.disconnect()
     managerRef.current = null
     isConnectedRef.current = false

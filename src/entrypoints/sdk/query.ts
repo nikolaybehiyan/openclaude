@@ -1,3 +1,4 @@
+import { restoreGoalFromTranscript } from '../../utils/goal.js'
 /**
  * Query API for the SDK.
  *
@@ -78,6 +79,7 @@ import {
   findLastCompactBoundary,
   applyPreservedSegmentRelinks,
   buildConversationChain,
+  latestConversationLeaf,
   stripExtraFields,
 } from './transcript.js'
 import { hydrateToolProgressOutput } from './toolProgress.js'
@@ -339,24 +341,7 @@ async function loadAndInjectSessionMessages(
       throw new Error(`resumeSessionAt ${upToUuid} not found in session ${sessionId}`)
     }
   } else {
-    // Find latest user/assistant leaf: highest timestamp among user/assistant entries
-    // that are not a parent of another entry
-    const parentUuids = new Set<string>()
-    for (const e of byUuid.values()) {
-      if (e.parentUuid) parentUuids.add(e.parentUuid)
-    }
-    let bestTs = -1
-    for (const e of byUuid.values()) {
-      // Only consider user/assistant for leaf (not system compact_boundary)
-      if (e.type !== 'user' && e.type !== 'assistant') continue
-      // A leaf is an entry that no other entry references as parent
-      if (parentUuids.has(e.uuid!)) continue
-      const ts = e.timestamp ? new Date(e.timestamp as string).getTime() : 0
-      if (ts >= bestTs) {
-        bestTs = ts
-        leaf = e
-      }
-    }
+    leaf = latestConversationLeaf(byUuid)
   }
 
   if (!leaf) {
@@ -364,7 +349,7 @@ async function loadAndInjectSessionMessages(
   }
 
   // Step 5: Build conversation chain and strip internal fields
-  const chain = buildConversationChain(byUuid, leaf)
+  const chain = buildConversationChain(byUuid, leaf, !upToUuid)
   const messages = stripExtraFields(chain)
 
   if (messages.length > 0) {
@@ -629,6 +614,7 @@ class QueryImpl implements Query {
             self._sessionId = effectiveSessionId
             sdkContext.sessionId = effectiveSessionId as SessionId
             sdkContext.sessionProjectDir = resolvedTranscriptDir
+            restoreGoalFromTranscript(self.engine.getMessages(), update => self.appStateStore.setState(update))
 
             // Submit to engine
             if (typeof self.prompt === 'string') {

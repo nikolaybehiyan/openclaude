@@ -260,6 +260,10 @@ export function convertSDKMessage(
       logForDebugging('[sdkMessageAdapter] Ignoring tool_use_summary message')
       return { type: 'ignored' }
 
+    case 'active_goal':
+      // State event consumed by the remote controller, never a chat message.
+      return { type: 'ignored' }
+
     case 'rate_limit_event':
       // Rate limit events are SDK-only events, not displayed in REPL
       logForDebugging('[sdkMessageAdapter] Ignoring rate_limit_event message')

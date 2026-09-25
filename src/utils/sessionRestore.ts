@@ -1,3 +1,4 @@
+import { restoreGoalFromTranscript } from './goal.js'
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
 import { dirname } from 'path'
@@ -102,7 +103,9 @@ function extractTodosFromTranscript(messages: Message[]): TodoList {
 export function restoreSessionStateFromLog(
   result: ResumeResult,
   setAppState: (f: (prev: AppState) => AppState) => void,
+  restoreGoal = true,
 ): void {
+  if (restoreGoal) restoreGoalFromTranscript(result.messages, setAppState)
   const resumedModel = restoreDarbModelPreference(result)
   if (resumedModel) setAppState(prev => ({ ...prev, mainLoopModel: resumedModel, mainLoopModelForSession: null }))
   // Restore file history state
@@ -544,6 +547,15 @@ export async function processResumedConversation(
   )
   const resumedModel = restoreDarbModelPreference(result)
 
+  let initialState: AppState = {
+    ...context.initialState,
+    ...(resumedModel && { mainLoopModel: resumedModel, mainLoopModelForSession: null }),
+    ...(resumedAgentType && { agent: resumedAgentType }),
+    ...(restoredAttribution && { attribution: restoredAttribution }),
+    ...(standaloneAgentContext && { standaloneAgentContext }),
+    agentDefinitions: refreshedAgentDefs,
+  }
+  restoreGoalFromTranscript(result.messages, update => { initialState = update(initialState) })
   return {
     messages: result.messages,
     fileHistorySnapshots: result.fileHistorySnapshots,
@@ -553,13 +565,6 @@ export async function processResumedConversation(
       ? undefined
       : result.agentColor) as AgentColorName | undefined,
     restoredAgentDef: restoredAgent,
-    initialState: {
-      ...context.initialState,
-      ...(resumedModel && { mainLoopModel: resumedModel, mainLoopModelForSession: null }),
-      ...(resumedAgentType && { agent: resumedAgentType }),
-      ...(restoredAttribution && { attribution: restoredAttribution }),
-      ...(standaloneAgentContext && { standaloneAgentContext }),
-      agentDefinitions: refreshedAgentDefs,
-    },
+    initialState,
   }
 }

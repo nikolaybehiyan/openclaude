@@ -1,4 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useSetAppState } from '../state/AppState.js'
+import { createRemoteGoalController } from '../commands/goal/remote.js'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
 import type { RemotePermissionResponse } from '../remote/RemoteSessionManager.js'
 import {
@@ -45,6 +47,8 @@ export function useDirectConnect({
 }: UseDirectConnectProps): UseDirectConnectResult {
   const isRemoteMode = !!config
 
+  const setAppState = useSetAppState()
+  const goalRef = useRef<ReturnType<typeof createRemoteGoalController> | null>(null)
   const managerRef = useRef<DirectConnectSessionManager | null>(null)
   const hasReceivedInitRef = useRef(false)
   const isConnectedRef = useRef(false)
@@ -63,8 +67,12 @@ export function useDirectConnect({
     hasReceivedInitRef.current = false
     logForDebugging(`[useDirectConnect] Connecting to ${config.wsUrl}`)
 
+    const goal = createRemoteGoalController(setAppState, config.sessionId)
+    goal.clear()
+    goalRef.current = goal
     const manager = new DirectConnectSessionManager(config, {
       onMessage: sdkMessage => {
+        if (goal.receive(sdkMessage)) return
         if (isSessionEndMessage(sdkMessage)) {
           setIsLoading(false)
         }
@@ -163,6 +171,7 @@ export function useDirectConnect({
         isConnectedRef.current = true
       },
       onDisconnected: () => {
+        goal.clear()
         logForDebugging('[useDirectConnect] Disconnected')
         if (!isConnectedRef.current) {
           // Never connected — connection failure (e.g. auth rejected)
@@ -187,10 +196,12 @@ export function useDirectConnect({
 
     return () => {
       logForDebugging('[useDirectConnect] Cleanup - disconnecting')
+      goal.dispose()
+      if (goalRef.current === goal) goalRef.current = null
       manager.disconnect()
       managerRef.current = null
     }
-  }, [config, setMessages, setIsLoading, setToolUseConfirmQueue])
+  }, [config, setAppState, setMessages, setIsLoading, setToolUseConfirmQueue])
 
   const sendMessage = useCallback(
     async (content: RemoteMessageContent): Promise<boolean> => {
@@ -215,6 +226,8 @@ export function useDirectConnect({
   }, [setIsLoading])
 
   const disconnect = useCallback(() => {
+    goalRef.current?.dispose()
+    goalRef.current = null
     managerRef.current?.disconnect()
     managerRef.current = null
     isConnectedRef.current = false

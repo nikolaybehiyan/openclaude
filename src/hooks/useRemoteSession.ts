@@ -1,5 +1,4 @@
-import { decodeActiveGoal } from '../commands/goal/wire.js'
-import { SDKActiveGoalMessageSchema } from '../entrypoints/sdk/coreSchemas.js'
+import { createRemoteGoalController } from '../commands/goal/remote.js'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { BoundedUUIDSet } from '../bridge/bridgeMessaging.js'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
@@ -120,6 +119,7 @@ export function useRemoteSession({
   // use a longer timeout and suppress spurious "unresponsive" warnings.
   const isCompactingRef = useRef(false)
 
+  const goalRef = useRef<ReturnType<typeof createRemoteGoalController> | null>(null)
   const managerRef = useRef<RemoteSessionManager | null>(null)
 
   // Track whether we've already updated the session title (for no-initial-prompt sessions)
@@ -155,6 +155,10 @@ export function useRemoteSession({
       `[useRemoteSession] Initializing for session ${config.sessionId}`,
     )
 
+    const goal = createRemoteGoalController(setAppState, config.sessionId)
+    goal.clear()
+    goalRef.current = goal
+    if (config.seedActiveGoal !== undefined) goal.seed(config.seedActiveGoal)
     const manager = new RemoteSessionManager(config, {
       onMessage: sdkMessage => {
         const parts = [`type=${sdkMessage.type}`]
@@ -176,14 +180,7 @@ export function useRemoteSession({
           responseTimeoutRef.current = null
         }
 
-        if (sdkMessage.type === 'active_goal') {
-          const parsed = SDKActiveGoalMessageSchema().safeParse(sdkMessage)
-          if (parsed.success) {
-            const activeGoal = decodeActiveGoal(parsed.data.value)
-            setAppState(prev => ({...prev, activeGoal}))
-          }
-          return
-        }
+        if (goal.receive(sdkMessage)) return
 
         // Echo filter: drop user messages we already added locally before POST.
         // The server and/or worker round-trip our own send back on the WS with
@@ -428,10 +425,24 @@ export function useRemoteSession({
       onConnected: () => {
         logForDebugging('[useRemoteSession] Connected')
         setConnStatus('connected')
+        // Resume and reconnect may miss the original active_goal event.
+        // Fetch state separately from display pagination, without letting
+        // an older response undo a newer live goal/clear.
+        let history: Awaited<ReturnType<typeof import('../assistant/sessionHistory.js')['createHistoryAuthCtx']>>
+        let api: typeof import('../assistant/sessionHistory.js')
+        void goal.refresh({
+          latest: async () => {
+            api = await import('../assistant/sessionHistory.js')
+            history = await api.createHistoryAuthCtx(config.sessionId)
+            return api.fetchLatestEvents(history)
+          },
+          older: cursor => api.fetchOlderEvents(history, cursor),
+        })
       },
       onReconnecting: () => {
         logForDebugging('[useRemoteSession] Reconnecting')
         setConnStatus('reconnecting')
+        goal.clear()
         // WS gap = we may miss task_notification events. Clear rather than
         // drift high forever. Undercounts tasks that span the gap; accepted.
         runningTaskIdsRef.current.clear()
@@ -443,6 +454,7 @@ export function useRemoteSession({
       onDisconnected: () => {
         logForDebugging('[useRemoteSession] Disconnected')
         setConnStatus('disconnected')
+        goal.clear()
         setIsLoading(false)
         runningTaskIdsRef.current.clear()
         writeTaskCount()
@@ -463,10 +475,13 @@ export function useRemoteSession({
         clearTimeout(responseTimeoutRef.current)
         responseTimeoutRef.current = null
       }
+      goal.dispose()
+      if (goalRef.current === goal) goalRef.current = null
       manager.disconnect()
       managerRef.current = null
     }
   }, [
+    setAppState,
     config,
     setMessages,
     setIsLoading,
@@ -595,6 +610,8 @@ export function useRemoteSession({
 
   // Disconnect from the session
   const disconnect = useCallback(() => {
+    goalRef.current?.dispose()
+    goalRef.current = null
     // Clear any pending timeout
     if (responseTimeoutRef.current) {
       clearTimeout(responseTimeoutRef.current)

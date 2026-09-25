@@ -37,6 +37,7 @@ import { categorizeRetryableAPIError } from './services/api/errors.js'
 import type { MCPServerConnection } from './services/mcp/types.js'
 import type { AppState } from './state/AppState.js'
 import { type Tools, type ToolUseContext, toolMatchesName } from './Tool.js'
+import { encodeActiveGoal } from './commands/goal/wire.js'
 import type { AgentDefinition } from './tools/AgentTool/loadAgentsDir.js'
 import { SYNTHETIC_OUTPUT_TOOL_NAME } from './tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import type { Message } from './types/message.js'
@@ -469,6 +470,11 @@ export class QueryEngine {
     const effectiveShouldQuery =
       shouldQuery && options?.shouldQuery !== false
 
+    // SDK hosts do not run print.ts's AppState observer. Publish the state
+    // after local commands (including clear/status-only turns) and resume.
+    yield {type: 'active_goal', value: encodeActiveGoal(getAppState().activeGoal),
+      session_id: getSessionId(), uuid: randomUUID()}
+
     // Push new messages, including user input and any attachments
     this.mutableMessages.push(...messagesFromUserInput)
 
@@ -818,6 +824,8 @@ export class QueryEngine {
       switch (message.type) {
         case 'active_goal':
           setAppState(state => state.activeGoal === message.value ? state : {...state, activeGoal: message.value})
+          yield {type: 'active_goal', value: encodeActiveGoal(message.value),
+            session_id: getSessionId(), uuid: randomUUID()}
           break
         case 'tombstone':
           // Tombstone messages are control signals for removing messages, skip them

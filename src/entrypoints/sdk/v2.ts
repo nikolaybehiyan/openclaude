@@ -1,3 +1,4 @@
+import { restoreGoalFromTranscript } from '../../utils/goal.js'
 /**
  * V2 API for the SDK — persistent sessions and one-shot prompt.
  *
@@ -77,6 +78,7 @@ import {
   findLastCompactBoundary,
   applyPreservedSegmentRelinks,
   buildConversationChain as buildChain,
+  latestConversationLeaf,
   stripExtraFields as stripChainFields,
 } from './transcript.js'
 import { settingsChangeDetector } from '../../utils/settings/changeDetector.js'
@@ -891,6 +893,9 @@ class SDKSessionImpl implements SDKSession {
     this.agentsLoaded = false
     this.engine.setMcpClients(preservedMcpClients)
     this.applyPermissionContextFromOptions()
+    runWithSdkContext({sessionId: this._sessionId as SessionId, sessionProjectDir: this._sessionProjectDir,
+      cwd: this.options.cwd, originalCwd: this.options.cwd}, () =>
+      restoreGoalFromTranscript(this.engine.getMessages(), update => this.appStateStore.setState(update)))
   }
 
   private hasRunningBackgroundTasks(): boolean {
@@ -2150,20 +2155,7 @@ export async function unstable_v2_resumeSession(
     }
 
     if (byUuid.size > 0) {
-      const parentUuids = new Set<string>()
-      for (const e of byUuid.values()) {
-        if (e.parentUuid) parentUuids.add(e.parentUuid)
-      }
-      let leaf: ChainEntry | undefined
-      let bestTs = -1
-      for (const e of byUuid.values()) {
-        // Step 2: Only user/assistant entries can be conversation leaves
-        // System entries (compact_boundary, etc.) are part of the chain but not leaves
-        if (e.type !== 'user' && e.type !== 'assistant') continue
-        if (parentUuids.has(e.uuid!)) continue
-        const ts = e.timestamp ? new Date(e.timestamp as string).getTime() : 0
-        if (ts >= bestTs) { bestTs = ts; leaf = e }
-      }
+      const leaf = latestConversationLeaf(byUuid)
       if (leaf) {
         const chain = buildChain(byUuid, leaf)
         initialMessages = stripChainFields(chain)
@@ -2196,6 +2188,11 @@ export async function unstable_v2_resumeSession(
     session.setSessionProjectDir(transcriptDir)
     switchSession(sessionId as SessionId, transcriptDir)
   }
+
+  runWithSdkContext({sessionId: sessionId as SessionId,
+    sessionProjectDir: resolved ? dirname(resolved.filePath) : sessionProjectDir,
+    cwd: sessionCwd, originalCwd: sessionCwd}, () =>
+    restoreGoalFromTranscript(engine.getMessages(), update => appStateStore.setState(update)))
 
   session.startBackgroundRuntime()
 

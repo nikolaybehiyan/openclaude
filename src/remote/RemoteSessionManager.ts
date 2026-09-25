@@ -1,3 +1,4 @@
+import type { ActiveGoal } from '../utils/goal.js'
 import type { SDKMessage } from '../entrypoints/agentSdkTypes.js'
 import type {
   SDKControlCancelRequest,
@@ -48,6 +49,7 @@ export type RemotePermissionResponse =
     }
 
 export type RemoteSessionConfig = {
+  seedActiveGoal?: ActiveGoal | null
   sessionId: string
   getAccessToken: () => string
   orgUuid: string

@@ -21,6 +21,7 @@ import commitPushPr from './commands/commit-push-pr.js'
 import compact from './commands/compact/index.js'
 import config from './commands/config/index.js'
 import { context, contextNonInteractive } from './commands/context/index.js'
+import { goal, goalNonInteractive } from './commands/goal/index.js'
 import cost from './commands/cost/index.js'
 import diff from './commands/diff/index.js'
 import dream from './commands/dream/index.js'
@@ -295,6 +296,8 @@ const COMMANDS = memoize((): Command[] => [
   designSync,
   context,
   contextNonInteractive,
+  goal,
+  goalNonInteractive,
   cost,
   diff,
   dream,
@@ -683,6 +686,7 @@ export const BRIDGE_SAFE_COMMANDS: Set<Command> = new Set(
   [
     compact, // Shrink context — useful mid-session from a phone
     clear, // Wipe transcript
+    goalNonInteractive, // Session goal control over remote transports
     cost, // Show session cost
     summary, // Summarize conversation
     releaseNotes, // Show changelog

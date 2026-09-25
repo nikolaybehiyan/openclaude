@@ -9,7 +9,7 @@ let restricted = false, managed = false, untrusted = false
 mock.module('./hooks.js', () => ({...hooks, shouldSkipHookDueToTrust: () => untrusted}))
 mock.module('./hooks/hooksConfigSnapshot.js', () => ({...config,
   shouldDisableAllHooksIncludingManaged: () => restricted, shouldAllowManagedHooksOnly: () => managed}))
-const { getGoalHooks, getLastAchievedGoal, hasGoalBackgroundWork, MAX_GOAL_LENGTH } = await import('./goal.js')
+const { getGoalHooks, getLastAchievedGoal, hasGoalBackgroundWork, MAX_GOAL_LENGTH, findGoalToRestore, restoreGoalFromTranscript } = await import('./goal.js')
 const { call } = await import('../commands/goal/goal-noninteractive.js')
 const { goalNonInteractive } = await import('../commands/goal/index.js')
 const { processSlashCommand } = await import('./processUserInput/processSlashCommand.js')
@@ -90,4 +90,29 @@ test('achievement lookup ignores clear sentinels and failed checks; active backg
   expect(hasGoalBackgroundWork({a:{type:'in_process_teammate',status:'running',isIdle:true}})).toBe(false)
   expect(hasGoalBackgroundWork({a:{type:'remote_agent',status:'running',isLongRunning:true}})).toBe(false)
   expect(hasGoalBackgroundWork({a:{type:'monitor_mcp',status:'running'}})).toBe(false)
+})
+
+
+test('resume restores the latest unfinished goal once and terminal markers prevent revival', async () => {
+  const f=fixture()
+  const pending={type:'attachment',attachment:{type:'goal_status',met:false,sentinel:true,condition:'resume goal'}}
+  expect(findGoalToRestore([pending])).toBe('resume goal')
+  restoreGoalFromTranscript([pending],f.context.setAppState)
+  restoreGoalFromTranscript([pending],f.context.setAppState)
+  expect(getGoalHooks(f.state())).toEqual([{type:'prompt',prompt:'resume goal'}])
+  expect(f.state().activeGoal).toMatchObject({condition:'resume goal',iterations:0})
+  expect(f.messages()).toEqual([])
+  for(const status of [{met:true},{met:true,sentinel:true},{met:false,failed:true}]){
+    const history=[pending,{type:'attachment',attachment:{type:'goal_status',condition:'resume goal',...status}}]
+    expect(findGoalToRestore(history)).toBeNull()
+    restoreGoalFromTranscript(history,f.context.setAppState)
+    expect(f.state().activeGoal).toBeUndefined()
+    expect(getGoalHooks(f.state())).toEqual([])
+  }
+  for(const policy of ['restricted','managed','untrusted']){
+    restricted=policy==='restricted';managed=policy==='managed';untrusted=policy==='untrusted'
+    restoreGoalFromTranscript([pending],f.context.setAppState)
+    expect(f.state().activeGoal).toBeUndefined()
+    expect(getGoalHooks(f.state())).toEqual([])
+  }
 })

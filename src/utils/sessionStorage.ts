@@ -1,3 +1,4 @@
+import { withTrailingGoalStatuses } from './goalTranscript.js'
 import { feature } from 'bun:bundle'
 import type { UUID } from 'crypto'
 import type { Dirent } from 'fs'
@@ -2424,7 +2425,7 @@ export function buildConversationChain(
       : undefined
   }
   transcript.reverse()
-  return recoverOrphanedParallelToolResults(messages, transcript, seen)
+  return withTrailingGoalStatuses(messages, recoverOrphanedParallelToolResults(messages, transcript, seen))
 }
 
 /**
@@ -4726,6 +4727,8 @@ export async function loadAllSubagentTranscriptsFromDisk(): Promise<{
 // without awaiting recordTranscript's return value (race-free hint tracking).
 export function isLoggableMessage(m: Message): boolean {
   if (m.type === 'progress') return false
+  // Goal markers are user-visible session state needed by resume, including clear.
+  if (m.type === 'attachment' && m.attachment.type === 'goal_status') return true
   // IMPORTANT: We deliberately filter out most attachments for non-ants because
   // they have sensitive info for training that we don't want exposed to the public.
   // When enabled, we allow hook_additional_context through since it contains
@@ -5025,7 +5028,8 @@ export async function loadAllLogsFromSessionFile(
       trailingMessages.sort((a, b) =>
         a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0,
       )
-      chain.push(...trailingMessages)
+      const included = new Set(chain.map(message => message.uuid))
+      chain.push(...trailingMessages.filter(message => !included.has(message.uuid)))
     }
 
     const firstMessage = chain[0]!
