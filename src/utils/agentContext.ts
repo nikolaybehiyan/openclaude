@@ -25,11 +25,18 @@ import { AsyncLocalStorage } from 'async_hooks'
 import type { AnalyticsMetadata_I_VERIFIED_THIS_IS_NOT_CODE_OR_FILEPATHS } from '../services/analytics/index.js'
 import { isAgentSwarmsEnabled } from './agentSwarmsEnabled.js'
 
-/**
- * Context for subagents (Agent tool agents).
- * Subagents run in-process for quick, delegated tasks.
- */
-export type SubagentContext = {
+/** Identity of the invocation that owns this agent, including Workflow runs. */
+type AgentLineage = {
+  parentAgentId?: string
+  depth?: number
+  workflowRunId?: string
+  workflowName?: string
+  isAsync?: boolean
+  isBackgroundAgent?: boolean
+}
+
+/** Context for in-process subagents (Agent tool agents). */
+export type SubagentContext = AgentLineage & {
   /** The subagent's UUID (from createAgentId()) */
   agentId: string
   /** The team lead's session ID (from CLAUDE_CODE_PARENT_SESSION_ID env var), undefined for main REPL subagents */
@@ -57,7 +64,7 @@ export type SubagentContext = {
  * Context for in-process teammates.
  * Teammates are part of a swarm and have team coordination.
  */
-export type TeammateAgentContext = {
+export type TeammateAgentContext = AgentLineage & {
   /** Full agent ID, e.g., "researcher@my-team" */
   agentId: string
   /** Display name, e.g., "researcher" */

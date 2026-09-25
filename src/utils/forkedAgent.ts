@@ -348,6 +348,9 @@ export type SubagentContextOverrides = {
   agentId?: AgentId
   /** Override the agentType (for subagents with a specific type) */
   agentType?: string
+  agentContext?: ToolUseContext['agentContext']
+  spawnedByWorkflowRunId?: string
+  isBackgroundAgent?: boolean
   /** Override the messages array */
   messages?: Message[]
   /** Override the readFileState (e.g., fresh cache instead of clone) */
@@ -531,6 +534,11 @@ export function createSubagentContext(
     // Generate new agentId for subagents (each subagent should have its own ID)
     agentId: overrides?.agentId ?? createAgentId(),
     agentType: overrides?.agentType,
+    agentContext: overrides?.agentContext ?? parentContext.agentContext,
+    spawnedByWorkflowRunId:
+      overrides?.spawnedByWorkflowRunId ?? parentContext.spawnedByWorkflowRunId,
+    isBackgroundAgent:
+      overrides?.isBackgroundAgent || parentContext.isBackgroundAgent,
 
     // Create new query tracking chain for subagent with incremented depth
     queryTracking: {

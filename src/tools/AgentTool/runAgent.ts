@@ -257,6 +257,10 @@ export async function* runAgent({
   canShowPermissionPrompts,
   forkContextMessages,
   querySource,
+  requiresStructuredOutput,
+  spawnedByWorkflowRunId,
+  spawnedBySkill,
+  spawnedByForkedSkill,
   override,
   model,
   maxTurns,
@@ -282,12 +286,17 @@ export async function* runAgent({
   canShowPermissionPrompts?: boolean
   forkContextMessages?: Message[]
   querySource: QuerySource
+  requiresStructuredOutput?: boolean
+  spawnedByWorkflowRunId?: string
+  spawnedBySkill?: string
+  spawnedByForkedSkill?: boolean
   override?: {
     userContext?: { [k: string]: string }
     systemContext?: { [k: string]: string }
     systemPrompt?: SystemPrompt
     abortController?: AbortController
     agentId?: AgentId
+    agentContext?: ToolUseContext['agentContext']
   }
   model?: string
   maxTurns?: number
@@ -713,6 +722,9 @@ export async function* runAgent({
     // reads undefined and only the message-scan fallback fires — which
     // autocompact defeats by replacing the fork-boilerplate message.
     ...(useExactTools && { querySource }),
+    requiresStructuredOutput,
+    spawnedBySkill,
+    spawnedByForkedSkill,
   }
 
   // Create subagent context using shared helper
@@ -722,6 +734,9 @@ export async function* runAgent({
     options: agentOptions,
     agentId,
     agentType: agentDefinition.agentType,
+    agentContext: override?.agentContext,
+    spawnedByWorkflowRunId,
+    isBackgroundAgent: isAsync,
     messages: initialMessages,
     readFileState: agentReadFileState,
     abortController: agentAbortController,

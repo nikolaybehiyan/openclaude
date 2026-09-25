@@ -84,6 +84,7 @@ import type {
 import type { AgentId } from './types/ids.js'
 import type { DeepImmutable } from './types/utils.js'
 import type { AttributionState } from './utils/commitAttribution.js'
+import type { AgentContext } from './utils/agentContext.js'
 import type { FileHistoryState } from './utils/fileHistory.js'
 import type { Theme, ThemeName } from './utils/theme.js'
 
@@ -183,6 +184,11 @@ export type ToolUseContext = {
     refreshTools?: () => Tools
     /** Per-agent provider override from agentRouting config */
     providerOverride?: { model: string; baseURL: string; apiKey: string }
+    /** Require a successful StructuredOutput tool result for this agent turn. */
+    requiresStructuredOutput?: boolean
+    /** Skill lineage retained when an agent launches another agent/workflow. */
+    spawnedBySkill?: string
+    spawnedByForkedSkill?: boolean
   }
   abortController: AbortController
   readFileState: FileStateCache
@@ -251,6 +257,9 @@ export type ToolUseContext = {
   setConversationId?: (id: UUID) => void
   agentId?: AgentId // Only set for subagents; use getSessionId() for session ID. Hooks use this to distinguish subagent calls.
   agentType?: string // Subagent type name. For the main thread's --agent type, hooks fall back to getMainThreadAgentType().
+  agentContext?: AgentContext
+  spawnedByWorkflowRunId?: string
+  isBackgroundAgent?: boolean
   /** When true, canUseTool must always be called even when hooks auto-approve.
    *  Used by speculation for overlay file path rewriting. */
   requireCanUseTool?: boolean

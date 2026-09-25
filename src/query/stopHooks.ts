@@ -33,7 +33,9 @@ import {
   createSystemMessage,
   createUserInterruptionMessage,
   createUserMessage,
+  hasSuccessfulToolCall,
 } from '../utils/messages.js'
+import { SYNTHETIC_OUTPUT_TOOL_NAME } from '../tools/SyntheticOutputTool/SyntheticOutputTool.js'
 import type { SystemPrompt } from '../utils/systemPromptType.js'
 import { getTaskListId, listTasks } from '../utils/tasks.js'
 import { getAgentName, getTeamName, isTeammate } from '../utils/teammate.js'
@@ -48,7 +50,7 @@ const jobClassifierModule = feature('TEMPLATES')
 
 /* eslint-enable @typescript-eslint/no-require-imports */
 
-import type { QuerySource } from '../constants/querySource.js'
+import { getQueryCategory, type QuerySource } from '../constants/querySource.js'
 import { executeAutoDream } from '../services/autoDream/autoDream.js'
 import { executePromptSuggestion } from '../services/PromptSuggestion/promptSuggestion.js'
 import { isBareMode, isEnvDefinedFalsy } from '../utils/envUtils.js'
@@ -61,6 +63,8 @@ type StopHookResult = {
   blockingErrors: Message[]
   preventContinuation: boolean
 }
+
+const STRUCTURED_OUTPUT_ENFORCE_SENTINEL = '[structured-output-enforce]'
 
 export async function* handleStopHooks(
   messagesForQuery: Message[],
@@ -197,8 +201,50 @@ export async function* handleStopHooks(
     }
   }
 
+  const enforcementMessages: Message[] = []
+  if (
+    toolUseContext.options.requiresStructuredOutput &&
+    getQueryCategory(querySource) !== 'auxiliary'
+  ) {
+    try {
+      const lastUserTurn = messagesForQuery.findLastIndex(
+        message =>
+          message.type === 'user' &&
+          !message.isMeta &&
+          !(
+            Array.isArray(message.message.content) &&
+            message.message.content.some(block => block.type === 'tool_result')
+          ),
+      )
+      const turnMessages = messagesForQuery.slice(lastUserTurn + 1)
+      const succeeded = hasSuccessfulToolCall(
+        [...turnMessages, ...assistantMessages],
+        SYNTHETIC_OUTPUT_TOOL_NAME,
+      )
+      const alreadyNudged = turnMessages.some(
+        message =>
+          message.type === 'user' &&
+          message.isMeta &&
+          typeof message.message.content === 'string' &&
+          message.message.content.includes(STRUCTURED_OUTPUT_ENFORCE_SENTINEL),
+      )
+      if (!succeeded && !alreadyNudged) {
+        const nudge = createUserMessage({
+          content: `${STRUCTURED_OUTPUT_ENFORCE_SENTINEL} You MUST call the ${SYNTHETIC_OUTPUT_TOOL_NAME} tool to complete this request. Call this tool now.`,
+          isMeta: true,
+        })
+        enforcementMessages.push(nudge)
+        yield nudge
+      }
+    } catch (error) {
+      logForDebugging(`StructuredOutput enforcement failed: ${errorMessage(error)}`, {
+        level: 'error',
+      })
+    }
+  }
+
   try {
-    const blockingErrors = []
+    const blockingErrors: Message[] = [...enforcementMessages]
     const appState = toolUseContext.getAppState()
     const permissionMode = appState.toolPermissionContext.mode
 
@@ -493,6 +539,6 @@ export async function* handleStopHooks(
       `Stop hook failed: ${errorMessage(error)}`,
       'warning',
     )
-    return { blockingErrors: [], preventContinuation: false }
+    return { blockingErrors: enforcementMessages, preventContinuation: false }
   }
 }
