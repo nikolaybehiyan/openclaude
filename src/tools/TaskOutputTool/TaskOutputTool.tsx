@@ -6,7 +6,7 @@ import { FallbackToolUseRejectedMessage } from '../../components/FallbackToolUse
 import { MessageResponse } from '../../components/MessageResponse.js';
 import { Box, Text } from '../../ink.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
-import type { TaskType } from '../../Task.js';
+import { isTerminalTaskStatus, type TaskType } from '../../Task.js';
 import type { Tool } from '../../Tool.js';
 import { buildTool, type ToolDef } from '../../Tool.js';
 import type { LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js';
@@ -129,7 +129,7 @@ async function waitForTaskCompletion(taskId: string, getAppState: () => {
     if (!task) {
       return null;
     }
-    if (task.status !== 'running' && task.status !== 'pending') {
+    if (isTerminalTaskStatus(task.status)) {
       return task;
     }
 
@@ -218,7 +218,7 @@ export const TaskOutputTool: Tool<InputSchema, TaskOutputToolOutput> = buildTool
     }
     if (!block) {
       // Non-blocking: return current state
-      if (task.status !== 'running' && task.status !== 'pending') {
+      if (isTerminalTaskStatus(task.status)) {
         // Mark as notified
         updateTaskState(task_id, toolUseContext.setAppState, t => ({
           ...t,
@@ -259,7 +259,7 @@ export const TaskOutputTool: Tool<InputSchema, TaskOutputToolOutput> = buildTool
         }
       };
     }
-    if (completedTask.status === 'running' || completedTask.status === 'pending') {
+    if (!isTerminalTaskStatus(completedTask.status)) {
       return {
         data: {
           retrieval_status: 'timeout' as const,

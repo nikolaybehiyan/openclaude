@@ -367,6 +367,8 @@ export type QueuedCommand = {
    * unified the queue but lost the isolation the dual-queue accidentally had).
    */
   agentId?: AgentId
+  /** Task that owns a completion notification; used to release child-work leases after consumption. */
+  taskId?: string
 }
 
 /**

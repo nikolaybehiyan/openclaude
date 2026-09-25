@@ -3,7 +3,7 @@ import { OUTPUT_FILE_TAG, STATUS_TAG, SUMMARY_TAG, TASK_ID_TAG, TASK_NOTIFICATIO
 import { abortSpeculation } from '../../services/PromptSuggestion/speculation.js';
 import type { AppState } from '../../state/AppState.js';
 import type { SetAppState, Task, TaskStateBase } from '../../Task.js';
-import { createTaskStateBase } from '../../Task.js';
+import { createTaskStateBase, isTerminalTaskStatus } from '../../Task.js';
 import type { Tools } from '../../Tool.js';
 import { findToolByName } from '../../Tool.js';
 import type { AgentToolResult } from '../../tools/AgentTool/agentToolUtils.js';
@@ -145,9 +145,43 @@ export type LocalAgentTaskState = TaskStateBase & {
   // timestamp = hide + GC-eligible after this time. Set at terminal transition
   // and on unselect; cleared on retain.
   evictAfter?: number;
+  // A child workflow can outlive the owner's current turn. Keep the owner
+  // available until its queued child result is consumed or explicitly stopped.
+  keepaliveReasons?: ReadonlySet<string>;
 };
 export function isLocalAgentTask(task: unknown): task is LocalAgentTaskState {
   return typeof task === 'object' && task !== null && 'type' in task && task.type === 'local_agent';
+}
+
+/** Official Yx: completed owners with outstanding child work can be resumed. */
+export function isLocalAgentKeptAlive(task: unknown): task is LocalAgentTaskState {
+  return isLocalAgentTask(task) && task.status === 'completed' && (task.keepaliveReasons?.size ?? 0) > 0;
+}
+
+/** Official Vde/a5, adapted to this producer's AppState registry. */
+export function acquireLocalAgentKeepalive(ownerId: string | undefined, reason: string, setAppState: SetAppState): boolean {
+  if (!ownerId) return false;
+  let acquired = false;
+  updateTaskState<LocalAgentTaskState>(ownerId, setAppState, task => {
+    if (!isLocalAgentTask(task) || task.keepaliveReasons?.has(reason)) return task;
+    acquired = true;
+    return { ...task, keepaliveReasons: new Set(task.keepaliveReasons).add(reason), evictAfter: undefined };
+  });
+  return acquired;
+}
+
+export function releaseLocalAgentKeepalive(ownerId: string | undefined, reason: string, setAppState: SetAppState): boolean {
+  if (!ownerId) return false;
+  let released = false;
+  updateTaskState<LocalAgentTaskState>(ownerId, setAppState, task => {
+    if (!isLocalAgentTask(task) || !task.keepaliveReasons?.has(reason)) return task;
+    const reasons = new Set(task.keepaliveReasons);
+    reasons.delete(reason);
+    released = true;
+    const startsGrace = reasons.size === 0 && isTerminalTaskStatus(task.status) && !task.retain && task.evictAfter === undefined;
+    return { ...task, keepaliveReasons: reasons, ...(startsGrace && { evictAfter: Date.now() + PANEL_GRACE_MS }) };
+  });
+  return released;
 }
 
 /**
@@ -291,7 +325,7 @@ export function killAsyncAgent(taskId: string, setAppState: SetAppState): void {
       ...task,
       status: 'killed',
       endTime: Date.now(),
-      evictAfter: task.retain ? undefined : Date.now() + PANEL_GRACE_MS,
+      evictAfter: task.retain || task.keepaliveReasons?.size ? undefined : Date.now() + PANEL_GRACE_MS,
       abortController: undefined,
       unregisterCleanup: undefined,
       selectedAgent: undefined
@@ -421,7 +455,7 @@ export function completeAgentTask(result: AgentToolResult, setAppState: SetAppSt
       status: 'completed',
       result,
       endTime: Date.now(),
-      evictAfter: task.retain ? undefined : Date.now() + PANEL_GRACE_MS,
+      evictAfter: task.retain || task.keepaliveReasons?.size ? undefined : Date.now() + PANEL_GRACE_MS,
       abortController: undefined,
       unregisterCleanup: undefined,
       selectedAgent: undefined
@@ -445,7 +479,7 @@ export function failAgentTask(taskId: string, error: string, setAppState: SetApp
       status: 'failed',
       error,
       endTime: Date.now(),
-      evictAfter: task.retain ? undefined : Date.now() + PANEL_GRACE_MS,
+      evictAfter: task.retain || task.keepaliveReasons?.size ? undefined : Date.now() + PANEL_GRACE_MS,
       abortController: undefined,
       unregisterCleanup: undefined,
       selectedAgent: undefined

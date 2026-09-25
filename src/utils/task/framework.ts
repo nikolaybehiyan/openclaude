@@ -24,8 +24,13 @@ export const POLL_INTERVAL_MS = 1000
 // Duration to display killed tasks before eviction
 export const STOPPED_DISPLAY_MS = 3_000
 
-// Grace period for terminal local_agent tasks in the coordinator panel
+// Grace period for terminal local_agent/workflow tasks in the coordinator panel
 export const PANEL_GRACE_MS = 30_000
+
+function hasPanelGrace(task: TaskState): boolean {
+  return ('retain' in task || task.type === 'local_workflow') &&
+    (task.evictAfter ?? Infinity) > Date.now()
+}
 
 // Attachment type for task status updates
 export type TaskAttachment = {
@@ -89,6 +94,7 @@ export function registerTask(task: TaskState, setAppState: SetAppState): void {
         ? {
             ...task,
             retain: existing.retain,
+            keepaliveReasons: existing.keepaliveReasons,
             startTime: existing.startTime,
             messages: existing.messages,
             diskLoaded: existing.diskLoaded,
@@ -132,10 +138,7 @@ export function evictTerminalTask(
     if (!isTerminalTaskStatus(task.status)) return prev
     if (!task.notified) return prev
     // Panel grace period — blocks eviction until deadline passes.
-    // 'retain' in task narrows to LocalAgentTaskState (the only type with
-    // that field); evictAfter is optional so 'evictAfter' in task would
-    // miss tasks that haven't had it set yet.
-    if ('retain' in task && (task.evictAfter ?? Infinity) > Date.now()) {
+    if (hasPanelGrace(task)) {
       return prev
     }
     const { [taskId]: _, ...remainingTasks } = prev.tasks
@@ -238,7 +241,7 @@ export function applyTaskOffsetsAndEvictions(
       if (!fresh || !isTerminalTaskStatus(fresh.status) || !fresh.notified) {
         continue
       }
-      if ('retain' in fresh && (fresh.evictAfter ?? Infinity) > Date.now()) {
+      if (hasPanelGrace(fresh)) {
         continue
       }
       delete newTasks[id]
@@ -304,5 +307,7 @@ function getStatusText(status: TaskStatus): string {
       return 'is running'
     case 'pending':
       return 'is pending'
+    case 'paused':
+      return 'is paused'
   }
 }
