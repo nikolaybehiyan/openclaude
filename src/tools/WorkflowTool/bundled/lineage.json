@@ -1,0 +1,198 @@
+{
+  "version": "2.1.226",
+  "binarySHA256": "013a1cf17df5ff1dcc189d5d6fd3fdd5f097ddc3cd41aa9992e99805574febbe",
+  "embeddedJavaScript": {
+    "byteStart": 245797944,
+    "byteEnd": 269783626,
+    "sha256": "a96b5f06a9feba9ff8f7ce7f938a7bd1cbc74c7c03ea0c94f68c50dd05a14f7c"
+  },
+  "registrations": [
+    {
+      "name": "code-review",
+      "symbol": "CXp",
+      "start": 13344574,
+      "end": 13363344,
+      "sourceSHA256": "e705bca72fc207168515e8f6b652a167a67260af940a3d70f3b3024bde222244",
+      "scriptSHA256": "baf5f49eb76136edfc54f0aad29d1aaf676c13a6fa63d6501e49509b0dad435b",
+      "scriptBytes": 24939
+    },
+    {
+      "name": "deep-research",
+      "symbol": "PXp",
+      "start": 13364630,
+      "end": 13387688,
+      "sourceSHA256": "86d5880d8deff6a50886d402608a39c342af2bf915b4f794c73dddbb9ad71fdb",
+      "scriptSHA256": "c64d40ac02008b5465b95af8fb3f8b8b74fbcb3d2d55ac703dec6b88b5c3cf47",
+      "scriptBytes": 23386
+    }
+  ],
+  "symbols": [
+    {
+      "symbol": "Lyr",
+      "start": 4809827,
+      "end": 4809840,
+      "sourceSHA256": "9acf5ca6fb15a6b40c67e5a7b0e4d377b9c4725e97630b094bc8c1a95d9a5889"
+    },
+    {
+      "symbol": "TXp",
+      "start": 13363352,
+      "end": 13363600,
+      "sourceSHA256": "0dd5486b8c78421d21738fe3e8b87ac70e13404afd7c61e51bae5955cb6147b8"
+    },
+    {
+      "symbol": "vXp",
+      "start": 13363605,
+      "end": 13363919,
+      "sourceSHA256": "568113b69e12c1352b851cf3ac43e9e741b0e69da9bb00deb6f61936e0cf2024"
+    },
+    {
+      "symbol": "EXp",
+      "start": 13363969,
+      "end": 13364479,
+      "sourceSHA256": "e494393972bf563339ee2d15058f46064c7be73c23f6ac06e5d56f55482324e2"
+    },
+    {
+      "symbol": "rXp",
+      "start": 13328889,
+      "end": 13329402,
+      "sourceSHA256": "bdcd5dabdfb7804fa404ac3fb6d0f151df03cd4bd267833ae9ffcba720f702f4"
+    },
+    {
+      "symbol": "nXp",
+      "start": 13329407,
+      "end": 13329762,
+      "sourceSHA256": "7fab660dc56c755b89a1bb577d4346f67b231eed82f8e4825874d80477428201"
+    },
+    {
+      "symbol": "oXp",
+      "start": 13329767,
+      "end": 13330102,
+      "sourceSHA256": "1c81caf179b32a42905e35052d0f0e80417a9311868be6534cb762eee5574ccf"
+    },
+    {
+      "symbol": "iXp",
+      "start": 13330107,
+      "end": 13330478,
+      "sourceSHA256": "d66f7048bcab26bf414ac7916ff2119732ac454cf6152200bb61064aa784bd1f"
+    },
+    {
+      "symbol": "sXp",
+      "start": 13330483,
+      "end": 13330975,
+      "sourceSHA256": "76429d513f0b344ad30aeda56f7106e87c5e3e35ed9b8369010b4aa0755d8327"
+    },
+    {
+      "symbol": "aXp",
+      "start": 13341509,
+      "end": 13341530,
+      "sourceSHA256": "003e2378a669443fc85ea773ffab1ddaa7e38163447f7ee1d673c05e4dfc103e"
+    },
+    {
+      "symbol": "zrS",
+      "start": 13364484,
+      "end": 13364538,
+      "sourceSHA256": "b02785212c80a764b3d0689e0c1952a9e9c9a1f497e7e1a91f849572b109b51f"
+    },
+    {
+      "symbol": "U8t",
+      "start": 13326088,
+      "end": 13326273,
+      "sourceSHA256": "de5a89b87d2d1c86027b99949b44b5af41a49a9e6e00ef9eeccb41332b973a1c"
+    },
+    {
+      "symbol": "mNe",
+      "start": 13326278,
+      "end": 13326490,
+      "sourceSHA256": "d2f1c059aeccd3e94f12416b187c4ca94faf1a15ed8b2d9d1cfb38569ed68d04"
+    },
+    {
+      "symbol": "hNe",
+      "start": 13326495,
+      "end": 13326968,
+      "sourceSHA256": "0ca79cc3cdf3ae4d1f96e9c0b18553f8bb1d23c511df389b80c79b065f113857"
+    },
+    {
+      "symbol": "gNe",
+      "start": 13327676,
+      "end": 13327939,
+      "sourceSHA256": "edf5bd38d4b601a14ed9aaededb2cff02e84a1413c43f4e4cca730638371a826"
+    },
+    {
+      "symbol": "PCt",
+      "start": 13326973,
+      "end": 13327671,
+      "sourceSHA256": "0b67a86ddf35b65c84d5b3ef26f78e19c57426b36b0005e219edecd97f1dcb77"
+    },
+    {
+      "symbol": "wXp",
+      "start": 13364543,
+      "end": 13364580,
+      "sourceSHA256": "1d072e320ed554190238a40e4725a5099fd7365c02fd1acc65c5cd60242cfa2d"
+    },
+    {
+      "symbol": "Vwa",
+      "start": 13331363,
+      "end": 13331711,
+      "sourceSHA256": "733a23107fc081c30e2a687744d6a6debc54ee3ebf06f192cf337ce2df4458bb"
+    },
+    {
+      "symbol": "Kwa",
+      "start": 13331716,
+      "end": 13332390,
+      "sourceSHA256": "c33f9224a94d5aa284e42914d060fddb379760495ff755cdc20c52611ab06efa"
+    },
+    {
+      "symbol": "_nt",
+      "start": 13331000,
+      "end": 13331358,
+      "sourceSHA256": "38cff3965ddfa89aabe4664cd04cfaff5e4375a734e8f70e89ada5becdabd818"
+    },
+    {
+      "symbol": "Oii",
+      "start": 13332403,
+      "end": 13332658,
+      "sourceSHA256": "653d9f574a9e9520c1e7d4b34a5c0e7492062e6397ba45e054275c56cf6a61c5"
+    },
+    {
+      "symbol": "RXp",
+      "start": 13387696,
+      "end": 13387711,
+      "sourceSHA256": "810e948d202a00f6d6a36e6990d69350b818db5e468933c1945eaa7044f6ae35"
+    },
+    {
+      "symbol": "kXp",
+      "start": 13387716,
+      "end": 13387839,
+      "sourceSHA256": "3b613ca32b6ef6fe44866171de16379ee2828678c1b143517b3a120a410cb1f8"
+    },
+    {
+      "symbol": "xXp",
+      "start": 13387844,
+      "end": 13388202,
+      "sourceSHA256": "63dba654ade949a45bce5255169aeac33a2703f1bc67cfbc4b84b5e0420e7014"
+    },
+    {
+      "symbol": "IXp",
+      "start": 13388263,
+      "end": 13388675,
+      "sourceSHA256": "81a30461b2c6309e93d0738469ff79c5cefd7cfbf74613fdf6f347b101d180bb"
+    },
+    {
+      "symbol": "WrS",
+      "start": 13388211,
+      "end": 13388232,
+      "sourceSHA256": "5075069b1ecb879327fca530c8a5d66d3f18d1a63d27d104460e0b18d3d64d9d"
+    }
+  ],
+  "availability": {
+    "code-review": {
+      "hidden": true
+    },
+    "deep-research": {
+      "disableModelInvocation": "!getFeatureValue(tengu_sorrel_avocet, false)",
+      "gateSource": "function GrS(){if(nt(WrS,!1))return!1;return!0}",
+      "sourceSHA256": "6db306e87ca464fabc91964a0e6ecbd193f88bd71a1dd98fb8690c71a18e54c7"
+    }
+  },
+  "extraction": "Whitelisted data AST interpreter; independently compared to isolated template registration VM; workflow bodies and binary never executed"
+}
