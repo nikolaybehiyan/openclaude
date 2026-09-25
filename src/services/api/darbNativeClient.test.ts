@@ -10,6 +10,8 @@ const original = await import('../../utils/model/darbNativeGateway.js')
 mock.module('../../utils/model/darbNativeGateway.js', () => ({...original, nativeGatewaySession: session}))
 const {getAnthropicClient} = await import('./client.js')
 const models = await import('../../utils/model/model.js')
+const {validateModel} = await import('../../utils/model/validateModel.js')
+const capacity = await import('../../utils/context.js')
 const env = {...process.env}, globals = globalThis as Record<string, unknown>, macro = globals.MACRO
 afterAll(() => {process.env = env; globals.MACRO = macro; mock.restore()})
 
@@ -46,4 +48,13 @@ test('native defaults and background helpers use owner selection rather than Cla
   expect(models.parseUserSpecifiedModel('default')).toBe('claude-darb-glm')
   for (const getter of [models.getDefaultSonnetModel, models.getDefaultHaikuModel, models.getDefaultOpusModel]) expect(getter()).toBe('claude-darb-glm')
   expect(models.parseUserSpecifiedModel('claude-darb-glm')).toBe('claude-darb-glm')
+  expect(capacity.getContextWindowForModel('claude-darb-glm')).toBe(1048576)
+  expect(capacity.getModelMaxOutputTokens('claude-darb-glm').upperLimit).toBe(32000)
+  expect(capacity.getKnownDarbInputBudget('claude-darb-glm', 32000)).toBe(1000000)
+})
+
+test('native startup validates the owner catalog before host control is available, without a probe request', async () => {
+  session.setRefresh(async () => {throw Error('host control is not running yet')})
+  expect(await validateModel('claude-darb-glm')).toEqual({valid: true})
+  expect((await validateModel('unknown')).valid).toBe(false)
 })

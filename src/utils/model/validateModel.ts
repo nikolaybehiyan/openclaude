@@ -16,6 +16,7 @@ import { getCachedMiniMaxModelOptions, isMiniMaxProvider } from './minimaxModels
 import { currentDarbCatalog, isDarbCustomInference } from './darbModels.js'
 import { CONNECT_AI } from './darbCatalog.js'
 import { getDarbFrozenModelContext } from './darbFrozenContext.js'
+import { nativeGatewaySession } from './darbNativeGateway.js'
 
 // Cache valid models to avoid repeated API calls
 const validModelCache = new Map<string, boolean>()
@@ -26,6 +27,11 @@ const validModelCache = new Map<string, boolean>()
 export async function validateModel(
   model: string,
 ): Promise<{ valid: boolean; error?: string }> {
+  // Selection validation can run before the SDK host-control stream starts.
+  // Its authenticated catalog is authoritative for selectable IDs; each real
+  // inference request still performs a fresh, server-validated token exchange.
+  if (nativeGatewaySession) return nativeGatewaySession.findModel(model) && isModelAllowed(model)
+    ? {valid: true} : {valid: false, error: 'The selected model is not in this Darb native session catalog'}
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model === model && isModelAllowed(model)
     ? { valid: true } : { valid: false, error: 'Darb frozen model changed; restart the runtime process' }
