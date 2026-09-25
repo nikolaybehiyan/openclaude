@@ -13,6 +13,7 @@ import * as walk from 'acorn-walk';
 import {parseWorkflowScript} from '../src/tools/WorkflowTool/scriptParser.ts';
 import {rewriteWorkflowAsync, compileWorkflowScript} from '../src/tools/WorkflowTool/compiler.ts';
 import {workflowInvocationKey, workflowInvocationOptions, indexWorkflowJournal} from '../src/tools/WorkflowTool/journal.ts';
+import {hardenWorkflowContext, createWorkflowVMBridge} from '../src/tools/WorkflowTool/vmBoundary.ts';
 
 const [binaryPath, parserRoot] = process.argv.slice(2);
 if (!binaryPath || !parserRoot) throw Error('Usage: bun scripts/verify-claude-code-226-ultracode.mjs <official-2.1.226-darwin-arm64> <babel-package-root>');
@@ -130,4 +131,36 @@ const records = [{type: 'started', key: 'pending', agentId: 'a'}, {type: 'starte
 const indexed = indexWorkflowJournal(records), reference = journalContext.jNp(records);
 assert.deepEqual(clone([...indexed.started]), clone([...reference.started]));
 assert.deepEqual(clone([...indexed.results]), clone([...reference.results])); cases++;
-console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, metadata, async compiler, journal identity/index; NOT workflow executor or full parity'}, null, 2));
+const boundaryOracle = vm.createContext({LRe:vm,mse:4096}, {codeGeneration:{strings:false,wasm:false}});
+vm.runInContext(['mGt','LXo','NXo','PXo','NIr','oHp','OXo','IXo'].map(declaration).join('\n'),boundaryOracle);
+const ownRealm = vm.createContext({}, {codeGeneration:{strings:false,wasm:false}});
+hardenWorkflowContext(ownRealm);
+const referenceRealm = vm.createContext({}, {codeGeneration:{strings:false,wasm:false}});
+boundaryOracle.mGt(referenceRealm);
+const ownBridge = createWorkflowVMBridge(ownRealm);
+const referenceValues = boundaryOracle.NXo(referenceRealm), referenceStrings = boundaryOracle.LXo(referenceRealm);
+const referenceBridge = {...referenceValues,clone:boundaryOracle.PXo(referenceRealm),readError:boundaryOracle.IXo(referenceRealm),
+  stringify:referenceStrings.vmStringify,toString:referenceStrings.vmToStr,ownString:referenceStrings.vmOwnString};
+function outcome(bridge, fn) {
+  try {return {ok:true,json:bridge.stringify(bridge.sanitize(fn()))};}
+  catch(error) {const fields=bridge.readError(error);return {ok:false,name:fields.name,message:fields.message};}
+}
+const boundaryInputs = ['42','null','undefined','[false,0,"",null]', '({answer:42,fn(){}})',
+  'JSON.parse("{\\"__proto__\\":1,\\"constructor\\":2,\\"ok\\":true}")',
+  '({get bad(){throw 42},ok:1})','({get bad(){throw new Proxy({},{get(){throw 42}})},ok:1})',
+  'new Proxy({}, {ownKeys(){throw 42}})',
+  '(()=>{const {proxy,revoke}=Proxy.revocable({},{});revoke();return proxy})()',
+  ...[4096,4097,1.5,Infinity,-1,'large'].map(length=>`new Proxy([], {get(t,k){if(k==="length")return ${JSON.stringify(length)};return undefined}})`),
+  'new Proxy([], {get(){throw new Proxy({},{get(){throw 42}})}})',
+  '[new Proxy([], {get(t,k){if(k==="length")return 4097;return undefined}})]',
+  '({get name(){throw 42},message:"safe",get stack(){throw 42}})',
+  '(()=>{const a={};a.self=a;return a})()'];
+for(const expression of boundaryInputs) {
+  const ours=vm.runInContext(expression,ownRealm,{timeout:100});
+  const theirs=vm.runInContext(expression,referenceRealm,{timeout:100});
+  for(const method of ['clone','sanitize','snapshot','toString','readError']) {
+    assert.deepEqual(outcome(ownBridge,()=>ownBridge[method](ours)),outcome(referenceBridge,()=>referenceBridge[method](theirs)),method+':'+expression);
+    cases++;
+  }
+}
+console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, metadata, async compiler, journal identity/index, hardened VM value boundary; NOT workflow executor or full parity'}, null, 2));
