@@ -57,7 +57,8 @@ import { installAsciicastRecorder } from './utils/asciicast.js';
 import { getSubscriptionType, isClaudeAISubscriber, prefetchAwsCredentialsAndBedRockInfoIfSafe, prefetchGcpCredentialsIfSafe, validateForceLoginOrg } from './utils/auth.js';
 import { checkHasTrustDialogAccepted, getGlobalConfig, getRemoteControlAtStartup, isAutoUpdaterDisabled, saveGlobalConfig } from './utils/config.js';
 import { seedEarlyInput, stopCapturingEarlyInput } from './utils/earlyInput.js';
-import { getInitialEffortSetting, parseEffortValue } from './utils/effort.js';
+import { getInitialReasoningState } from './utils/effort.js';
+import { decodeNativeReasoningRestore } from './utils/ultracodePolicy.js';
 import { getInitialFastModeSetting, isFastModeEnabled, prefetchFastModeStatus, resolveFastModeStatusFromCache } from './utils/fastMode.js';
 import { applyConfigEnvironmentVariables } from './utils/managedEnv.js';
 import { createSystemMessage, createUserMessage } from './utils/messages.js';
@@ -448,6 +449,7 @@ function loadSettingsFromFlag(settingsFile: string): void {
         process.stderr.write(chalk.red('Error: Invalid JSON provided to --settings\n'));
         process.exit(1);
       }
+      decodeNativeReasoningRestore(parsedJson.darbNativeReasoningRestore);
 
       // Create a temporary file and write the JSON to it.
       // Use a content-hash-based path instead of random UUID to avoid
@@ -468,7 +470,11 @@ function loadSettingsFromFlag(settingsFile: string): void {
         resolvedPath: resolvedSettingsPath
       } = safeResolvePath(getFsImplementation(), settingsFile);
       try {
-        readFileSync(resolvedSettingsPath, 'utf8');
+        const settingsText = readFileSync(resolvedSettingsPath, 'utf8');
+        const settingsValue = safeParseJSON(settingsText);
+        if (settingsValue && typeof settingsValue === 'object') {
+          decodeNativeReasoningRestore(settingsValue.darbNativeReasoningRestore);
+        }
       } catch (e) {
         if (isENOENT(e)) {
           process.stderr.write(chalk.red(`Error: Settings file not found: ${resolvedSettingsPath}\n`));
@@ -2679,7 +2685,7 @@ async function run(): Promise<CommanderCommand> {
           tools: mcpTools
         },
         toolPermissionContext,
-        effortValue: parseEffortValue(options.effort) ?? getInitialEffortSetting(),
+        ...getInitialReasoningState(options.effort),
         ...(isFastModeEnabled() && {
           fastMode: getInitialFastModeSetting(effectiveModel ?? null)
         }),
@@ -3070,7 +3076,7 @@ async function run(): Promise<CommanderCommand> {
           content: String(inputPrompt)
         })
       } : null,
-      effortValue: parseEffortValue(options.effort) ?? getInitialEffortSetting(),
+      ...getInitialReasoningState(options.effort),
       activeOverlays: new Set<string>(),
       fastMode: getInitialFastModeSetting(resolvedInitialModel),
       ...(isAdvisorEnabled() && advisorModel && {

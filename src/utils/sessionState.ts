@@ -33,6 +33,7 @@ export type SessionExternalMetadata = {
   permission_mode?: string | null
   is_ultraplan_mode?: boolean | null
   model?: string | null
+  effort_level?: string | null
   pending_action?: RequiresActionDetails | null
   // Opaque — typed at the emit site. Importing PostTurnSummaryOutput here
   // would leak the import path string into sdk.d.ts via agentSdkBridge's

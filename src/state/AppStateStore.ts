@@ -427,6 +427,9 @@ export type AppState = DeepImmutable<{
   advisorModel?: string
   // Effort value
   effortValue?: EffortValue
+  // Separate session-only 2.1.226 flag. The effective indicator additionally
+  // requires an enabled Workflow executor and an applied xhigh effort.
+  ultracode?: boolean
   // Set synchronously in launchUltraplan before the detached flow starts.
   // Prevents duplicate launches during the ~5s window before
   // ultraplanSessionUrl is set by teleportToRemote. Cleared by launchDetached

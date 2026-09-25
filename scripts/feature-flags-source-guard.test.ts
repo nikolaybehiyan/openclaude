@@ -22,6 +22,9 @@ type FlagGuard = {
 
 const FLAG_REQUIRES_SOURCE: FlagGuard[] = [
   { flag: 'MCP_SKILLS', source: 'src/skills/mcpSkills.ts' },
+  { flag: 'WORKFLOW_SCRIPTS', source: 'src/tools/WorkflowTool/WorkflowTool.ts' },
+  { flag: 'WORKFLOW_SCRIPTS', source: 'src/tools/WorkflowTool/bundled/index.ts' },
+  { flag: 'WORKFLOW_SCRIPTS', source: 'src/tasks/LocalWorkflowTask/LocalWorkflowTask.ts' },
 ]
 
 test('build feature flags are not enabled without their source files', () => {

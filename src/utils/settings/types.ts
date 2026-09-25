@@ -737,6 +737,18 @@ export const SettingsSchema = lazySchema(() =>
         .optional()
         .catch(undefined)
         .describe('Persisted effort level for supported models.'),
+      ultracode: z.boolean().optional().catch(undefined)
+        .describe('Session-only Ultracode flag: xhigh effort and dynamic workflows. Interactive selection must not persist it.'),
+      darbNativeReasoningRestore: z.unknown().optional()
+        .describe('Internal Darb launch checkpoint. Validated strictly at startup; never a persisted preference or live control.'),
+      enableWorkflows: z.boolean().optional()
+        .describe('Enable dynamic workflows when available. The default is plan-dependent.'),
+      disableWorkflows: z.boolean().optional()
+        .describe('Disable dynamic workflows; takes precedence over an opt-in.'),
+      workflowKeywordTriggerEnabled: z.boolean().optional()
+        .describe('Allow the ultracode prompt keyword to opt this turn into workflows (default true).'),
+      workflowSizeGuideline: z.enum(['unrestricted', 'small', 'medium', 'large']).optional()
+        .describe('Advisory workflow size, not an enforced agent limit.'),
       advisorModel: z
         .string()
         .optional()

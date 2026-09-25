@@ -1,5 +1,8 @@
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle'
+import { applyNativeReasoningFlags, ultracodeIsActive } from '../utils/ultracodePolicy.js'
+import { parseEffortValue } from '../utils/effort.js'
+import { isWorkflowsEnabled } from '../utils/workflows.js'
 import { readFile, stat } from 'fs/promises'
 import { dirname, join } from 'path'
 import {
@@ -3909,6 +3912,10 @@ function runHeadlessStreaming(
           // Merge the provided settings into the in-memory flag settings
           const existing = getFlagSettingsInline() ?? {}
           const incoming = message.request.settings
+          if (typeof incoming !== 'object' || incoming === null || Array.isArray(incoming)) {
+            sendControlResponseError(message, 'apply_flag_settings requires settings to be an object')
+            continue
+          }
           // Shallow-merge top-level keys; getSettingsForSource handles
           // the deep merge with file-based flag settings via mergeWith.
           // JSON serialization drops `undefined`, so callers use `null`
@@ -3957,6 +3964,18 @@ function runHeadlessStreaming(
             injectModelSwitchBreadcrumbs(modelArg, newModel)
           }
 
+          // 2.1.226 consumes these flags directly, AFTER the settings merge.
+          // A null reset cannot be left to the disk settings watcher: that
+          // deliberately preserves session values when a key is absent.
+          setAppState(previous => applyNativeReasoningFlags(previous, incoming, value => {
+            try { return parseEffortValue(value) } catch { return undefined }
+          }))
+          if ('effortLevel' in incoming) {
+            notifySessionMetadataChanged({
+              effort_level: incoming.effortLevel == null ? null : String(getAppState().effortValue ?? incoming.effortLevel),
+            })
+          }
+
           sendControlResponseSuccess(message)
         } else if (message.request.subtype === 'get_settings') {
           const currentAppState = getAppState()
@@ -3972,6 +3991,7 @@ function runHeadlessStreaming(
               model,
               // Numeric effort (internal-only) → null; SDK schema is string-level only.
               effort: typeof effort === 'string' ? effort : null,
+              ultracode: ultracodeIsActive(currentAppState, isWorkflowsEnabled(), effort),
             },
           })
         } else if (message.request.subtype === 'stop_task') {

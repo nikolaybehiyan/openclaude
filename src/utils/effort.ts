@@ -1,6 +1,6 @@
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { isUltrathinkEnabled } from './thinking.js'
-import { getInitialSettings } from './settings/settings.js'
+import { getInitialSettings, getSettingsForSource } from './settings/settings.js'
 import { isProSubscriber, isMaxSubscriber, isTeamSubscriber } from './auth.js'
 import { getFeatureValue_CACHED_MAY_BE_STALE } from 'src/services/analytics/growthbook.js'
 import { getAPIProvider } from './model/providers.js'
@@ -11,6 +11,7 @@ import type { EffortLevel } from 'src/entrypoints/sdk/runtimeTypes.js'
 import { currentDarbCustomCatalog, darbSelectedThinking, isDarbCustomInference } from './model/darbModels.js'
 import { darbCanSelectEffort, darbEffortOptions, isDarbEffort } from './model/darbModelControls.js'
 import { getDarbEffectiveNativeParameters as getDarbNativeParameters } from './model/darbModels.js'
+import { decodeNativeReasoningRestore, initialReasoningState, isUltracodeAlias, type UltracodeState } from './ultracodePolicy.js'
 
 export type { EffortLevel }
 
@@ -233,6 +234,20 @@ export function getInitialEffortSetting(): PersistedEffortLevel | undefined {
   // toPersistableEffort validates persisted levels on read, so a manually
   // edited settings.json with an invalid level doesn't leak into a fresh session.
   return toPersistableEffort(getInitialSettings().effortLevel)
+}
+
+export function getInitialReasoningState(cliEffort: unknown): UltracodeState {
+  // Only the launch --settings source is eligible, never project/user/policy
+  // files. Read once at startup; live controls must not replay this checkpoint.
+  const restored = decodeNativeReasoningRestore(getSettingsForSource('flagSettings')?.darbNativeReasoningRestore)
+  if (restored) return restored
+  const settings = getInitialSettings()
+  const alias = isUltracodeAlias(cliEffort)
+  // 2.1.226 c_s/Kbo: explicit CLI effort wins; a separate session flag
+  // enables orchestration. Never persist the alias as a provider effort.
+  return initialReasoningState({ cliEffort,
+    parsedCLIEffort: alias ? 'xhigh' : parseEffortValue(cliEffort),
+    persistedEffort: getInitialEffortSetting(), settingsUltracode: settings.ultracode })
 }
 
 /**
