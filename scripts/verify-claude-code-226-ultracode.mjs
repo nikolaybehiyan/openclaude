@@ -12,6 +12,7 @@ import * as acorn from 'acorn';
 import * as walk from 'acorn-walk';
 import {parseWorkflowScript} from '../src/tools/WorkflowTool/scriptParser.ts';
 import {rewriteWorkflowAsync, compileWorkflowScript} from '../src/tools/WorkflowTool/compiler.ts';
+import {workflowInvocationKey, workflowInvocationOptions, indexWorkflowJournal} from '../src/tools/WorkflowTool/journal.ts';
 
 const [binaryPath, parserRoot] = process.argv.slice(2);
 if (!binaryPath || !parserRoot) throw Error('Usage: bun scripts/verify-claude-code-226-ultracode.mjs <official-2.1.226-darwin-arm64> <babel-package-root>');
@@ -115,4 +116,18 @@ for (const input of bodies) {
   // Parser errors depend on the compile-validation realm; both must refuse.
   cases++;
 }
-console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, workflow metadata and async rewrite; NOT workflow executor or full parity'}, null, 2));
+const journalContext = vm.createContext({zNp: crypto, GBb: 'v2'}, {codeGeneration: {strings: false, wasm: false}});
+vm.runInContext(['VBb', 'WNp', 'jNp'].map(declaration).join('\n'), journalContext);
+for (const options of [undefined, {}, {model: 'glm', effort: 'xhigh'}, {schema: {b: 1, a: 2}, agentType: 'Explore'},
+  {schema: [0, false, null, ''], isolation: 'worktree'}, {label: 'ignored', stallMs: 50}, {model: 'kimi', schema: JSON.parse('{"__proto__":4,"a":1}')}]) {
+  assert.equal(workflowInvocationOptions(options), journalContext.VBb(options));
+  for (const prompt of ['', 'review', 'кириллица']) for (const site of ['0', 'parallel:2']) {
+    assert.equal(workflowInvocationKey(prompt, options, site), journalContext.WNp(prompt, options, site)); cases++;
+  }
+}
+const records = [{type: 'started', key: 'pending', agentId: 'a'}, {type: 'started', key: 'pending', agentId: 'b'},
+  ...[false, 0, '', [], {}, 42].map((result, index) => ({type: 'result', key: String(index), agentId: 'c', result}))];
+const indexed = indexWorkflowJournal(records), reference = journalContext.jNp(records);
+assert.deepEqual(clone([...indexed.started]), clone([...reference.started]));
+assert.deepEqual(clone([...indexed.results]), clone([...reference.results])); cases++;
+console.log(JSON.stringify({version: '2.1.226', binary_sha256: sha256, cases, result: 'PASS', scope: 'availability, policy, keyword, native flag state, metadata, async compiler, journal identity/index; NOT workflow executor or full parity'}, null, 2));
