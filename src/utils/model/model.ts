@@ -31,6 +31,7 @@ import { capitalize } from '../stringUtils.js'
 import { DEFAULT_GEMINI_MODEL } from '../providerProfile.js'
 import { currentDarbCustomCatalog, darbDefaultModel, darbModelLabel, isDarbCustomInference } from './darbModels.js'
 import { getDarbFrozenModelContext } from './darbFrozenContext.js'
+import { nativeGatewaySession } from './darbNativeGateway.js'
 
 export type ModelShortName = string
 export type ModelName = string
@@ -43,6 +44,7 @@ function normalizeModelSetting(value: unknown): ModelName | ModelAlias | undefin
 }
 
 export function getSmallFastModel(): ModelName {
+  if (nativeGatewaySession) return getMainLoopModel()
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return darbDefaultModel()
@@ -119,8 +121,9 @@ export function getUserSpecifiedModelSetting(): ModelSetting | undefined {
     // override for a different connection. Keep it on disk for default mode;
     // use the authenticated owner selection when it is absent from this catalog.
     // Explicit --model/session and environment overrides remain strict below.
-    const setting = isDarbCustomInference() && saved &&
-      !currentDarbCustomCatalog()?.models.some(row => row.id === saved) ? undefined : saved
+    const setting = saved && (nativeGatewaySession
+      ? !nativeGatewaySession.findModel(saved)
+      : isDarbCustomInference() && !currentDarbCustomCatalog()?.models.some(row => row.id === saved)) ? undefined : saved
     // Read the model env var that matches the active provider to prevent
     // cross-provider leaks (e.g. ANTHROPIC_MODEL sent to the OpenAI API).
     //
@@ -183,6 +186,7 @@ export function getBestModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Opus model (3P providers may lag so keep defaults unchanged).
 export function getDefaultOpusModel(): ModelName {
+  if (nativeGatewaySession) return nativeGatewaySession.context.defaultModel
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return darbDefaultModel()
@@ -232,6 +236,7 @@ export function getDefaultOpusModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Sonnet model (3P providers may lag so keep defaults unchanged).
 export function getDefaultSonnetModel(): ModelName {
+  if (nativeGatewaySession) return nativeGatewaySession.context.defaultModel
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return darbDefaultModel()
@@ -279,6 +284,7 @@ export function getDefaultSonnetModel(): ModelName {
 
 // @[MODEL LAUNCH]: Update the default Haiku model (3P providers may lag so keep defaults unchanged).
 export function getDefaultHaikuModel(): ModelName {
+  if (nativeGatewaySession) return nativeGatewaySession.context.defaultModel
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return darbDefaultModel()
@@ -364,6 +370,7 @@ export function getRuntimeMainLoopModel(params: {
  * @returns The default model setting to use
  */
 export function getDefaultMainLoopModelSetting(): ModelName | ModelAlias {
+  if (nativeGatewaySession) return nativeGatewaySession.context.defaultModel
   const frozen = getDarbFrozenModelContext()
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return darbDefaultModel()
@@ -749,6 +756,8 @@ export function getPublicModelName(model: ModelName): string {
 export function parseUserSpecifiedModel(
   modelInput: ModelName | ModelAlias,
 ): ModelName {
+  if (nativeGatewaySession && modelInput === 'default') return nativeGatewaySession.context.defaultModel
+  if (nativeGatewaySession?.findModel(modelInput)) return modelInput
   const frozen = getDarbFrozenModelContext(modelInput)
   if (frozen) return frozen.model
   if (isDarbCustomInference()) return modelInput

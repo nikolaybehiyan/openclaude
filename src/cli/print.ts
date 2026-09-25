@@ -1,4 +1,5 @@
 import { encodeActiveGoal } from '../commands/goal/wire.js'
+import { nativeGatewaySession } from '../utils/model/darbNativeGateway.js'
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle'
 import { applyNativeReasoningFlags, ultracodeIsActive } from '../utils/ultracodePolicy.js'
@@ -645,6 +646,9 @@ export async function runHeadless(
   }
 
   const structuredIO = getStructuredIO(inputPrompt, options)
+  if (nativeGatewaySession) {
+    nativeGatewaySession.setRefresh(signal => structuredIO.refreshHostAuthToken(signal))
+  }
 
   // When emitting NDJSON for SDK clients, any stray write to stdout (debug
   // prints, dependency console.log, library banners) breaks the client's

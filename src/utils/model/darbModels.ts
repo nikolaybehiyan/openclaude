@@ -4,6 +4,7 @@ import { getGlobalConfig } from '../config.js'
 import { getAPIProvider } from './providers.js'
 import { darbCanSelectThinking, validateDarbNativeThinking, type DarbThinkingType } from './darbModelControls.js'
 import { readDarbSessionThinking } from './darbSessionBinding.js'
+import { nativeGatewaySession } from './darbNativeGateway.js'
 
 export { darbCatalogSession }
 
@@ -49,6 +50,9 @@ export function currentDarbCustomCatalog() {
 // Public server-default metadata is not a BYOK binding. Keep 1P auth, selection
 // and rendering; only replace model-family guesses with the owner's exact facts.
 export function currentDarbDefaultModel(model: string) {
+  // Metadata readers run during bootstrap/render before the selected model is
+  // resolved. Authorization is checked by the native transport, not by render.
+  if (nativeGatewaySession) return nativeGatewaySession.findModel(model)
   const catalog = currentDarbCatalog()
   if (catalog?.mode !== 'default') return undefined
   const exact = catalog.models.find(row => row.id === model)

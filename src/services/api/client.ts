@@ -52,6 +52,7 @@ import { currentDarbCatalog, darbModelScope, isDarbManagedInference, requireDarb
 import { CONNECT_AI, guardDarbFetch } from '../../utils/model/darbCatalog.js'
 import { isDarbMainConversationSource, makeDarbDefaultSessionBinding, makeDarbSessionBinding } from '../../utils/model/darbSessionBinding.js'
 import { isModelAllowed } from '../../utils/model/modelAllowlist.js'
+import { nativeGatewaySession } from '../../utils/model/darbNativeGateway.js'
 
 const importRuntimeModule = new Function(
   'specifier',
@@ -187,6 +188,19 @@ export async function getAnthropicClient({
   providerOverride?: ProviderOverride
   effortValue?: EffortValue
 }): Promise<Anthropic> {
+  if (!providerOverride && nativeGatewaySession) {
+    if (model) nativeGatewaySession.model(model)
+    // Parent OAuth and provider settings belong to the host. The fetch guard
+    // replaces this non-secret marker with a freshly exchanged limited bearer
+    // for each wire attempt; no legacy API-key or provider fallback is consulted.
+    return new Anthropic({
+      baseURL: 'https://ai.darbmind.ru', apiKey: null, authToken: 'darb-native-host-pending',
+      defaultHeaders: { 'User-Agent': getUserAgent(), 'x-app': 'cli', 'X-Claude-Code-Session-Id': getSessionId() },
+      maxRetries, timeout: parseInt(process.env.API_TIMEOUT_MS || String(600 * 1000), 10),
+      fetch: nativeGatewaySession.fetch((buildFetch(fetchOverride, source) ?? fetch) as typeof fetch),
+      fetchOptions: getProxyFetchOptions({forAnthropicAPI: true}) as ClientOptions['fetchOptions'],
+    })
+  }
   const managedDarb = !providerOverride && isDarbManagedInference()
   const darbCatalog = managedDarb ? currentDarbCatalog() : undefined
   if (managedDarb && !darbCatalog) throw new Error(CONNECT_AI)

@@ -771,6 +771,15 @@ export class StructuredIO {
     )
     return response.mcp_response
   }
+
+  async refreshHostAuthToken(signal: AbortSignal): Promise<string | null> {
+    const response = await this.sendRequest<{ authToken: string | null }>(
+      { subtype: 'host_auth_token_refresh' },
+      z.object({ authToken: z.string().max(8192).nullable() }),
+      signal,
+    )
+    return response.authToken
+  }
 }
 
 function exitWithMessage(message: string): never {
