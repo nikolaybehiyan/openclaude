@@ -28,6 +28,7 @@ import {
   getPromptId,
   getSessionId,
   getSessionProjectDir,
+  getSdkSessionStorageOwner,
   isSessionPersistenceDisabled,
   switchSession,
 } from '../bootstrap/state.js'
@@ -442,9 +443,19 @@ export const getProjectDir = memoize((projectDir: string): string => {
 })
 
 let project: Project | null = null
+const sdkProjects = new WeakMap<object, Project>()
 let cleanupRegistered = false
 
 function getProject(): Project {
+  const owner = getSdkSessionStorageOwner()
+  if (owner) {
+    let scoped = sdkProjects.get(owner)
+    if (!scoped) {
+      scoped = new Project()
+      sdkProjects.set(owner, scoped)
+    }
+    return scoped
+  }
   if (!project) {
     project = new Project()
 

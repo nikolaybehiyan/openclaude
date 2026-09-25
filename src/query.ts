@@ -1371,6 +1371,13 @@ async function* queryLoop(
       }
 
       if (stopHookResult.blockingErrors.length > 0) {
+        // A goal/Stop-hook continuation consumes another model turn too.
+        // Preserve the goal for resume, but never bypass the host's limit.
+        const nextTurnCount = turnCount + 1
+        if (maxTurns && nextTurnCount > maxTurns) {
+          yield createAttachmentMessage({type:'max_turns_reached',maxTurns,turnCount:nextTurnCount})
+          return {reason:'max_turns',turnCount:nextTurnCount}
+        }
         const next: State = {
           messages: [
             ...messagesForQuery,
@@ -1389,7 +1396,7 @@ async function* queryLoop(
           maxOutputTokensOverride: undefined,
           pendingToolUseSummary: undefined,
           stopHookActive: true,
-          turnCount,
+          turnCount: nextTurnCount,
           continuationNudgeCount: state.continuationNudgeCount,
           transition: { reason: 'stop_hook_blocking' },
         }

@@ -1,3 +1,4 @@
+import {goalNonInteractive} from '../../commands/goal/index.js'
 import { readFile } from 'node:fs/promises'
 import { dirname } from 'node:path'
 import {
@@ -153,5 +154,6 @@ export function installSDKRuntimeProjection(
     disabled: [],
     errors: [],
   }))
-  return commands
+  // Server projections own filesystem skills; session goal control remains a builtin.
+  return [...commands.filter(command=>command.name!=='goal'),goalNonInteractive]
 }

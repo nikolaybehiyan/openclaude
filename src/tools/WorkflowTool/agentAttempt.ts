@@ -43,6 +43,7 @@ export type WorkflowAttemptOptions = {
   countTokens(usage: Record<string, unknown> | undefined): number
   summarizeToolInput(input: unknown): string | undefined
   onModel(model: string): void
+  onMessage?(event: WorkflowAgentMessage): void
 }
 export function workflowAbortReason(reason: unknown): string | undefined {
   if (typeof reason === 'string') return reason
@@ -95,6 +96,7 @@ export async function runWorkflowAgentAttempt(options: WorkflowAttemptOptions): 
     // Never detach consumption with Promise.race: journal leases may only be
     // released once actual child execution has stopped.
     for await (const event of options.makeStream(controller,onQueryProgress)) {
+      options.onMessage?.(event)
       if (event.type === 'attachment' && event.attachment?.type === 'structured_output') {
         structured = event.attachment.data
         continue

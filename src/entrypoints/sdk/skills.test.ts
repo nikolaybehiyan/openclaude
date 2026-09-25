@@ -110,3 +110,11 @@ describe('SDK authoritative skill runtime', () => {
   })
 
 })
+
+
+test('server projection retains goal control without exposing it as a model skill',async()=>{
+ const root=await mkdtemp(join(tmpdir(),'sdk-goal-projection-'));roots.push(root)
+ const commands=installSDKRuntimeProjection(root,{commands:[],plugins:[]})
+ expect(commands.find(command=>command.name==='goal')?.type).toBe('local')
+ expect((await getSkillToolCommands(root)).some(command=>command.name==='goal')).toBe(false)
+})

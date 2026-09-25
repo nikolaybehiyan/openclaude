@@ -381,3 +381,5 @@ export type {
   ApiKeySource,
   PermissionResult,
 } from './coreTypes.generated.js'
+
+export type {BundledWorkflowOptions} from '../../tools/WorkflowTool/sdkEntry.js'

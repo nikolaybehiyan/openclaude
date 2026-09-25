@@ -541,6 +541,16 @@ sdkResult = await Bun.build({
     {
       name: 'sdk-missing-stub',
       setup(build) {
+        const isHeadlessGoal = (specifier: string) => /(?:^|\/)commands\/goal\/(?:index|goal-noninteractive|wire)\.[jt]s$/.test(specifier)
+        // Keep the real headless goal control, but do not pull its sibling
+        // interactive dialog into the SDK via index.ts's lazy JSX loader.
+        build.onResolve({filter:/^\.\/goal\.js$/}, args =>
+          /\/commands\/goal\/index\.[jt]s$/.test(args.importer)
+            ? {path:args.path,namespace:'sdk-goal-dialog'} : null)
+        build.onLoad({filter:/.*/,namespace:'sdk-goal-dialog'},()=>({
+          contents:'export function call() { throw new Error("Interactive goal dialog is unavailable in SDK"); }',loader:'js',
+        }))
+
         const missingModules = [
           '@anthropic-ai/mcpb',
           '@ant/claude-for-chrome-mcp',
@@ -568,7 +578,7 @@ sdkResult = await Bun.build({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))
-        build.onResolve({ filter: /^(\.\.?\/)+commands\// }, (args) => ({
+        build.onResolve({ filter: /^(\.\.?\/)+commands\// }, (args) => isHeadlessGoal(args.path) ? null : ({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))
@@ -612,7 +622,7 @@ sdkResult = await Bun.build({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))
-        build.onResolve({ filter: /^\.\/commands\// }, (args) => ({
+        build.onResolve({ filter: /^\.\/commands\// }, (args) => isHeadlessGoal(args.path) ? null : ({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))
@@ -651,7 +661,7 @@ sdkResult = await Bun.build({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))
-        build.onResolve({ filter: /^src\/commands\// }, (args) => ({
+        build.onResolve({ filter: /^src\/commands\// }, (args) => isHeadlessGoal(args.path) ? null : ({
           path: args.path,
           namespace: 'sdk-missing-stub',
         }))

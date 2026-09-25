@@ -1,3 +1,6 @@
+import {startBundledWorkflow,type BundledWorkflowOptions} from './tools/WorkflowTool/sdkEntry.js'
+import {drainSdkEvents} from './utils/sdkEventQueue.js'
+import {createAssistantMessage} from './utils/messages.js'
 import { feature } from 'bun:bundle'
 import type { ContentBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs'
 import { randomUUID } from 'crypto'
@@ -223,6 +226,7 @@ export class QueryEngine {
       isMeta?: boolean
       shouldQuery?: boolean
       verifiedSlackHumanTurn?: boolean
+      bundledWorkflow?: BundledWorkflowOptions
     },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     const {
@@ -439,6 +443,9 @@ export class QueryEngine {
       }
     }
 
+    const previousGoalMarker = this.mutableMessages.findLast(
+      message => message.type === 'attachment' && message.attachment.type === 'goal_status',
+    )
     const {
       messages: messagesFromUserInput,
       shouldQuery,
@@ -495,14 +502,17 @@ export class QueryEngine {
     // kill-mid-request. The await is ~4ms on SSD, ~30ms under disk contention
     // — the single largest controllable critical-path cost after module eval.
     // Transcript is still written (for post-hoc debugging); just not blocking.
-    if (persistSession && messagesFromUserInput.length > 0) {
+    const goalStateChanged = this.mutableMessages.findLast(
+      message => message.type === 'attachment' && message.attachment.type === 'goal_status',
+    ) !== previousGoalMarker
+    if (persistSession && (messagesFromUserInput.length > 0 || goalStateChanged)) {
       const transcriptPromise = recordTranscript(messages)
-      if (isBareMode()) {
+      if (isBareMode() && !goalStateChanged) {
         void transcriptPromise
       } else {
         await transcriptPromise
         if (
-          isEnvTruthy(process.env.CLAUDE_CODE_EAGER_FLUSH) ||
+          goalStateChanged || isEnvTruthy(process.env.CLAUDE_CODE_EAGER_FLUSH) ||
           isEnvTruthy(process.env.CLAUDE_CODE_IS_COWORK)
         ) {
           await flushSessionStorage()
@@ -604,6 +614,51 @@ export class QueryEngine {
 
     // Record when system message is yielded for headless latency tracking
     headlessProfilerCheckpoint('system_message_yielded')
+
+    if (options?.bundledWorkflow) {
+      const usageBefore=structuredClone(getModelUsage())
+      const run = await startBundledWorkflow(options.bundledWorkflow,processUserInputContext,wrappedCanUseTool)
+      let finished = false
+      const done = run.completion.finally(()=>{finished=true})
+      try {
+        while (!finished) {
+          let timer:ReturnType<typeof setTimeout>|undefined
+          await Promise.race([done,new Promise<void>(resolve=>{timer=setTimeout(resolve,200)})]).finally(()=>{if(timer)clearTimeout(timer)})
+          yield* drainSdkEvents()
+        }
+        const result=await done
+        const text=typeof result.result==='string'?result.result:JSON.stringify(result.result)
+        const workflowUsage={...EMPTY_USAGE}
+        for(const [model,usage] of Object.entries(getModelUsage())) {
+          const before=usageBefore[model]
+          workflowUsage.input_tokens+=Math.max(0,usage.inputTokens-(before?.inputTokens??0))
+          workflowUsage.output_tokens+=Math.max(0,usage.outputTokens-(before?.outputTokens??0))
+          workflowUsage.cache_read_input_tokens+=Math.max(0,usage.cacheReadInputTokens-(before?.cacheReadInputTokens??0))
+          workflowUsage.cache_creation_input_tokens+=Math.max(0,usage.cacheCreationInputTokens-(before?.cacheCreationInputTokens??0))
+        }
+        if(result.error){
+          if(persistSession)await flushSessionStorage()
+          yield {type:'result',subtype:'error_during_execution',is_error:true,errors:[result.error],
+            duration_ms:Date.now()-startTime,duration_api_ms:getTotalAPIDuration(),num_turns:result.agentCount,
+            session_id:getSessionId(),total_cost_usd:getTotalCost(),usage:workflowUsage,modelUsage:getModelUsage(),
+            permission_denials:this.permissionDenials,stop_reason:null,uuid:randomUUID()}
+          return
+        }
+        const assistant=createAssistantMessage({content:text??'',usage:workflowUsage})
+        this.mutableMessages.push(assistant)
+        if(persistSession){await recordTranscript(this.mutableMessages);await flushSessionStorage()}
+        yield {type:'assistant',message:assistant.message,uuid:assistant.uuid,session_id:getSessionId(),parent_tool_use_id:null}
+        yield {type:'result',subtype:'success',is_error:false,result:text??'',structured_output:result.result,
+          duration_ms:Date.now()-startTime,duration_api_ms:getTotalAPIDuration(),num_turns:result.agentCount,
+          session_id:getSessionId(),total_cost_usd:getTotalCost(),usage:workflowUsage,modelUsage:getModelUsage(),
+          permission_denials:this.permissionDenials,stop_reason:'end_turn',uuid:randomUUID()}
+      } finally {
+        // Iterator disposal and parent interrupt must stop children before releasing the run lease.
+        run.task.abortController?.abort()
+        await done
+      }
+      return
+    }
 
     if (!effectiveShouldQuery) {
       // Return the results of local slash commands.
@@ -903,7 +958,14 @@ export class QueryEngine {
           // Record inline (same reason as progress above).
           if (persistSession) {
             messages.push(message)
-            void recordTranscript(messages)
+            if (message.attachment.type === 'goal_status') {
+              // Goal completion/clear must survive an immediate close/resume,
+              // including SDK hosts that do not opt into eager transcript writes.
+              await recordTranscript(messages)
+              await flushSessionStorage()
+            } else {
+              void recordTranscript(messages)
+            }
           }
 
           // Extract structured output from StructuredOutput tool calls

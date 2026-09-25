@@ -32,6 +32,10 @@ export function launchWorkflowRun(options:{
   readPermissionContext:WorkflowLocalAgentOptions['readPermissionContext']
   classifyDispatch:WorkflowLocalAgentOptions['classifyDispatch']
   onError:(error:unknown)=>void
+  onProgress?:WorkflowLocalAgentOptions['onProgress']
+  onAgentMessage?:WorkflowLocalAgentOptions['onAgentMessage']
+  restrictToParentTools?:boolean
+  maxOutputTokens?:number
 }):{task:LocalWorkflowTaskState;completion:Promise<WorkflowVMResult>} {
   const {lease,parent}=options,meta=lease.approved.meta
   const setAppState=parent.setAppStateForTasks??parent.setAppState
@@ -47,7 +51,8 @@ export function launchWorkflowRun(options:{
   }
   const controller=task.abortController!,context={...parent,abortController:controller}
   const outputAtStart=getTotalOutputTokens()-getTurnOutputTokens()
-  const budget={total:getCurrentTurnTokenBudget(),getTurnSpent:()=>getTotalOutputTokens()-outputAtStart}
+  const limits=[getCurrentTurnTokenBudget(),options.maxOutputTokens].filter((v):v is number=>v!=null)
+  const budget={total:limits.length?Math.min(...limits):null,getTurnSpent:()=>getTotalOutputTokens()-outputAtStart}
   const pending=new Set<Promise<unknown>>()
   let lastSdkSnapshot=0
   const batcher=createWorkflowProgressBatcher({
@@ -65,11 +70,11 @@ export function launchWorkflowRun(options:{
         workflowProgress:full?state.workflowProgress.filter((item):item is SdkWorkflowProgress=>item.type!=='workflow_log'):undefined})
     },
   })
-  const progress:WorkflowLocalAgentOptions['onProgress']=event=>batcher.onProgress(event.data as WorkflowProgress)
+  const progress:WorkflowLocalAgentOptions['onProgress']=event=>{batcher.onProgress(event.data as WorkflowProgress);options.onProgress?.(event)}
   let bridge:WorkflowVMBridge,child:WorkflowVMFunction
   let hooks:ReturnType<typeof createWorkflowAgentDispatcher>|undefined
   const executor=createWorkflowLocalAgent({parent:context,canUseTool:options.canUseTool,workflowRunId:lease.runId,workflowName:meta.name,
-    invokingRequestId:options.invokingRequestId,readPermissionContext:options.readPermissionContext,classifyDispatch:options.classifyDispatch,
+    invokingRequestId:options.invokingRequestId,onAgentMessage:options.onAgentMessage,restrictToParentTools:options.restrictToParentTools,readPermissionContext:options.readPermissionContext,classifyDispatch:options.classifyDispatch,
     onClassifierError:options.onError,onProgress:progress,recordFailure:message=>hooks!.recordFailure(message),
     onController:(agentId,childController)=>{
       if(childController) {

@@ -1,3 +1,4 @@
+import type {BundledWorkflowOptions} from '../../tools/WorkflowTool/sdkEntry.js'
 import { restoreGoalFromTranscript } from '../../utils/goal.js'
 /**
  * V2 API for the SDK — persistent sessions and one-shot prompt.
@@ -30,6 +31,7 @@ import {
 } from '../../utils/sessionStoragePortable.js'
 import { readJSONLFile } from '../../utils/json.js'
 import { stat } from 'fs/promises'
+import { realpathSync } from 'node:fs'
 import {
   switchSession,
   runWithSdkContext,
@@ -308,6 +310,8 @@ export interface SDKSession {
   sessionId: string
   /** Send a message and yield responses as an AsyncIterable of SDKMessage. */
   sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  /** Run a bundled workflow explicitly, with the same session, tools and permission policy. */
+  runBundledWorkflow(content:string | ContentBlockParam[], workflow:BundledWorkflowOptions, options?:{uuid?:string;retryParentMessageUuid?:string}):AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
@@ -361,6 +365,7 @@ export type SDKSessionEventReader = () => Promise<
 >
 
 type SDKExecutionContext = {
+  sessionStorageOwner: object
   sessionId: SessionId
   sessionProjectDir: string | null
   cwd: string
@@ -434,6 +439,7 @@ class SDKSessionImpl implements SDKSession {
     return this._engine
   }
   private _sessionId: string
+  private readonly sessionStorageOwner = {}
   private options: SDKSessionOptions
   private _appStateStore: Store<AppState> | null = null
   private get appStateStore(): Store<AppState> {
@@ -476,6 +482,20 @@ class SDKSessionImpl implements SDKSession {
     this.mcpServers = options.mcpServers
   }
 
+  private executionContext(): SDKExecutionContext {
+    return {
+      sessionId: this._sessionId as SessionId,
+      sessionProjectDir: this._sessionProjectDir,
+      cwd: this.options.cwd,
+      originalCwd: this.options.cwd,
+      sessionStorageOwner: this.sessionStorageOwner,
+    }
+  }
+
+  runInContext<T>(fn: () => T): T {
+    return runWithSdkContext(this.executionContext(), fn)
+  }
+
   /** Late-bind the engine (used when session is created before engine). */
   setEngine(engine: QueryEngine): void {
     this._engine = engine
@@ -502,12 +522,7 @@ class SDKSessionImpl implements SDKSession {
    * This only primes native connections; it never delays session creation.
    */
   startBackgroundRuntime(): void {
-    const sdkContext = {
-      sessionId: this._sessionId as SessionId,
-      sessionProjectDir: this._sessionProjectDir,
-      cwd: this.options.cwd,
-      originalCwd: this.options.cwd,
-    }
+    const sdkContext = this.executionContext()
     void runWithSdkContext(sdkContext, async () => {
       await init()
       const mcpStartup = this.ensureMcpServersConnected()
@@ -754,7 +769,12 @@ class SDKSessionImpl implements SDKSession {
     this.agentsLoaded = true
   }
 
-  async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string }): AsyncIterable<SDKMessage> {
+  runBundledWorkflow(content:string | ContentBlockParam[],workflow:BundledWorkflowOptions,options?:{uuid?:string;retryParentMessageUuid?:string}):AsyncIterable<SDKMessage> {
+    if(options?.retryParentMessageUuid)return this.retryMessage(options.retryParentMessageUuid,{bundledWorkflow:workflow})
+    return this.sendMessage(content,{...options,bundledWorkflow:workflow})
+  }
+
+  async *sendMessage(content: string | ContentBlockParam[], options?: { uuid?: string; bundledWorkflow?:BundledWorkflowOptions }): AsyncIterable<SDKMessage> {
 	const lifecycleStartedAt = Date.now()
 	const reportLifecycle = (phase: SDKSessionLifecycleReport['phase']) => {
 	  try {
@@ -764,12 +784,7 @@ class SDKSessionImpl implements SDKSession {
 	  }
 	}
 	reportLifecycle('send_started')
-    const sdkContext = {
-      sessionId: this._sessionId as SessionId,
-      sessionProjectDir: this._sessionProjectDir,
-      cwd: this.options.cwd,
-      originalCwd: this.options.cwd,
-    }
+    const sdkContext = this.executionContext()
 
     const self = this
     const inner = runSdkContextIterable(sdkContext, () => {
@@ -816,13 +831,8 @@ class SDKSessionImpl implements SDKSession {
     this.replaceEngineWithInitialMessages(messages as any[])
   }
 
-  async *retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage> {
-    const sdkContext = {
-      sessionId: this._sessionId as SessionId,
-      sessionProjectDir: this._sessionProjectDir,
-      cwd: this.options.cwd,
-      originalCwd: this.options.cwd,
-    }
+  async *retryMessage(parentUserMessageUuid: string, options?:{bundledWorkflow?:BundledWorkflowOptions}): AsyncIterable<SDKMessage> {
+    const sdkContext = this.executionContext()
 
     const self = this
     const inner = runSdkContextIterable(sdkContext, () => {
@@ -839,7 +849,7 @@ class SDKSessionImpl implements SDKSession {
         await self.ensureAgentsLoaded()
         switchSession(self._sessionId as SessionId, self._sessionProjectDir)
         try {
-          yield* self.runEngineTurn(retryPrompt, { uuid: parentUserMessageUuid })
+          yield* self.runEngineTurn(retryPrompt, { uuid: parentUserMessageUuid, ...options })
         } finally {
           self.agentFailureQueue.length = 0
         }
@@ -879,11 +889,11 @@ class SDKSessionImpl implements SDKSession {
     // does across turns; reconnecting here dropped tools and restarted every
     // handshake before each warm request.
     const preservedMcpClients = [...(this._engine?.getMcpClients?.() ?? [])]
-    const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
+    const { engine, appStateStore, abortController, commands } = this.runInContext(() => createEngineFromOptions(
       this.options,
       signatureSafeMessages,
       this._sessionId,
-    )
+    ))
     this._engine = engine
     this._appStateStore = appStateStore
     this._abortController = abortController
@@ -893,8 +903,7 @@ class SDKSessionImpl implements SDKSession {
     this.agentsLoaded = false
     this.engine.setMcpClients(preservedMcpClients)
     this.applyPermissionContextFromOptions()
-    runWithSdkContext({sessionId: this._sessionId as SessionId, sessionProjectDir: this._sessionProjectDir,
-      cwd: this.options.cwd, originalCwd: this.options.cwd}, () =>
+    this.runInContext(() =>
       restoreGoalFromTranscript(this.engine.getMessages(), update => this.appStateStore.setState(update)))
   }
 
@@ -916,7 +925,7 @@ class SDKSessionImpl implements SDKSession {
 
   private async *runEngineTurn(
     content: string | ContentBlockParam[],
-    options?: { uuid?: string; isMeta?: boolean },
+    options?: { uuid?: string; isMeta?: boolean; bundledWorkflow?:BundledWorkflowOptions },
   ): AsyncGenerator<SDKMessage, void, unknown> {
     let heldBackResult: SDKMessage | null = null
     for await (const engineMsg of this.engine.submitMessage(content, options)) {
@@ -2028,10 +2037,14 @@ function applySessionSettingSources(settingSources?: string[]): void {
  * ```
  */
 export function unstable_v2_createSession(options: SDKSessionOptions): SDKSession {
+  // Match resume's canonical project path (notably /var -> /private/var on
+  // macOS), otherwise a newly written transcript cannot be found on resume.
+  let cwd = options.cwd
+  try { cwd = realpathSync(cwd).normalize('NFC') } catch { cwd = cwd?.normalize('NFC') }
   const sessionId = randomUUID()
-  configureSessionEventStore(options)
   const session = new SDKSessionImpl(null, sessionId, options, null)
-  const { engine, appStateStore, abortController, commands } = createEngineFromOptions(options, undefined, sessionId)
+  if (cwd) session.setSessionProjectDir(getProjectDir(cwd))
+  const { engine, appStateStore, abortController, commands } = session.runInContext(() => createEngineFromOptions(options, undefined, sessionId))
   // Wire the engine, store, and abort controller into the session
   session.setEngine(engine)
   session.setAppStateStore(appStateStore)
@@ -2069,17 +2082,11 @@ export async function unstable_v2_resumeSession(
   const sessionCwd = await canonicalizePath(options.cwd)
   const sessionProjectDir = getProjectDir(sessionCwd)
   const sessionOptions = { ...options, cwd: sessionCwd }
-  configureSessionEventStore(sessionOptions)
+  const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
+  session.setSessionProjectDir(sessionProjectDir)
+  session.runInContext(() => configureSessionEventStore(sessionOptions))
   if (sessionOptions.sessionEventReader) {
-    await runWithSdkContext(
-      {
-        sessionId: sessionId as SessionId,
-        sessionProjectDir,
-        cwd: sessionCwd,
-        originalCwd: sessionCwd,
-      },
-      () => hydrateFromCCRv2InternalEvents(sessionId),
-    )
+    await session.runInContext(() => hydrateFromCCRv2InternalEvents(sessionId))
   }
 
   // Load prior messages from JSONL with compact-aware chain building.
@@ -2169,13 +2176,12 @@ export async function unstable_v2_resumeSession(
     initialMessages = []
   }
 
-  const session = new SDKSessionImpl(null, sessionId, sessionOptions, null)
   const signatureSafeInitialMessages = stripSignatureBlocks(normalizeSDKSyncedMessages(initialMessages))
-  const { engine, appStateStore, abortController, commands } = createEngineFromOptions(
+  const { engine, appStateStore, abortController, commands } = session.runInContext(() => createEngineFromOptions(
     sessionOptions,
     signatureSafeInitialMessages as any[],
     sessionId,
-  )
+  ))
   session.setEngine(engine)
   session.setAppStateStore(appStateStore)
   session.setAbortController(abortController)
@@ -2189,9 +2195,7 @@ export async function unstable_v2_resumeSession(
     switchSession(sessionId as SessionId, transcriptDir)
   }
 
-  runWithSdkContext({sessionId: sessionId as SessionId,
-    sessionProjectDir: resolved ? dirname(resolved.filePath) : sessionProjectDir,
-    cwd: sessionCwd, originalCwd: sessionCwd}, () =>
+  session.runInContext(() =>
     restoreGoalFromTranscript(engine.getMessages(), update => appStateStore.setState(update)))
 
   session.startBackgroundRuntime()

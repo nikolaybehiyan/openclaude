@@ -68,6 +68,8 @@ export type WorkflowLocalAgentOptions = {
   onProgress(progress:WorkflowProgressEvent): void
   recordFailure(message:string): void
   maxStructuredOutputRetries?: number
+  restrictToParentTools?: boolean
+  onAgentMessage?:(agent:{index:number;label:string;agentId:string},event:WorkflowAgentMessage)=>void
 }
 function schemaForClassification(schema:unknown): {json?:string;error?:string} {
   if (schema == null) return {}
@@ -154,7 +156,8 @@ export function createWorkflowLocalAgent(options:WorkflowLocalAgentOptions) {
     const definition=effort===undefined?base:{...base,effort}
     const state=parent.getAppState(), currentPermissions=options.readPermissionContext(parent)
     const mcp:Tools=[...state.mcp.tools,...parent.options.tools.filter(tool=>tool.isMcp)]
-    const pool=assembleToolPool({...currentPermissions,mode:definition.permissionMode??'acceptEdits'},mcp)
+    const assembled=assembleToolPool({...currentPermissions,mode:definition.permissionMode??'acceptEdits'},mcp)
+    const pool=options.restrictToParentTools?assembled.filter(tool=>parent.options.tools.some(allowed=>allowed.name===tool.name)):assembled
     const tools=structuredTool?[...pool.filter(tool=>!toolMatchesName(tool,SYNTHETIC_OUTPUT_TOOL_NAME)),structuredTool]:pool
     const model=getAgentModel(definition.model,parent.options.mainLoopModel,supplied?.model as string|undefined,currentPermissions.mode)
     let isolated:Awaited<ReturnType<typeof createAgentWorktree>>|undefined
@@ -179,6 +182,7 @@ export function createWorkflowLocalAgent(options:WorkflowLocalAgentOptions) {
           request.onStarted(agentId)
           let fallbackModel:string|undefined
           const perform=()=>runWithAgentContext(identity,()=>runWorkflowAgentAttempt({signal:parent.abortController.signal,stallMs:request.stallMs,
+            onMessage:event=>options.onAgentMessage?.({index:request.index,label,agentId},event),
             structured:!!structuredTool,autoMode:currentPermissions.mode==='auto',maxStructuredOutputRetries:options.maxStructuredOutputRetries??5,
             onController:controller=>options.onController(agentId,controller),countTokens:usage=>usage?getTokenCountFromUsage(usage as unknown as Parameters<typeof getTokenCountFromUsage>[0]):0,
             summarizeToolInput:summary,onModel:value=>{if(value!==model && getCanonicalName(value)!==getCanonicalName(model))fallbackModel=value},

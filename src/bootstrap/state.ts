@@ -450,6 +450,7 @@ type SdkContext = {
   cwd: string
   originalCwd: string
   parentSessionId?: SessionId
+  sessionStorageOwner?: object
 }
 
 import { AsyncLocalStorage } from 'async_hooks'
@@ -471,6 +472,10 @@ export function runWithSdkContext<T>(context: SdkContext, fn: () => T): T {
 
 function getSdkContext(): SdkContext | undefined {
   return sdkContextStorage.getStore()
+}
+
+export function getSdkSessionStorageOwner(): object | undefined {
+  return getSdkContext()?.sessionStorageOwner
 }
 
 export function getSessionId(): SessionId {
@@ -1140,11 +1145,13 @@ export function setTracerProvider(provider: BasicTracerProvider | null): void {
 }
 
 export function getIsNonInteractiveSession(): boolean {
-  return !STATE.isInteractive
+  // Persistent SDK sessions may share a process with an interactive client.
+  // Their commands and hook trust must follow the scoped host, not the TUI.
+  return getSdkContext() !== undefined || !STATE.isInteractive
 }
 
 export function getIsInteractive(): boolean {
-  return STATE.isInteractive
+  return !getIsNonInteractiveSession()
 }
 
 export function setIsInteractive(value: boolean): void {

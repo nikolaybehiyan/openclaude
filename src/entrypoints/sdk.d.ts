@@ -575,9 +575,20 @@ export type SDKSessionUpdateOptions = Pick<
   | 'thinkingConfig'
 >
 
+export interface BundledWorkflowOptions {
+  name:'code-review'|'deep-research'
+  args:string
+  resumeFromRunId?:string
+  timeoutMs?:number
+  maxOutputTokens?:number
+  onProgress?:(event:{type:string;toolUseID:string;data:Record<string,unknown>})=>void
+  onAgentMessage?:(agent:{index:number;label:string;agentId:string},event:unknown)=>void
+  onStarted?:(runId:string,taskId:string)=>void
+}
 export interface SDKSession {
   sessionId: string
   sendMessage(content: string, options?: { uuid?: string }): AsyncIterable<SDKMessage>
+  runBundledWorkflow(content:string,workflow:BundledWorkflowOptions,options?:{uuid?:string;retryParentMessageUuid?:string}):AsyncIterable<SDKMessage>
   /** Regenerate an assistant response from an existing user message UUID. */
   retryMessage(parentUserMessageUuid: string): AsyncIterable<SDKMessage>
   /** Update live per-turn session options without replacing session history. */
