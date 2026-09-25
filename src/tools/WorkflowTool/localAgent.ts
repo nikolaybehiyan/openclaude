@@ -91,7 +91,15 @@ function summary(input:unknown):string|undefined {
 
 /** ZNp.Y → actual runAgent, preserving caller CanUseTool on every attempt. */
 export function createWorkflowLocalAgent(options:WorkflowLocalAgentOptions) {
-  const parent:ToolUseContext={...options.parent,isBackgroundAgent:true,setAppState:()=>{}}
+  const parent:ToolUseContext={...options.parent,isBackgroundAgent:true,setAppState:()=>{},getAppState:()=>{
+    const state=options.parent.getAppState()
+    // 226 runAgent reads effective invocation layers internally. Our shared
+    // runAgent still consumes AppState, so carry the same LIVE policy into
+    // every child permission check, not only dispatch/model/tool selection.
+    // Read from the original owner to avoid recursively layering this getter.
+    const toolPermissionContext=options.readPermissionContext(options.parent)
+    return toolPermissionContext===state.toolPermissionContext?state:{...state,toolPermissionContext}
+  }}
   // Serialize worktree creation only; inference still uses dispatcher concurrency.
   let worktreeQueue:Promise<unknown>=Promise.resolve()
   const log=(message:string)=>options.onProgress({type:'progress',toolUseID:'workflow_log',data:{type:'workflow_log',message}})

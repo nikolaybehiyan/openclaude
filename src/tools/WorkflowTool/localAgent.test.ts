@@ -3,6 +3,7 @@ import {getEmptyToolPermissionContext,type ToolUseContext} from '../../Tool.js'
 import type {QueryParams} from '../../query.js'
 import {createFileStateCacheWithSizeLimit} from '../../utils/fileStateCache.js'
 import {getAgentContext} from '../../utils/agentContext.js'
+import {readWorkflowPermissionContext,type WorkflowPermissionOwner} from './permissionLayers.ts'
 
 const queryModule=await import('../../query.js'),storage=await import('../../utils/sessionStorage.js')
 const hooks=await import('../../utils/hooks.js'),settings=await import('../../utils/settings/settings.js')
@@ -80,4 +81,20 @@ test('cancellation while dispatch is checked stops even if classifier returns al
   f.options.classifyDispatch=async()=>{f.parent.abortController.abort();return null}
   await expect(createWorkflowLocalAgent(f.options)(f.request())).rejects.toThrow('Workflow aborted')
   expect(captured.length).toBe(count)
+})
+
+test('effective invocation layers reach actual runAgent and parent revocations stay live',async()=>{
+  const f=fixture()
+  const owner=f.parent as ToolUseContext&WorkflowPermissionOwner
+  owner.permissionLayers=[{kind:'disallowed_tools',disallowedTools:['Write']},{kind:'avoid_prompts'}]
+  f.options.readPermissionContext=context=>readWorkflowPermissionContext(context as WorkflowPermissionOwner,{isBypassBlocked:()=>true})
+  expect(await createWorkflowLocalAgent(f.options)(f.request())).toBe('42')
+  const child=captured.at(-1)!.params.toolUseContext
+  expect(child.getAppState().toolPermissionContext.alwaysDenyRules.command).toEqual(['Write'])
+  expect(child.getAppState().toolPermissionContext.shouldAvoidPermissionPrompts).toBe(true)
+  expect(f.state.toolPermissionContext.alwaysDenyRules.command).toBeUndefined()
+  f.state.toolPermissionContext={...f.state.toolPermissionContext,alwaysDenyRules:{policySettings:['Read']}}
+  expect(child.getAppState().toolPermissionContext.alwaysDenyRules.policySettings).toEqual(['Read'])
+  expect(child.getAppState().toolPermissionContext.alwaysDenyRules.command).toEqual(['Write'])
+  expect(captured.at(-1)!.params.canUseTool).toBe(f.options.canUseTool)
 })
