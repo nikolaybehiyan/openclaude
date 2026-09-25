@@ -484,6 +484,7 @@ export interface HookResult {
   outcome: 'success' | 'blocking' | 'non_blocking_error' | 'cancelled'
   preventContinuation?: boolean
   stopReason?: string
+  impossible?: boolean
   permissionBehavior?: 'ask' | 'deny' | 'allow' | 'passthrough'
   hookPermissionDecisionReason?: string
   additionalContext?: string
@@ -499,10 +500,12 @@ export interface HookResult {
 }
 
 export type AggregatedHookResult = {
+  hook?: HookCommand | HookCallback | FunctionHook
   message?: HookResultMessage
   blockingError?: HookBlockingError
   preventContinuation?: boolean
   stopReason?: string
+  impossible?: boolean
   hookPermissionDecisionReason?: string
   hookSource?: string
   permissionBehavior?: PermissionResult['behavior']
@@ -2902,15 +2905,20 @@ async function* executeHooks({
       }
     }
 
+    const promptDetails = result.hook?.type === 'prompt'
+      ? { hook: result.hook, stopReason: result.stopReason, impossible: result.impossible }
+      : {}
+
     // Handle different result types
     if (result.blockingError) {
       yield {
         blockingError: result.blockingError,
+        ...promptDetails,
       }
     }
 
     if (result.message) {
-      yield { message: result.message }
+      yield { message: result.message, ...promptDetails }
     }
 
     // Yield system message separately if present

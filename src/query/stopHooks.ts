@@ -1,4 +1,10 @@
 import { feature } from 'bun:bundle'
+import { getSessionId, getTotalOutputTokens } from '../bootstrap/state.js'
+import { createGoalStatusMessage, getGoalHooks, hasGoalBackgroundWork } from '../utils/goal.js'
+import { addSessionHook, removeSessionHook } from '../utils/hooks/sessionHooks.js'
+import { isHookEqual } from '../utils/hooks/hooksSettings.js'
+import type { PromptHook } from '../utils/settings/types.js'
+import { notifySessionMetadataChanged } from '../utils/sessionState.js'
 import { getShortcutDisplay } from '../keybindings/shortcutFormat.js'
 import { isExtractModeActive } from '../memdir/paths.js'
 import {
@@ -243,10 +249,24 @@ export async function* handleStopHooks(
     }
   }
 
+  let deferredGoalHook: PromptHook | undefined
+  const goalAtStart = toolUseContext.getAppState().activeGoal
+  const sessionId = getSessionId()
   try {
     const blockingErrors: Message[] = [...enforcementMessages]
     const appState = toolUseContext.getAppState()
     const permissionMode = appState.toolPermissionContext.mode
+    if (!toolUseContext.agentId && goalAtStart && hasGoalBackgroundWork(appState.tasks ?? {})) {
+      deferredGoalHook = getGoalHooks(appState, sessionId).find(hook => hook.prompt === goalAtStart.condition)
+      if (deferredGoalHook) removeSessionHook(toolUseContext.setAppState, sessionId, 'Stop', deferredGoalHook)
+    }
+    const matchingSessionHook = (hook: unknown) => !toolUseContext.agentId && hook
+      ? getGoalHooks(toolUseContext.getAppState(), sessionId).find(candidate => isHookEqual(candidate, hook as PromptHook))
+      : undefined
+    const matchingGoal = (hook: PromptHook) => {
+      const current = toolUseContext.getAppState().activeGoal
+      return current && current === goalAtStart && current.condition === hook.prompt ? current : undefined
+    }
 
     const generator = executeStopHooks(
       permissionMode,
@@ -269,6 +289,11 @@ export async function* handleStopHooks(
     const hookInfos: StopHookInfo[] = []
 
     for await (const result of generator) {
+      if (!toolUseContext.agentId && result.hook?.type === 'prompt' &&
+        goalAtStart?.condition === result.hook.prompt &&
+        toolUseContext.getAppState().activeGoal !== goalAtStart) {
+        continue // /goal clear or replacement won the race with this evaluator.
+      }
       if (result.message) {
         yield result.message
         // Track toolUseID from progress messages and count hooks
@@ -302,6 +327,23 @@ export async function* handleStopHooks(
               hookErrors.push(attachment.content)
               hasOutput = true
             } else if (attachment.type === 'hook_success') {
+              const hook = attachment.hookEvent === 'Stop' ? matchingSessionHook(result.hook) : undefined
+              if (hook) {
+                const goal = matchingGoal(hook)
+                // A replaced/cleared goal must not be completed by an older evaluator.
+                if (!toolUseContext.getAppState().activeGoal || goal) {
+                  removeSessionHook(toolUseContext.setAppState, sessionId, 'Stop', hook)
+                }
+                if (goal) {
+                  yield { type: 'active_goal', value: undefined }
+                  yield createGoalStatusMessage({ condition: hook.prompt, met: !result.impossible,
+                    ...(result.impossible ? { failed: true } : {}), reason: result.stopReason,
+                    iterations: goal.iterations + 1, durationMs: Date.now() - goal.setAt,
+                    tokens: getTotalOutputTokens() - goal.tokensAtStart })
+                  if (!result.impossible) notifySessionMetadataChanged({goal: {condition: goal.condition,
+                    set_at: goal.setAt, iterations: goal.iterations + 1, last_reason: null, met: true}})
+                }
+              }
               // Check if successful hook produced any stdout/stderr
               if (
                 (attachment.stdout && attachment.stdout.trim()) ||
@@ -333,8 +375,12 @@ export async function* handleStopHooks(
         blockingErrors.push(userMessage)
         yield userMessage
         hasOutput = true
-        // Add to hookErrors so it appears in the summary
-        hookErrors.push(result.blockingError.blockingError)
+        const hook = matchingSessionHook(result.hook)
+        const goal = hook ? matchingGoal(hook) : undefined
+        if (goal) {
+          yield { type: 'active_goal', value: { ...goal, iterations: goal.iterations + 1, lastReason: result.stopReason } }
+          yield createGoalStatusMessage({ met: false, condition: goal.condition, reason: result.stopReason })
+        } else hookErrors.push(result.blockingError.blockingError)
       }
       // Check if hook wants to prevent continuation
       if (result.preventContinuation) {
@@ -540,5 +586,12 @@ export async function* handleStopHooks(
       'warning',
     )
     return { blockingErrors: enforcementMessages, preventContinuation: false }
+  } finally {
+    const current = toolUseContext.getAppState().activeGoal
+    if (deferredGoalHook && current === goalAtStart &&
+      current?.condition === deferredGoalHook.prompt &&
+      !getGoalHooks(toolUseContext.getAppState(), sessionId).some(hook => isHookEqual(hook, deferredGoalHook!))) {
+      addSessionHook(toolUseContext.setAppState, sessionId, 'Stop', '', deferredGoalHook)
+    }
   }
 }

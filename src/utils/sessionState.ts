@@ -1,3 +1,4 @@
+import type { ActiveGoal } from './goal.js'
 export type SessionState = 'idle' | 'running' | 'requires_action'
 
 /**
@@ -30,6 +31,7 @@ import { enqueueSdkEvent } from './sdkEventQueue.js'
 // CCR external_metadata keys — push in onChangeAppState, restore in
 // externalMetadataToAppState.
 export type SessionExternalMetadata = {
+  goal?: { condition: string; set_at: number; iterations: number; last_reason: string | null; met: boolean } | null
   permission_mode?: string | null
   is_ultraplan_mode?: boolean | null
   model?: string | null
@@ -83,6 +85,13 @@ export function setPermissionModeChangedListener(
   permissionModeListener = cb
 }
 
+let activeGoalListener: ((goal: ActiveGoal | undefined) => void) | null = null
+export function setActiveGoalChangedListener(listener: ((goal: ActiveGoal | undefined) => void) | null): void {
+  activeGoalListener = listener
+}
+export function notifyActiveGoalChanged(goal: ActiveGoal | undefined): void { activeGoalListener?.(goal) }
+
+let hasTerminalGoalSnapshot = false
 let hasPendingAction = false
 let currentState: SessionState = 'idle'
 
@@ -95,6 +104,10 @@ export function notifySessionStateChanged(
   details?: RequiresActionDetails,
 ): void {
   currentState = state
+  if (state === 'running' && hasTerminalGoalSnapshot) {
+    hasTerminalGoalSnapshot = false
+    metadataListener?.({goal: null})
+  }
   stateListener?.(state, details)
 
   // Mirror details into external_metadata so GetSession carries the
@@ -137,6 +150,7 @@ export function notifySessionStateChanged(
 export function notifySessionMetadataChanged(
   metadata: SessionExternalMetadata,
 ): void {
+  if ('goal' in metadata) hasTerminalGoalSnapshot = metadata.goal?.met === true
   metadataListener?.(metadata)
 }
 

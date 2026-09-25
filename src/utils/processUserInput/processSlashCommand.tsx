@@ -676,6 +676,16 @@ async function getMessagesForSlashCommand(commandName: string, args: string, set
             }
 
             // Use discriminated union to handle different result types
+            if (result.type === 'query') {
+              return {
+                messages: [userMessage,
+                  createCommandInputMessage(`<local-command-stdout>${result.value}</local-command-stdout>`),
+                  createUserMessage({content: result.prompt, isMeta: true})],
+                shouldQuery: true,
+                command,
+                resultText: result.value
+              };
+            }
             if (result.type === 'compact') {
               // Append slash command messages to messagesToKeep so that
               // attachments and hookResults come after user messages

@@ -16,6 +16,7 @@ import { addFunctionHook } from './sessionHooks.js'
 export const hookResponseSchema = lazySchema(() =>
   z.object({
     ok: z.boolean().describe('Whether the condition was met'),
+    impossible: z.boolean().describe('Whether the condition can never be satisfied (only meaningful when ok is false)').optional(),
     reason: z
       .string()
       .describe('Reason, if the condition was not met')

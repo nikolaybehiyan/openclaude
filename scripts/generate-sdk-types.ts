@@ -199,6 +199,7 @@ const EXPORT_ORDER = [
   'SDKTaskStartedMessageSchema',
   'SDKTaskProgressMessageSchema',
   'SDKSessionStateChangedMessageSchema',
+  'SDKActiveGoalMessageSchema',
   'SDKToolUseSummaryMessageSchema',
   'SDKElicitationCompleteMessageSchema',
   'SDKPromptSuggestionMessageSchema',

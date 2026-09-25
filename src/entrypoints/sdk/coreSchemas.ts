@@ -1880,6 +1880,16 @@ export const SDKSessionInfoSchema = lazySchema(() =>
     .describe('Session metadata returned by listSessions and getSessionInfo.'),
 )
 
+export const SDKActiveGoalMessageSchema = lazySchema(() =>
+  z.object({
+    type: z.literal('active_goal'),
+    value: z.object({condition: z.string(), iterations: z.number().int(),
+      set_at: z.number().int(), tokens_at_start: z.number().int(),
+      last_reason: z.string().optional()}).nullable(),
+    uuid: z.string().uuid(), session_id: z.string(),
+  }),
+)
+
 export const SDKMessageSchema = lazySchema(() =>
   z.union([
     SDKAssistantMessageSchema(),
@@ -1901,6 +1911,7 @@ export const SDKMessageSchema = lazySchema(() =>
     SDKTaskStartedMessageSchema(),
     SDKTaskProgressMessageSchema(),
     SDKSessionStateChangedMessageSchema(),
+    SDKActiveGoalMessageSchema(),
     SDKFilesPersistedEventSchema(),
     SDKToolUseSummaryMessageSchema(),
     SDKRateLimitEventSchema(),

@@ -1,3 +1,4 @@
+import { encodeActiveGoal } from '../commands/goal/wire.js'
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
 import { feature } from 'bun:bundle'
 import { applyNativeReasoningFlags, ultracodeIsActive } from '../utils/ultracodePolicy.js'
@@ -70,6 +71,7 @@ import {
   notifySessionStateChanged,
   notifySessionMetadataChanged,
   setPermissionModeChangedListener,
+  setActiveGoalChangedListener,
   type RequiresActionDetails,
   type SessionExternalMetadata,
 } from 'src/utils/sessionState.js'
@@ -1138,6 +1140,17 @@ function runHeadlessStreaming(
       })
     }
   })
+
+  // 2.1.226: remote clients receive the current goal immediately and every
+  // subsequent goal-state transition, including /goal clear outside a query.
+  if (process.env.CLAUDE_CODE_REMOTE) {
+    const emitGoal = (goal: AppState['activeGoal']) => output.enqueue({
+      type: 'active_goal', value: encodeActiveGoal(goal), uuid: randomUUID(), session_id: getSessionId(),
+    })
+    setActiveGoalChangedListener(emitGoal)
+    emitGoal(getAppState().activeGoal)
+    registerCleanup(async () => { setActiveGoalChangedListener(null) })
+  }
 
   // Prompt suggestion tracking (push model)
   const suggestionState: {

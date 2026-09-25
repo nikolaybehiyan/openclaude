@@ -15,6 +15,7 @@ import type { PluginManifest } from './plugin.js'
 
 export type LocalCommandResult =
   | { type: 'text'; value: string }
+  | { type: 'query'; value: string; prompt: string }
   | {
       type: 'compact'
       compactionResult: CompactionResult

@@ -136,6 +136,7 @@ export async function clearConversation({
     setAppState(prev => {
       // Partition tasks using the same predicate computed above:
       // kill+remove foreground tasks, preserve everything else.
+      prev.sessionHooks.delete(getSessionId())
       const nextTasks: AppState['tasks'] = {}
       for (const [taskId, task] of Object.entries(prev.tasks)) {
         if (!shouldKillTask(task)) {
@@ -168,6 +169,7 @@ export async function clearConversation({
       return {
         ...prev,
         tasks: nextTasks,
+        activeGoal: undefined,
         attribution: createEmptyAttributionState(),
         // Clear standalone agent context (name/color set by /rename, /color)
         // so the new session doesn't display the old session's identity badge

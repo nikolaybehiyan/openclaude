@@ -231,6 +231,7 @@ export type AppState = DeepImmutable<{
   thinkingBudgetTokens?: number
   promptSuggestionEnabled: boolean
   sessionHooks: SessionHooksState
+  activeGoal?: import('../utils/goal.js').ActiveGoal
   tungstenActiveSession?: {
     sessionName: string
     socketName: string

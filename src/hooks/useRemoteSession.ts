@@ -1,3 +1,5 @@
+import { decodeActiveGoal } from '../commands/goal/wire.js'
+import { SDKActiveGoalMessageSchema } from '../entrypoints/sdk/coreSchemas.js'
 import { useCallback, useEffect, useMemo, useRef } from 'react'
 import { BoundedUUIDSet } from '../bridge/bridgeMessaging.js'
 import type { ToolUseConfirm } from '../components/permissions/PermissionRequest.js'
@@ -172,6 +174,15 @@ export function useRemoteSession({
         if (responseTimeoutRef.current) {
           clearTimeout(responseTimeoutRef.current)
           responseTimeoutRef.current = null
+        }
+
+        if (sdkMessage.type === 'active_goal') {
+          const parsed = SDKActiveGoalMessageSchema().safeParse(sdkMessage)
+          if (parsed.success) {
+            const activeGoal = decodeActiveGoal(parsed.data.value)
+            setAppState(prev => ({...prev, activeGoal}))
+          }
+          return
         }
 
         // Echo filter: drop user messages we already added locally before POST.

@@ -439,6 +439,7 @@ export type HookNonBlockingErrorAttachment = {
 }
 
 export type Attachment =
+  | import('../types/message.js').GoalStatusAttachment
   /**
    * User at-mentioned the file
    */

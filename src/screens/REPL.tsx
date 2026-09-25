@@ -2622,6 +2622,10 @@ export function REPL({
     onBackgroundQuery: handleBackgroundQuery
   });
   const onQueryEvent = useCallback((event: Parameters<typeof handleMessageFromStream>[0]) => {
+    if (event.type === 'active_goal') {
+      setAppState(prev => prev.activeGoal === event.value ? prev : {...prev, activeGoal: event.value});
+      return;
+    }
     handleMessageFromStream(event, newMessage => {
       if (isCompactBoundaryMessage(newMessage)) {
         // Fullscreen: keep pre-compact messages for scrollback. query.ts
@@ -2697,7 +2701,7 @@ export function REPL({
         endResponseLength: baseline
       });
     }, onStreamingText);
-  }, [setMessages, setResponseLength, setStreamMode, setStreamingToolUses, setStreamingThinking, onStreamingText]);
+  }, [setAppState, setMessages, setResponseLength, setStreamMode, setStreamingToolUses, setStreamingThinking, onStreamingText]);
   const onQueryImpl = useCallback(async (messagesIncludingNewMessages: MessageType[], newMessages: MessageType[], abortController: AbortController, shouldQuery: boolean, additionalAllowedTools: string[], mainLoopModelParam: string, effort?: EffortValue) => {
     // Prepare IDE integration for new prompt. Read mcpClients fresh from
     // store — useManageMCPConnections may have populated it since the

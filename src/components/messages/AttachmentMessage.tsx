@@ -6,7 +6,7 @@ import type { Attachment } from 'src/utils/attachments.js';
 import type { NullRenderingAttachmentType } from './nullRenderingAttachments.js';
 import { useAppState } from '../../state/AppState.js';
 import { getDisplayPath } from 'src/utils/file.js';
-import { formatFileSize } from 'src/utils/format.js';
+import { formatFileSize, formatDuration, formatTokens } from 'src/utils/format.js';
 import { MessageResponse } from '../MessageResponse.js';
 import { basename, sep } from 'path';
 import { UserTextMessage } from './UserTextMessage.js';
@@ -25,6 +25,7 @@ import { TeammateMessageContent } from './UserTeammateMessage.js';
 import { isShutdownApproved } from '../../utils/teammateMailbox.js';
 import { CtrlOToExpand } from '../CtrlOToExpand.js';
 import FullWidthRow from '../design-system/FullWidthRow.js';
+import { StatusIcon } from '../design-system/StatusIcon.js';
 import { FilePathLink } from '../FilePathLink.js';
 import { feature } from 'bun:bundle';
 import { useSelectedMessageBg } from '../messageActions.js';
@@ -332,6 +333,21 @@ export function AttachmentMessage({
           {action} by <Text bold>{attachment.hookEvent}</Text> hook
         </Line>;
       }
+    case 'goal_status': {
+      if (attachment.sentinel) return null;
+      const terminal = attachment.met || attachment.failed;
+      const stats = terminal ? [
+        attachment.durationMs !== undefined && formatDuration(attachment.durationMs, {mostSignificantOnly: true}),
+        attachment.iterations !== undefined && `${attachment.iterations} ${plural(attachment.iterations, 'turn')}`,
+        attachment.tokens !== undefined && `${formatTokens(attachment.tokens)} tokens`
+      ].filter(value => value !== false).join(' · ') : '';
+      return <Box flexDirection="column"><Line>
+        <StatusIcon status={attachment.failed ? 'error' : attachment.met ? 'success' : 'pending'} withSpace />
+        <Text color={attachment.failed ? 'error' : attachment.met ? 'success' : undefined} dimColor={!terminal}>
+          {attachment.failed ? 'Goal could not be achieved' : attachment.met ? 'Goal achieved' : 'Goal not yet met… continuing'}
+        </Text>{stats && <Text dimColor> ({stats})</Text>}
+      </Line>{(verbose || isTranscriptMode) && attachment.reason && <Text dimColor>{attachment.reason}</Text>}</Box>;
+    }
     case 'task_status':
       return <TaskStatusMessage attachment={attachment} />;
     case 'teammate_shutdown_batch':

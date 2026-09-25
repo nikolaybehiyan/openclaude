@@ -2039,6 +2039,19 @@ export type SDKSessionStateChangedMessage = {
   session_id: string
 }
 
+export type SDKActiveGoalMessage = {
+  type: "active_goal"
+  value: {
+    condition: string
+    iterations: number
+    set_at: number
+    tokens_at_start: number
+    last_reason?: string
+  } | null
+  uuid: string
+  session_id: string
+}
+
 export type SDKToolUseSummaryMessage = {
   type: "tool_use_summary"
   summary: string
@@ -2342,6 +2355,17 @@ export type SDKMessage = ({
   type: "system"
   subtype: "session_state_changed"
   state: "idle" | "running" | "requires_action"
+  uuid: string
+  session_id: string
+}) | ({
+  type: "active_goal"
+  value: {
+    condition: string
+    iterations: number
+    set_at: number
+    tokens_at_start: number
+    last_reason?: string
+  } | null
   uuid: string
   session_id: string
 }) | ({

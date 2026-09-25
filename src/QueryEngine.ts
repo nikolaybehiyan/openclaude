@@ -816,6 +816,9 @@ export class QueryEngine {
       }
 
       switch (message.type) {
+        case 'active_goal':
+          setAppState(state => state.activeGoal === message.value ? state : {...state, activeGoal: message.value})
+          break
         case 'tombstone':
           // Tombstone messages are control signals for removing messages, skip them
           break

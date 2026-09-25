@@ -16,6 +16,7 @@ import {
 } from '../utils/permissions/PermissionMode.js'
 import {
   notifyPermissionModeChanged,
+  notifyActiveGoalChanged,
   notifySessionMetadataChanged,
   type SessionExternalMetadata,
 } from '../utils/sessionState.js'
@@ -91,6 +92,13 @@ export function onChangeAppState({
       })
     }
     notifyPermissionModeChanged(newMode)
+  }
+
+  if (newState.activeGoal !== oldState.activeGoal) {
+    const goal = newState.activeGoal
+    notifyActiveGoalChanged(goal)
+    notifySessionMetadataChanged({goal: goal ? {condition: goal.condition,
+      set_at: goal.setAt, iterations: goal.iterations, last_reason: goal.lastReason ?? null, met: false} : null})
   }
 
   // mainLoopModel: remove it from settings?

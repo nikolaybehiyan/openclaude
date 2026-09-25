@@ -23,3 +23,19 @@ export type AttachmentMessage = any
 export type ProgressMessage = any
 export type HookResultMessage = any
 export type NormalizedUserMessage = any
+
+export type ActiveGoalEvent = {
+  type: 'active_goal'
+  value: import('../utils/goal.js').ActiveGoal | undefined
+}
+export type GoalStatusAttachment = {
+  type: 'goal_status'
+  met: boolean
+  condition: string
+  sentinel?: boolean
+  failed?: boolean
+  reason?: string
+  iterations?: number
+  durationMs?: number
+  tokens?: number
+}

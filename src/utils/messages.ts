@@ -4160,6 +4160,8 @@ You have exited auto mode. The user may now want to interact more directly. You 
           isMeta: true,
         }),
       ]
+    case 'goal_status':
+      return [] // Session goal checks are UI state; the blocking hook supplies model context.
     case 'hook_success':
       if (
         attachment.hookEvent !== 'SessionStart' &&
