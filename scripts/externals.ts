@@ -83,6 +83,9 @@ export const INTENTIONALLY_BUNDLED: string[] = [
   'wrap-ansi',
   // Data formats
   'jsonc-parser',
+  // Workflow parser/compiler: pure JavaScript, inline in both CLI and SDK.
+  'acorn',
+  'acorn-walk',
   'yaml',
   'marked',
   'turndown',
