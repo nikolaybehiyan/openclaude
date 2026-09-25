@@ -169,6 +169,10 @@ import { getTools, assembleToolPool } from '../tools.js';
 import type { AgentDefinition } from '../tools/AgentTool/loadAgentsDir.js';
 import { resolveAgentTools } from '../tools/AgentTool/agentToolUtils.js';
 import { resumeAgentBackground } from '../tools/AgentTool/resumeAgent.js';
+import type { WorkflowOwnerWakeRequest } from '../utils/workflowOwnerWake.js';
+const workflowOwnerWakeHook = feature('WORKFLOW_SCRIPTS')
+  ? require('../hooks/useWorkflowOwnerWake.js') as typeof import('../hooks/useWorkflowOwnerWake.js')
+  : null;
 import { useMainLoopModel } from '../hooks/useMainLoopModel.js';
 import { useAppState, useSetAppState, useAppStateStore } from '../state/AppState.js';
 import type { ContentBlockParam, ImageBlockParam } from '@anthropic-ai/sdk/resources/messages.mjs';
@@ -3618,6 +3622,17 @@ export function REPL({
     // Heap analysis showed ~9 REPL scopes and ~15 messages array versions
     // accumulating after #20174/#20175, all traced to this dep.
     mainLoopModel, pastedContents, ideSelection, setUserInputOnProcessing, setAbortController, addNotification, onQuery, stashedPrompt, setStashedPrompt, setAppState, onBeforeQuery, canUseTool, remoteSession, setMessages, awaitPendingHooks, repinScroll]);
+
+  const wakeWorkflowOwner = useCallback(async (request: WorkflowOwnerWakeRequest) => {
+    await resumeAgentBackground({
+      ...request,
+      promptIsMeta: true,
+      toolUseContext: getToolUseContext(messagesRef.current, [], new AbortController(), mainLoopModel),
+      canUseTool,
+    });
+  }, [getToolUseContext, mainLoopModel, canUseTool]);
+  // This is a compile-time constant, as with the other feature-gated hooks.
+  if (workflowOwnerWakeHook) workflowOwnerWakeHook.useWorkflowOwnerWake(wakeWorkflowOwner);
 
   // Callback for when user submits input while viewing a teammate's transcript
   const onAgentSubmit = useCallback(async (input: string, task: InProcessTeammateTaskState | LocalAgentTaskState, helpers: PromptInputHelpers) => {

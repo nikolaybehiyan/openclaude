@@ -27,6 +27,7 @@ import {
   createProgressTracker,
   enqueueAgentNotification,
   failAgentTask as failAsyncAgent,
+  forLocalAgentExecution,
   getProgressUpdate,
   getTokenCountFromTracker,
   isLocalAgentTask,
@@ -512,7 +513,7 @@ export async function runAsyncAgentLifecycle({
   metadata,
   description,
   toolUseContext,
-  rootSetAppState,
+  rootSetAppState: unscopedSetAppState,
   agentIdForCleanup,
   enableSummarization,
   getWorktreeResult,
@@ -533,6 +534,13 @@ export async function runAsyncAgentLifecycle({
     worktreeBranch?: string
   }>
 }): Promise<void> {
+  const initialTask = toolUseContext.getAppState().tasks[taskId];
+  const executionId = isLocalAgentTask(initialTask) ? initialTask.executionId : undefined;
+  const rootSetAppState = forLocalAgentExecution(taskId, executionId, unscopedSetAppState);
+  const ownsExecution = () => {
+    const task = toolUseContext.getAppState().tasks[taskId];
+    return isLocalAgentTask(task) && task.executionId === executionId;
+  };
   let stopSummarization: (() => void) | undefined
   const agentMessages: MessageType[] = []
   try {
@@ -552,6 +560,7 @@ export async function runAsyncAgentLifecycle({
         }
       : undefined
     for await (const message of makeStream(onCacheSafeParams)) {
+      if (!ownsExecution()) return;
       agentMessages.push(message)
       // Append immediately when UI holds the task (retain). Bootstrap reads
       // disk in parallel and UUID-merges the prefix — disk-write-before-yield
@@ -637,6 +646,7 @@ export async function runAsyncAgentLifecycle({
     })
   } catch (error) {
     stopSummarization?.()
+    if (!ownsExecution()) return;
     if (error instanceof AbortError) {
       // killAsyncAgent is a no-op if TaskStop already set status='killed' —
       // but only this catch handler has agentMessages, so the notification
@@ -680,7 +690,9 @@ export async function runAsyncAgentLifecycle({
       ...worktreeResult,
     })
   } finally {
-    clearInvokedSkillsForAgent(agentIdForCleanup)
-    clearDumpState(agentIdForCleanup)
+    if (ownsExecution()) {
+      clearInvokedSkillsForAgent(agentIdForCleanup)
+      clearDumpState(agentIdForCleanup)
+    }
   }
 }

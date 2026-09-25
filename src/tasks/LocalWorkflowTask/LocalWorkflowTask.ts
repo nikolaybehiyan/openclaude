@@ -208,7 +208,7 @@ const escapeXml = (value: string) => value.replace(/[&<>"']/g, char => ({ '&': '
 
 export function buildResumePrompt(task: { scriptPath?: string; workflowRunId: string; args?: unknown }): string {
   const args = task.args !== undefined ? `, args: ${JSON.stringify(task.args)}` : ''
-  return `Resume the paused workflow by calling: Workflow({scriptPath: '${task.scriptPath}', resumeFromRunId: '${task.workflowRunId}'${args}}) — completed agents return cached results.`
+  return `Resume the paused workflow by calling: Workflow({scriptPath: ${JSON.stringify(task.scriptPath)}, resumeFromRunId: ${JSON.stringify(task.workflowRunId)}${args}}) — completed agents return cached results.`
 }
 
 export function enqueueWorkflowNotification(input: {

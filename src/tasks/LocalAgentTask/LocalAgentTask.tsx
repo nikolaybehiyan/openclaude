@@ -1,4 +1,5 @@
 import { getSdkAgentProgressSummariesEnabled } from '../../bootstrap/state.js';
+import { randomUUID } from 'node:crypto';
 import { OUTPUT_FILE_TAG, STATUS_TAG, SUMMARY_TAG, TASK_ID_TAG, TASK_NOTIFICATION_TAG, TOOL_USE_ID_TAG, WORKTREE_BRANCH_TAG, WORKTREE_PATH_TAG, WORKTREE_TAG } from '../../constants/xml.js';
 import { abortSpeculation } from '../../services/PromptSuggestion/speculation.js';
 import type { AppState } from '../../state/AppState.js';
@@ -14,7 +15,7 @@ import type { Message } from '../../types/message.js';
 import { createAbortController, createChildAbortController } from '../../utils/abortController.js';
 import { registerCleanup } from '../../utils/cleanupRegistry.js';
 import { getToolSearchOrReadInfo } from '../../utils/collapseReadSearch.js';
-import { enqueuePendingNotification } from '../../utils/messageQueueManager.js';
+import { enqueuePendingNotification, removeByFilter } from '../../utils/messageQueueManager.js';
 import { getAgentTranscriptPath } from '../../utils/sessionStorage.js';
 import { evictTaskOutput, getTaskOutputPath, initTaskOutputAsSymlink } from '../../utils/task/diskOutput.js';
 import { PANEL_GRACE_MS, registerTask, updateTaskState } from '../../utils/task/framework.js';
@@ -148,6 +149,9 @@ export type LocalAgentTaskState = TaskStateBase & {
   // A child workflow can outlive the owner's current turn. Keep the owner
   // available until its queued child result is consumed or explicitly stopped.
   keepaliveReasons?: ReadonlySet<string>;
+  executionId?: string;
+  resuming?: string;
+  stoppedByUser?: boolean;
 };
 export function isLocalAgentTask(task: unknown): task is LocalAgentTaskState {
   return typeof task === 'object' && task !== null && 'type' in task && task.type === 'local_agent';
@@ -182,6 +186,14 @@ export function releaseLocalAgentKeepalive(ownerId: string | undefined, reason: 
     return { ...task, keepaliveReasons: reasons, ...(startsGrace && { evictAfter: Date.now() + PANEL_GRACE_MS }) };
   });
   return released;
+}
+
+/** Old async callbacks must never mutate a replacement execution of the same agent. */
+export function forLocalAgentExecution(taskId: string, executionId: string | undefined, setAppState: SetAppState): SetAppState {
+  return update => setAppState(state => {
+    const task = state.tasks[taskId];
+    return isLocalAgentTask(task) && task.executionId === executionId ? update(state) : state;
+  });
 }
 
 /**
@@ -260,7 +272,7 @@ export function enqueueAgentNotification({
   // enqueueing to avoid sending redundant messages to the model.
   let shouldEnqueue = false;
   updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
-    if (task.notified) {
+    if (task.notified || task.status !== status) {
       return task;
     }
     shouldEnqueue = true;
@@ -313,25 +325,32 @@ export const LocalAgentTask: Task = {
  * Kill an agent task. No-op if already killed/completed.
  */
 export function killAsyncAgent(taskId: string, setAppState: SetAppState): void {
-  let killed = false;
+  let prior: LocalAgentTaskState | undefined;
   updateTaskState<LocalAgentTaskState>(taskId, setAppState, task => {
-    if (task.status !== 'running') {
+    if (!isLocalAgentTask(task) || task.status !== 'running' && !isLocalAgentKeptAlive(task)) {
       return task;
     }
-    killed = true;
-    task.abortController?.abort();
-    task.unregisterCleanup?.();
+    prior = task;
     return {
       ...task,
       status: 'killed',
       endTime: Date.now(),
-      evictAfter: task.retain || task.keepaliveReasons?.size ? undefined : Date.now() + PANEL_GRACE_MS,
+      evictAfter: task.retain ? undefined : Date.now() + PANEL_GRACE_MS,
+      keepaliveReasons: new Set(),
+      stoppedByUser: true,
+      resuming: undefined,
       abortController: undefined,
       unregisterCleanup: undefined,
       selectedAgent: undefined
     };
   });
-  if (killed) {
+  if (prior) {
+    prior.abortController?.abort();
+    prior.unregisterCleanup?.();
+    // The stopped owner cannot consume child results. Preserve those results
+    // for the main thread and prevent its pending wake from resurrecting it.
+    const orphaned = removeByFilter(cmd => cmd.mode === 'task-notification' && cmd.agentId === taskId && !!cmd.taskId);
+    for (const command of orphaned) enqueuePendingNotification({ ...command, agentId: undefined });
     void evictTaskOutput(taskId);
   }
 }
@@ -342,7 +361,7 @@ export function killAsyncAgent(taskId: string, setAppState: SetAppState): void {
  */
 export function killAllRunningAgentTasks(tasks: Record<string, TaskState>, setAppState: SetAppState): void {
   for (const [taskId, task] of Object.entries(tasks)) {
-    if (task.type === 'local_agent' && task.status === 'running') {
+    if (isLocalAgentTask(task) && (task.status === 'running' || isLocalAgentKeptAlive(task))) {
       killAsyncAgent(taskId, setAppState);
     }
   }
@@ -522,6 +541,7 @@ export function registerAsyncAgent({
     ...createTaskStateBase(agentId, 'local_agent', description, toolUseId),
     type: 'local_agent',
     status: 'running',
+    executionId: randomUUID(),
     agentId,
     prompt,
     selectedAgent,
@@ -587,6 +607,7 @@ export function registerAgentForeground({
     ...createTaskStateBase(agentId, 'local_agent', description, toolUseId),
     type: 'local_agent',
     status: 'running',
+    executionId: randomUUID(),
     agentId,
     prompt,
     selectedAgent,

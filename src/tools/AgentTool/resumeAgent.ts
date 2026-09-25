@@ -4,7 +4,7 @@ import { getSystemPrompt } from '../../constants/prompts.js'
 import { isCoordinatorMode } from '../../coordinator/coordinatorMode.js'
 import type { CanUseToolFn } from '../../hooks/useCanUseTool.js'
 import type { ToolUseContext } from '../../Tool.js'
-import { registerAsyncAgent } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
+import { registerAsyncAgent, type LocalAgentTaskState } from '../../tasks/LocalAgentTask/LocalAgentTask.js'
 import { assembleToolPool } from '../../tools.js'
 import { asAgentId } from '../../types/ids.js'
 import { runWithAgentContext } from '../../utils/agentContext.js'
@@ -33,6 +33,7 @@ import { FORK_AGENT, isForkSubagentEnabled } from './forkSubagent.js'
 import type { AgentDefinition } from './loadAgentsDir.js'
 import { isBuiltInAgent } from './loadAgentsDir.js'
 import { runAgent } from './runAgent.js'
+import { reserveAgentResume } from './resumeOwnership.js'
 
 export type ResumeAgentResult = {
   agentId: string
@@ -45,12 +46,18 @@ export async function resumeAgentBackground({
   toolUseContext,
   canUseTool,
   invokingRequestId,
+  expectedTask,
+  onDeliveryCommitted,
+  promptIsMeta,
 }: {
   agentId: string
   prompt: string
   toolUseContext: ToolUseContext
   canUseTool: CanUseToolFn
   invokingRequestId?: string
+  expectedTask?: LocalAgentTaskState
+  onDeliveryCommitted?: () => void
+  promptIsMeta?: boolean
 }): Promise<ResumeAgentResult> {
   const startTime = Date.now()
   const appState = toolUseContext.getAppState()
@@ -58,6 +65,8 @@ export async function resumeAgentBackground({
   // reaches the root store so task registration/progress/kill stay visible.
   const rootSetAppState =
     toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState
+  const reservation = reserveAgentResume({ agentId, getAppState: toolUseContext.getAppState, setAppState: rootSetAppState, expectedTask })
+  try {
   const permissionMode = appState.toolPermissionContext.mode
 
   const [transcript, meta] = await Promise.all([
@@ -167,7 +176,7 @@ export async function resumeAgentBackground({
     agentDefinition: selectedAgent,
     promptMessages: [
       ...resumedMessages,
-      createUserMessage({ content: prompt }),
+      createUserMessage({ content: prompt, isMeta: promptIsMeta, ...(promptIsMeta && { origin: { kind: 'task-notification' as const } }) }),
     ],
     toolUseContext,
     canUseTool,
@@ -195,6 +204,7 @@ export async function resumeAgentBackground({
   }
 
   // Skip name-registry write — original entry persists from the initial spawn
+  reservation.assertEligible()
   const agentBackgroundTask = registerAsyncAgent({
     agentId,
     description: uiDescription,
@@ -203,6 +213,9 @@ export async function resumeAgentBackground({
     setAppState: rootSetAppState,
     toolUseId: toolUseContext.toolUseId,
   })
+  // Commit queue delivery only after setup and ownership checks succeed, before
+  // the new query starts. New commands arriving during setup remain queued.
+  onDeliveryCommitted?.()
 
   const metadata = {
     prompt,
@@ -261,5 +274,8 @@ export async function resumeAgentBackground({
     agentId,
     description: uiDescription,
     outputFile: getTaskOutputPath(agentId),
+  }
+  } finally {
+    reservation.release()
   }
 }

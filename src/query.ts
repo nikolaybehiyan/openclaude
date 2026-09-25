@@ -122,6 +122,9 @@ const snipModule = feature('HISTORY_SNIP')
 const taskSummaryModule = feature('BG_SESSIONS')
   ? (require('./utils/taskSummary.js') as typeof import('./utils/taskSummary.js'))
   : null
+const workflowOwnerWake = feature('WORKFLOW_SCRIPTS')
+  ? (require('./utils/workflowOwnerWake.js') as typeof import('./utils/workflowOwnerWake.js'))
+  : null
 /* eslint-enable @typescript-eslint/no-require-imports */
 
 function* yieldMissingToolResultBlocks(
@@ -1859,6 +1862,10 @@ async function* queryLoop(
         }
       }
       removeFromQueue(consumedCommands)
+      workflowOwnerWake?.reconcileConsumedWorkflowNotifications(consumedCommands, {
+        getAppState: toolUseContext.getAppState,
+        setAppState: toolUseContext.setAppStateForTasks ?? toolUseContext.setAppState,
+      })
     }
 
     // Instrumentation: Track file change attachments after they're added
