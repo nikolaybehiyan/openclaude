@@ -1825,21 +1825,21 @@ function runHeadlessStreaming(
     }
   }
 
-  // SDK registration and its DirectoryAdded hooks must not be cut off by
-  // headless idle / stdin shutdown while the main turn awaits an MCP response.
-  const repoRegistrationWork = new Set<Promise<unknown>>()
+  // Controls which need stdin replies (SDK hooks or native host auth) must
+  // run outside the input reader, and drain before idle / stdin shutdown.
+  const pendingControlWork = new Set<Promise<unknown>>()
   const pendingNestedMemoryTriggers = new Set<string>()
-  function trackRepoRegistrationWork(work: Promise<unknown>): void {
-    repoRegistrationWork.add(work)
-    void work.finally(() => repoRegistrationWork.delete(work)).catch(logError)
+  function trackControlWork(work: Promise<unknown>): void {
+    pendingControlWork.add(work)
+    void work.finally(() => pendingControlWork.delete(work)).catch(logError)
   }
-  async function drainRepoRegistrationWork(): Promise<void> {
-    while (repoRegistrationWork.size > 0) {
-      await Promise.allSettled([...repoRegistrationWork])
+  async function drainControlWork(): Promise<void> {
+    while (pendingControlWork.size > 0) {
+      await Promise.allSettled([...pendingControlWork])
     }
   }
   // Idle timeout management
-  const idleTimeout = createIdleTimeoutManager(() => !running && repoRegistrationWork.size === 0)
+  const idleTimeout = createIdleTimeoutManager(() => !running && pendingControlWork.size === 0)
 
   // Mutable commands and agents for hot reloading
   let currentCommands = commands
@@ -2781,7 +2781,7 @@ function runHeadlessStreaming(
         suggestionState.abortController?.abort()
         suggestionState.abortController = null
         await finalizePendingAsyncHooks()
-        await drainRepoRegistrationWork()
+        await drainControlWork()
         unsubscribeSkillChanges()
         unsubscribeAuthStatus?.()
         statusListeners.delete(rateLimitListener)
@@ -3067,23 +3067,29 @@ function runHeadlessStreaming(
             mcpServers: buildMcpServerStatuses(),
           })
         } else if (message.request.subtype === 'get_context_usage') {
-          try {
-            const appState = getAppState()
-            const data = await collectContextData({
-              messages: mutableMessages,
-              getAppState,
-              options: {
-                mainLoopModel: getMainLoopModel(),
-                tools: buildAllTools(appState),
-                agentDefinitions: appState.agentDefinitions,
-                customSystemPrompt: options.systemPrompt,
-                appendSystemPrompt: options.appendSystemPrompt,
-              },
-            })
-            sendControlResponseSuccess(message, { ...data })
-          } catch (error) {
-            sendControlResponseError(message, errorMessage(error))
-          }
+          // Token counting can ask the host for a fresh native credential.
+          // Awaiting it in this reader prevents that credential response (and
+          // the next user turn or interrupt) from ever being read from stdin.
+          const work = (async () => {
+            try {
+              const appState = getAppState()
+              const data = await collectContextData({
+                messages: [...mutableMessages],
+                getAppState: () => appState,
+                options: {
+                  mainLoopModel: getMainLoopModel(),
+                  tools: buildAllTools(appState),
+                  agentDefinitions: appState.agentDefinitions,
+                  customSystemPrompt: options.systemPrompt,
+                  appendSystemPrompt: options.appendSystemPrompt,
+                },
+              })
+              sendControlResponseSuccess(message, { ...data })
+            } catch (error) {
+              sendControlResponseError(message, errorMessage(error))
+            }
+          })()
+          trackControlWork(work)
         } else if (message.request.subtype === 'mcp_message') {
           // Handle MCP notifications from SDK servers
           const mcpRequest = message.request
@@ -3204,7 +3210,7 @@ function runHeadlessStreaming(
                 },
                 refreshSandbox: () => SandboxManager.refreshConfig(),
                 directoryAdded: directory => {
-                  trackRepoRegistrationWork(
+                  trackControlWork(
                     executeDirectoryAddedHooks(directory, 'register_repo_root')
                       .then(({ results, systemMessages }) => {
                         for (const text of systemMessages) {
@@ -3249,7 +3255,7 @@ function runHeadlessStreaming(
               if (eventId) notifyCommandLifecycle(eventId, 'completed')
             }
           })()
-          trackRepoRegistrationWork(work)
+          trackControlWork(work)
         } else if (message.request.subtype === 'reload_plugins') {
           try {
             if (
@@ -4397,7 +4403,7 @@ function runHeadlessStreaming(
       suggestionState.abortController?.abort()
       suggestionState.abortController = null
       await finalizePendingAsyncHooks()
-      await drainRepoRegistrationWork()
+      await drainControlWork()
       unsubscribeSkillChanges()
       unsubscribeAuthStatus?.()
       statusListeners.delete(rateLimitListener)

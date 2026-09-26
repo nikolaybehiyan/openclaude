@@ -161,16 +161,17 @@ export function modelSupportsAutoMode(model: string): boolean {
   if (feature('TRANSCRIPT_CLASSIFIER')) {
     const m = getCanonicalName(model)
     const config = getFeatureValue_CACHED_MAY_BE_STALE<{
+      allowAllModels?: boolean
       allowModels?: string[]
     }>('tengu_auto_mode_config', {})
     const rawLower = model.toLowerCase()
     const explicitlyAllowed =
-      config?.allowModels?.some(
+      config?.allowAllModels === true || (config?.allowModels?.some(
         am => am.toLowerCase() === rawLower || am.toLowerCase() === m,
-      ) ?? false
+      ) ?? false)
 
     // A configured host feature-control plane owns the classifier rollout for
-    // that distribution. Its explicit allowModels may authorize a proxied
+    // that distribution. Its explicit model policy may authorize a proxied
     // provider; direct third-party users still retain the upstream first-party
     // restriction because they have no trusted host control plane.
     if (
