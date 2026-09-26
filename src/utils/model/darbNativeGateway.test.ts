@@ -80,3 +80,53 @@ test('parallel sessions keep their own host callbacks and model catalogs', async
   await Promise.all([a.fetch(collect)(request()), b.fetch(collect)(request())])
   expect(headers.sort()).toEqual(['Bearer darb-native-inference-v2.account-a', 'Bearer darb-native-inference-v2.account-b'])
 })
+
+test('native requests retain SDK transport options and cancellation through a credential retry', async () => {
+  const session = new NativeGatewaySession(parseNativeGatewayContext(fixture()))
+  let calls = 0
+  session.setRefresh(async () => `darb-native-inference-v2.transport-${calls + 1}`)
+  const controller = new AbortController()
+  const tls = {ca: 'fixture-ca', rejectUnauthorized: true}
+  const dispatcher = {fixture: 'node-dispatcher'}
+  const options = {
+    method: 'POST', body: JSON.stringify({model: row.id, messages: []}),
+    headers: request().headers, redirect: 'follow' as const, signal: controller.signal,
+    unix: '/fixture/cowork.sock', proxy: 'http://127.0.0.1:1234', tls, dispatcher, keepalive: false,
+  }
+  const signals: AbortSignal[] = []
+  const send = session.fetch((async (input, init) => {
+    calls++
+    const transport = init as typeof options
+    expect(transport.unix).toBe(options.unix)
+    expect(transport.proxy).toBe(options.proxy)
+    expect(transport.tls).toBe(tls)
+    expect(transport.dispatcher).toBe(dispatcher)
+    expect(transport.keepalive).toBe(false)
+    const effective = new Request(input, init)
+    signals.push(effective.signal)
+    expect(effective.redirect).toBe('error')
+    expect(effective.method).toBe('POST')
+    expect(effective.headers.get('Authorization')).toBe(`Bearer darb-native-inference-v2.transport-${calls}`)
+    for (const name of ['x-api-key', 'x-internal-service-token', 'x-darb-context-window-tokens']) expect(effective.headers.has(name)).toBe(false)
+    expect(await effective.json()).toEqual({model: row.id, messages: []})
+    return new Response('{}', {status: calls === 1 ? 401 : 200})
+  }) as typeof fetch)
+  expect((await send('https://ai.darbmind.ru/v1/messages', options)).status).toBe(200)
+  expect(calls).toBe(2)
+  controller.abort()
+  expect(signals.every(signal => signal.aborted)).toBe(true)
+})
+
+test('cancellation during native host refresh prevents a wire attempt', async () => {
+  const session = new NativeGatewaySession(parseNativeGatewayContext(fixture()))
+  const controller = new AbortController()
+  session.setRefresh(async signal => {
+    controller.abort()
+    expect(signal.aborted).toBe(true)
+    return 'darb-native-inference-v2.cancelled'
+  })
+  let calls = 0
+  const send = session.fetch((async () => { calls++; return new Response('{}') }) as typeof fetch)
+  await expect(send(request(), {signal: controller.signal})).rejects.toThrow('cancelled')
+  expect(calls).toBe(0)
+})

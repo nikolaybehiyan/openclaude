@@ -55,6 +55,16 @@ export class NativeGatewaySession {
   fetch(fetcher: typeof fetch): typeof fetch {
     return (async (input: RequestInfo | URL, init?: RequestInit) => {
       const request = new Request(input, init)
+      // Request does not retain runtime transport options such as Bun's unix,
+      // proxy and tls or Node's dispatcher. Cowork needs its sandbox socket;
+      // dropping it silently sends the request along a different network path.
+      // Keep those options separate from the validated request and never let
+      // the original body, headers or redirect policy override the auth guard.
+      const transport = {...init}
+      delete transport.body
+      delete transport.headers
+      delete transport.method
+      delete transport.redirect
       const url = new URL(request.url)
       if (url.origin !== origin || url.username || url.password ||
           !['/v1/messages', '/v1/messages/count_tokens', '/v1/models'].includes(url.pathname)) {
@@ -87,7 +97,7 @@ export class NativeGatewaySession {
           if (/^(authorization|x-api-key|api-key|proxy-authorization)$/i.test(key) || /^x-(darb|sdk)-(connection|catalog|context)-/i.test(key) || /^x-internal-/i.test(key)) headers.delete(key)
         }
         headers.set('Authorization', `Bearer ${token}`)
-        return fetcher(new Request(request.clone(), {headers, redirect: 'error'}))
+        return fetcher(new Request(request.clone(), {headers, redirect: 'error'}), transport)
       }
       const response = await attempt()
       if (response.status !== 401) return response
