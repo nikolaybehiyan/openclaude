@@ -785,6 +785,18 @@ function shouldRetry(error: APIError): boolean {
   // Enterprise users can retry because they typically use PAYG instead of rate limits
   if (error.status === 429) {
     if (isQuotaExhausted(error)) return false
+    // Darb explicitly distinguishes an unaccepted request blocked by another
+    // in-flight reservation from exhausted allowance. Only this complete wire
+    // contract may retry for a subscriber, within the existing attempt budget
+    // and cancellable wait. A generic 429 or Retry-After alone is insufficient.
+    const body = error.error as {error?: {type?: unknown, message?: unknown}} | undefined
+    const delay = error.headers?.get('retry-after') ?? ''
+    if (
+      shouldRetryHeader === 'true' &&
+      body?.error?.type === 'rate_limit_error' &&
+      body.error.message === 'usage_allowance_reserved' &&
+      /^(?:[1-9]|[12][0-9]|30)$/.test(delay)
+    ) return true
     return !isClaudeAISubscriber() || isEnterpriseSubscriber()
   }
 

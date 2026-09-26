@@ -1,5 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test'
 import { APIError } from '@anthropic-ai/sdk'
+import * as providers from '../../utils/model/providers.js'
+import * as auth from '../../utils/auth.js'
 
 // Helper to build a mock APIError with specific headers
 function makeError(headers: Record<string, string>): APIError {
@@ -55,6 +57,7 @@ async function importFreshWithRetryModule(
 ) {
   mock.restore()
   mock.module('src/utils/model/providers.js', () => ({
+    ...providers,
     getAPIProvider: () => provider,
     getAPIProviderForStatsig: () => provider,
   }))
@@ -188,5 +191,101 @@ describe('getRateLimitResetDelayMs - providers without reset headers', () => {
       await importFreshWithRetryModule('vertex')
     const error = makeError({})
     expect(getRateLimitResetDelayMs(error)).toBeNull()
+  })
+})
+
+describe('Darb temporary allowance reservation for Pro subscribers', () => {
+  async function retryModule() {
+    mock.module('../../utils/auth.js', () => ({
+      ...auth,
+      isClaudeAISubscriber: () => true,
+      isEnterpriseSubscriber: () => false,
+    }))
+    return importFreshWithRetryModule()
+  }
+
+  function heldError(overrides: {
+    status?: number, message?: string, type?: string, retry?: string | null, delay?: string | null,
+  } = {}) {
+    const headers = new Headers()
+    const retry = overrides.retry === undefined ? 'true' : overrides.retry
+    const delay = overrides.delay === undefined ? '1' : overrides.delay
+    if (retry !== null) headers.set('x-should-retry', retry)
+    if (delay !== null) headers.set('retry-after', delay)
+    return APIError.generate(overrides.status ?? 429, {
+      type: 'error',
+      error: {type: overrides.type ?? 'rate_limit_error', message: overrides.message ?? 'usage_allowance_reserved'},
+    }, undefined, headers)
+  }
+
+  const options = {model: 'deepseek-v4-pro', thinkingConfig: {type: 'disabled' as const}, maxRetries: 1}
+  const client = async () => ({} as any)
+
+  test('retries explicit temporary hold, preserving model and bounded delay', async () => {
+    const {withRetry} = await retryModule()
+    let calls = 0
+    const loop = withRetry(client, async (_client, attempt, context) => {
+      calls++
+      expect(context.model).toBe(options.model)
+      if (attempt === 1) throw heldError()
+      return 'accepted'
+    }, options)
+    const wait = await loop.next()
+    expect(wait.done).toBe(false)
+    expect(wait.value).toMatchObject({retryInMs: 1000, retryAttempt: 1, maxRetries: 1})
+    expect(await loop.next()).toEqual({done: true, value: 'accepted'})
+    expect(calls).toBe(2)
+  })
+
+  for (const [name, overrides] of Object.entries({
+    permanentBudget: {message: 'usage_allowance_exhausted'},
+    generic429: {message: 'Inference usage limit exceeded'},
+    requestDoesNotFit: {message: 'usage_allowance_exhausted', retry: 'false'},
+    providerQuota: {message: 'exceeded your current quota'},
+    retryDenied: {retry: 'false'},
+    missingRetry: {retry: null},
+    missingDelay: {delay: null},
+    zeroDelay: {delay: '0'},
+    longDelay: {delay: '31'},
+    fractionalDelay: {delay: '1.5'},
+    malformedDelay: {delay: '2seconds'},
+    wrongErrorType: {type: 'api_error'},
+    wrongStatus: {status: 400},
+  })) {
+    test(`keeps ${name} terminal`, async () => {
+      const {withRetry, CannotRetryError} = await retryModule()
+      let calls = 0
+      const loop = withRetry(client, async () => {calls++; throw heldError(overrides)}, options)
+      await expect(loop.next()).rejects.toBeInstanceOf(CannotRetryError)
+      expect(calls).toBe(1)
+    })
+  }
+
+  test('stops at existing retry budget', async () => {
+    const {withRetry, CannotRetryError} = await retryModule()
+    let calls = 0
+    const loop = withRetry(client, async () => {calls++; throw heldError()}, options)
+    expect((await loop.next()).done).toBe(false)
+    await expect(loop.next()).rejects.toBeInstanceOf(CannotRetryError)
+    expect(calls).toBe(2)
+  })
+
+  test('cancellation during retry wait prevents another wire attempt', async () => {
+    const {withRetry} = await retryModule()
+    const controller = new AbortController()
+    let calls = 0
+    const loop = withRetry(client, async () => {calls++; throw heldError()}, {...options, signal: controller.signal})
+    expect((await loop.next()).done).toBe(false)
+    controller.abort()
+    await expect(loop.next()).rejects.toThrow('aborted')
+    expect(calls).toBe(1)
+  })
+
+  test('never repeats an accepted operation', async () => {
+    const {withRetry} = await retryModule()
+    let calls = 0
+    const loop = withRetry(client, async () => {calls++; return 'accepted'}, options)
+    expect(await loop.next()).toEqual({done: true, value: 'accepted'})
+    expect(calls).toBe(1)
   })
 })
