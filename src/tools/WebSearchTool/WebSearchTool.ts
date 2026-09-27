@@ -19,9 +19,13 @@ import { lazySchema } from '../../utils/lazySchema.js'
 import { logError } from '../../utils/log.js'
 import { createUserMessage } from '../../utils/messages.js'
 import { getMainLoopModel, getSmallFastModel } from '../../utils/model/model.js'
+import { currentDarbCatalog } from '../../utils/model/darbModels.js'
+import { getDarbFrozenModelContext } from '../../utils/model/darbFrozenContext.js'
+import { nativeGatewaySession } from '../../utils/model/darbNativeGateway.js'
 import { jsonParse, jsonStringify } from '../../utils/slowOperations.js'
 import { asSystemPrompt } from '../../utils/systemPromptType.js'
 import { getWebSearchPrompt, WEB_SEARCH_TOOL_NAME } from './prompt.js'
+import { darbSearchExecutor } from './darbSearchExecutor.js'
 import {
   getToolUseSummary,
   renderToolResultMessage,
@@ -769,6 +773,12 @@ export const WebSearchTool = buildTool({
       false,
     )
 
+    const catalog = currentDarbCatalog()
+    const searchExecutor = getAPIProvider() === 'firstParty' && !getDarbFrozenModelContext()
+      ? darbSearchExecutor(context.options.mainLoopModel, nativeGatewaySession?.context.models ??
+          (catalog?.mode === 'default' ? catalog.models : undefined))
+      : undefined
+
     const appState = context.getAppState()
     const queryStream = queryModelWithStreaming({
       messages: [userMessage],
@@ -780,15 +790,15 @@ export const WebSearchTool = buildTool({
         'If results do not answer the query, say so without guessing an answer or inventing reasons about indexing, unavailable forecasts, or the current date. ' +
         'Do not substitute historical averages or estimates for current information.',
       ]),
-      thinkingConfig: useHaiku
+      thinkingConfig: useHaiku || searchExecutor
         ? { type: 'disabled' as const }
         : context.options.thinkingConfig,
       tools: [],
       signal: context.abortController.signal,
       options: {
         getToolPermissionContext: async () => appState.toolPermissionContext,
-        model: useHaiku ? getSmallFastModel() : context.options.mainLoopModel,
-        toolChoice: useHaiku ? { type: 'tool', name: 'web_search' } : undefined,
+        model: searchExecutor ?? (useHaiku ? getSmallFastModel() : context.options.mainLoopModel),
+        toolChoice: useHaiku && !searchExecutor ? { type: 'tool', name: 'web_search' } : undefined,
         isNonInteractiveSession: context.options.isNonInteractiveSession,
         hasAppendSystemPrompt: !!context.options.appendSystemPrompt,
         extraToolSchemas: [toolSchema],
@@ -796,7 +806,7 @@ export const WebSearchTool = buildTool({
         agents: context.options.agentDefinitions.activeAgents,
         mcpTools: [],
         agentId: context.agentId,
-        effortValue: appState.effortValue,
+        effortValue: searchExecutor ? undefined : appState.effortValue,
       },
     })
 
