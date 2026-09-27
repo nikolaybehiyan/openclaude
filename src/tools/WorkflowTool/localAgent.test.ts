@@ -82,6 +82,16 @@ test('cancellation while dispatch is checked stops even if classifier returns al
   await expect(createWorkflowLocalAgent(f.options)(f.request())).rejects.toThrow('Workflow aborted')
   expect(captured.length).toBe(count)
 })
+test('classifier exceptions cannot dispatch a child without an approval',async()=>{
+  const f=fixture('auto'),count=captured.length,errors:unknown[]=[]
+  f.options.classifyDispatch=async()=>{throw Error('classifier connection closed')}
+  f.options.onClassifierError=error=>errors.push(error)
+  expect(await createWorkflowLocalAgent(f.options)(f.request())).toBe(null)
+  expect(errors).toHaveLength(1)
+  expect(f.failures[0]).toContain('no approval was received')
+  expect(f.progress).toContainEqual(expect.objectContaining({data:expect.objectContaining({blocked:true,state:'error'})}))
+  expect(captured.length).toBe(count)
+})
 
 test('effective invocation layers reach actual runAgent and parent revocations stay live',async()=>{
   const f=fixture()

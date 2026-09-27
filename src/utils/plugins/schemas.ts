@@ -883,6 +883,12 @@ const PluginManifestSettingsSchema = lazySchema(() =>
  */
 export const PluginManifestSchema = lazySchema(() =>
   z.object({
+    workflows: z.union([RelativePath(), z.array(RelativePath())]).optional().describe(
+      'Workflow directory or .js file paths relative to the plugin root. When set, replaces automatic discovery of workflows/.',
+    ),
+    experimental: z.object({
+      workflows: z.union([RelativePath(), z.array(RelativePath())]).optional(),
+    }).optional(),
     ...PluginManifestMetadataSchema().shape,
     ...PluginManifestHooksSchema().partial().shape,
     ...PluginManifestCommandsSchema().partial().shape,

@@ -4,18 +4,17 @@ import {z} from 'zod/v4'
 import {buildTool,type ToolUseContext} from '../../Tool.js'
 import {generateTaskId} from '../../Task.js'
 import {getSessionId} from '../../bootstrap/state.js'
-import {getFeatureValue_CACHED_MAY_BE_STALE} from '../../services/analytics/growthbook.js'
 import {getCwd} from '../../utils/cwd.js'
-import {getClaudeConfigHomeDir,isEnvTruthy} from '../../utils/envUtils.js'
+import {isEnvTruthy} from '../../utils/envUtils.js'
 import {logError} from '../../utils/log.js'
 import {getTranscriptPath} from '../../utils/sessionStorage.js'
 import {getInitialSettings} from '../../utils/settings/settings.js'
-import {getEnabledSettingSources} from '../../utils/settings/constants.js'
 import {getRuleByContentsForToolName} from '../../utils/permissions/permissions.js'
 import {isBypassPermissionsModeDisabled} from '../../utils/permissions/permissionSetup.js'
 import {classifyYoloAction,formatActionForClassifier} from '../../utils/permissions/yoloClassifier.js'
 import {isWorkflowsEnabled} from '../../utils/workflows.js'
-import {getBundledWorkflows} from './bundled/index.js'
+import {workflowSizePrompt} from '../../utils/workflowSize.js'
+import {getWorkflowRegistry} from './discovery.js'
 import {WORKFLOW_TOOL_NAME} from './constants.js'
 import {compileWorkflowScript} from './compiler.js'
 import {createWorkflowRun} from './durableJournal.js'
@@ -30,7 +29,7 @@ import {validateWorkflowInput} from './validation.js'
 // Public tool contract ported from the pinned 2.1.226 DKb declaration.
 // Registration is still owned by the build feature; importing this file grants
 // neither workflow availability nor permission to execute a script.
-// WORKFLOW_SCRIPTS remains off: this adapter is not full Ultracode acceptance.
+// Child tool permissions remain owned by the ordinary CLI permission pipeline.
 export const workflowInputSchema=z.strictObject({
   script:z.string().max(MAX_WORKFLOW_SCRIPT_LENGTH)
     .refine(value=>!/[\u0000-\u0008\u000b-\u001f\u007f-\u009f]/u.test(value),
@@ -46,29 +45,17 @@ export const workflowInputSchema=z.strictObject({
 }).refine(value=>Boolean(value.script||value.name||value.scriptPath),{message:'Must provide script, name, or scriptPath'})
 
 export type WorkflowToolInput=z.infer<typeof workflowInputSchema>
-export type WorkflowToolOutput={status:'async_launched';taskId:string;taskType:'local_workflow';workflowName:string;
-  runId:string;summary:string;transcriptDir?:string;scriptPath?:string;error?:string}
+export const workflowOutputSchema=z.object({
+  status:z.literal('async_launched'),taskId:z.string(),taskType:z.literal('local_workflow'),workflowName:z.string(),
+  runId:z.string(),summary:z.string(),transcriptDir:z.string().optional(),scriptPath:z.string().optional(),error:z.string().optional(),
+})
+export type WorkflowToolOutput=z.infer<typeof workflowOutputSchema>
 
 export class WorkflowInputError extends Error {
   constructor(message:string){super(message);this.name='WorkflowInputError'}
 }
 
-export function getWorkflowRegistry():WorkflowRegistry {
-  const enabled=getEnabledSettingSources()
-  const projectDirectories:string[]=[]
-  if(enabled.includes('projectSettings')) {
-    // Closest project wins, matching the registry's explicitly ordered walk.
-    let current=getCwd()
-    for(;;){projectDirectories.push(join(current,'.claude','workflows'));const parent=dirname(current);if(parent===current)break;current=parent}
-  }
-  return new WorkflowRegistry({
-    builtins:getBundledWorkflows({deepResearchEnabled:getFeatureValue_CACHED_MAY_BE_STALE('tengu_sorrel_avocet',false)}),
-    userDirectory:enabled.includes('userSettings')?join(getClaudeConfigHomeDir(),'workflows'):undefined,
-    projectDirectories,
-    nameOnly:()=>isEnvTruthy(process.env.CLAUDE_WORKFLOW_NAME_ONLY),
-    onDiagnostic:(_file,error)=>logError(error),
-  })
-}
+export {getWorkflowRegistry} from './discovery.js'
 
 function effectivePermissions(context:ToolUseContext) {
   return readWorkflowPermissionContext(context,{isBypassBlocked:isBypassPermissionsModeDisabled})
@@ -114,9 +101,9 @@ export function workflowResultBlock(data:WorkflowToolOutput,id:string) {
 export const WorkflowTool=buildTool({
   name:WORKFLOW_TOOL_NAME,aliases:['RunWorkflow'],
   searchHint:'orchestrate subagents with deterministic JavaScript workflow',
-  inputSchema:workflowInputSchema,maxResultSizeChars:100000,
+  inputSchema:workflowInputSchema,outputSchema:workflowOutputSchema,maxResultSizeChars:100000,
   isEnabled:isWorkflowsEnabled,
-  description:async()=>WORKFLOW_PROMPT,prompt:async()=>WORKFLOW_PROMPT,
+  description:async()=>WORKFLOW_PROMPT+workflowSizePrompt(),prompt:async()=>WORKFLOW_PROMPT+workflowSizePrompt(),
   userFacingName:()=> 'Workflow',getToolUseSummary:workflowSummary,
   toAutoClassifierInput:(input:WorkflowToolInput)=>input.script||input.scriptPath||input.name||'',
   async validateInput(input:WorkflowToolInput,context:ToolUseContext){

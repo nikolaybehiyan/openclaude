@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle'
+import { workflowReminderText } from './workflowReminders.js'
 import { getAPIProvider } from './model/providers.js'
 import { darbToolCallStateFields } from './model/darbToolCallState.js'
 import type { BetaUsage as Usage } from '@anthropic-ai/sdk/resources/beta/messages/messages.mjs'
@@ -4231,6 +4232,18 @@ You have exited auto mode. The user may now want to interact more directly. You 
           content: `The date has changed. Today's date is now ${attachment.newDate}. DO NOT mention this to the user explicitly because they are already aware.`,
           isMeta: true,
         }),
+      ])
+    }
+    case 'workflow_keyword_request':
+    case 'ultra_effort_enter':
+    case 'ultra_effort_exit': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({content:workflowReminderText(attachment),isMeta:true}),
+      ])
+    }
+    case 'workflow_size_guideline_change': {
+      return wrapMessagesInSystemReminder([
+        createUserMessage({content:workflowReminderText(attachment),isMeta:true}),
       ])
     }
     case 'ultrathink_effort': {

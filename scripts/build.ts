@@ -95,6 +95,7 @@ const featureFlags: Record<string, boolean> = {
   CACHED_MICROCOMPACT: true,          // Cache-aware tool result truncation optimization
   AWAY_SUMMARY: true,                 // "While you were away" recap after 5min blur
   TRANSCRIPT_CLASSIFIER: true,        // Auto-approval classifier for safe tool uses
+  WORKFLOW_SCRIPTS: true,            // Public Workflow executor, commands, approval and task UI
   ULTRATHINK: true,                   // Deep thinking mode — type "ultrathink" to boost reasoning
   TOKEN_BUDGET: true,                 // Token budget tracking with usage warnings
   HISTORY_PICKER: true,               // Enhanced interactive prompt history picker

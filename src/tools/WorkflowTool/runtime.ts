@@ -1,4 +1,5 @@
 import type {Script} from 'node:vm'
+import {dirname} from 'node:path'
 import type {CanUseToolFn} from '../../hooks/useCanUseTool.js'
 import type {ToolUseContext} from '../../Tool.js'
 import {getCurrentTurnTokenBudget,getTotalOutputTokens,getTurnOutputTokens} from '../../bootstrap/state.js'
@@ -15,6 +16,7 @@ import {WorkflowRegistry} from './registry.ts'
 import {executeWorkflowVM,type WorkflowVMResult} from './vmRunner.ts'
 import type {WorkflowVMBridge,WorkflowVMFunction} from './vmBoundary.ts'
 import {workflowHostError} from './hostBoundary.ts'
+import {persistWorkflowTask} from './history.js'
 
 /** IRn lifecycle over the existing AppState/SDK transport. This owns an
  * already-approved, exclusively leased run. A caller must not close the lease
@@ -50,6 +52,8 @@ export function launchWorkflowRun(options:{
     throw error
   }
   const controller=task.abortController!,context={...parent,abortController:controller}
+  const historyRoot=dirname(dirname(lease.scriptPath))
+  void persistWorkflowTask(task,historyRoot).catch(options.onError)
   const outputAtStart=getTotalOutputTokens()-getTurnOutputTokens()
   const limits=[getCurrentTurnTokenBudget(),options.maxOutputTokens].filter((v):v is number=>v!=null)
   const budget={total:limits.length?Math.min(...limits):null,getTurnSpent:()=>getTotalOutputTokens()-outputAtStart}
@@ -132,6 +136,8 @@ export function launchWorkflowRun(options:{
       await Promise.allSettled([...pending])
       batcher.cancel()
       await lease.close()
+      const finalTask=parent.getAppState().tasks[task.id]
+      if(isLocalWorkflowTask(finalTask))await persistWorkflowTask(finalTask,historyRoot).catch(options.onError)
     }
     return result
   })()

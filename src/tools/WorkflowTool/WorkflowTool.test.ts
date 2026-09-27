@@ -26,7 +26,7 @@ test('approval text allows tab/newline but rejects all hidden C0/C1 controls',()
   }
 })
 
-test('public adapter remains disabled and cannot launch even if called directly',async()=>{
+test('a build with WORKFLOW_SCRIPTS off cannot launch even if called directly',async()=>{
   expect(WorkflowTool.isEnabled()).toBe(false)
   const context={abortController:new AbortController()} as ToolUseContext
   await expect(WorkflowTool.call({script},context,async()=>{throw Error('disabled tool reached permissions')},undefined))

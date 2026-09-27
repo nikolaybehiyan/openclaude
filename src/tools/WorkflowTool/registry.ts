@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { constants } from 'node:fs'
 import { open, readdir } from 'node:fs/promises'
 import path from 'node:path'
+import type { PluginManifest } from '../../types/plugin.js'
 import { MAX_WORKFLOW_SCRIPT_LENGTH, parseWorkflowScript, type WorkflowMeta } from './scriptParser.js'
 
 export type WorkflowSource = 'built-in' | 'plugin' | 'userSettings' | 'projectSettings'
@@ -15,6 +16,10 @@ export type WorkflowDefinition = {
   filePath?: string
   hidden?: boolean
   disableModelInvocation?: boolean
+  plugin?: string
+  pluginManifest?: PluginManifest
+  /** Plugin commands are namespaced; the script metadata retains its local name. */
+  pluginName?: string
 }
 export type WorkflowInput = { name?: string; script?: string; scriptPath?: string; resumeFromRunId?: string; remote?: boolean }
 export type ResolvedWorkflow = Readonly<{
@@ -117,7 +122,7 @@ export class WorkflowRegistry {
     for (const item of await this.options.plugins?.() ?? []) {
       try {
         const {meta} = validate(item.script)
-        if (item.source !== 'plugin' || item.name !== meta.name) throw Error('Invalid plugin workflow definition')
+        if (item.source !== 'plugin' || item.name !== (item.pluginName ? `${item.pluginName}:${meta.name}` : meta.name)) throw Error('Invalid plugin workflow definition')
         frozenMeta(meta)
         definitions.set(item.name, Object.freeze({...item, description: meta.description, whenToUse: meta.whenToUse, phases: meta.phases}))
       } catch (error) { this.options.onDiagnostic?.(item.filePath ?? item.name, error as Error) }

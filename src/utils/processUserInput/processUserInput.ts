@@ -508,6 +508,9 @@ async function processUserInputBase(
           [], // queuedCommands - handled by query.ts for mid-turn attachments
           messages,
           querySource,
+          {isHumanTypedPrompt:mode==='prompt'&&!isMeta,
+            isRegularUserPrompt:mode==='prompt'&&!isMeta,
+            preExpansionInput},
         ),
       )
     : []

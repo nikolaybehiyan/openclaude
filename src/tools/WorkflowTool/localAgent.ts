@@ -114,7 +114,7 @@ export function createWorkflowLocalAgent(options:WorkflowLocalAgentOptions) {
       const blocked=schema.error?{reason:schema.error}:await options.classifyDispatch({prompt:request.prompt,schemaJson:schema.json,
         agentType:supplied?.agentType!=null?String(supplied.agentType):undefined,parent,permissions}).catch(error=>{
           if(!parent.abortController.signal.aborted)options.onClassifierError(error)
-          return null
+          return {reason:'classifier is unavailable; no approval was received'}
         })
       aborted()
       if(blocked) {

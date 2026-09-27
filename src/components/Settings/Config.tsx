@@ -52,6 +52,8 @@ import { useSearchInput } from '../../hooks/useSearchInput.js';
 import { useTerminalSize } from '../../hooks/useTerminalSize.js';
 import { clearFastModeCooldown, FAST_MODE_MODEL_DISPLAY, isFastModeAvailable, isFastModeEnabled, getFastModeModel, isFastModeSupportedByModel } from '../../utils/fastMode.js';
 import { isFullscreenEnvEnabled } from '../../utils/fullscreen.js';
+import { canConfigureWorkflows, isWorkflowsEnabled, refreshWorkflowCommands } from '../../utils/workflows.js';
+import { WORKFLOW_SIZES, type WorkflowSize } from '../../utils/workflowSize.js';
 type Props = {
   onClose: (result?: string, options?: {
     display?: CommandResultDisplay;
@@ -269,6 +271,37 @@ export function Config({
 
   // TODO: Add MCP servers
   const settingsItems: Setting[] = [
+  ...(feature('WORKFLOW_SCRIPTS') && canConfigureWorkflows() ? [{
+    id: 'enableWorkflows', label: 'Dynamic workflows', type: 'boolean' as const,
+    value: isWorkflowsEnabled(),
+    onChange(enableWorkflows: boolean) {
+      const result = updateSettingsForSource('userSettings', { enableWorkflows, disableWorkflows: undefined });
+      if (result.error) { logError(result.error); return; }
+      setSettingsData(prev => ({ ...prev, enableWorkflows, disableWorkflows: undefined }));
+      setChanges(prev => ({ ...prev, 'Dynamic workflows': enableWorkflows }));
+      void refreshWorkflowCommands().catch(logError);
+    }
+  }, {
+    id: 'workflowSizeGuideline', label: 'Dynamic workflow size', type: 'enum' as const,
+    value: settingsData.workflowSizeGuideline ?? 'medium', options: [...WORKFLOW_SIZES],
+    onChange(value: string) {
+      if (!WORKFLOW_SIZES.includes(value as WorkflowSize)) return;
+      const workflowSizeGuideline = value as WorkflowSize;
+      const result = updateSettingsForSource('userSettings', { workflowSizeGuideline });
+      if (result.error) { logError(result.error); return; }
+      setSettingsData(prev => ({ ...prev, workflowSizeGuideline }));
+      setChanges(prev => ({ ...prev, 'Dynamic workflow size': value }));
+    }
+  }, {
+    id: 'workflowKeywordTriggerEnabled', label: 'Ultracode keyword', type: 'boolean' as const,
+    value: settingsData.workflowKeywordTriggerEnabled ?? true,
+    onChange(workflowKeywordTriggerEnabled: boolean) {
+      const result = updateSettingsForSource('userSettings', { workflowKeywordTriggerEnabled });
+      if (result.error) { logError(result.error); return; }
+      setSettingsData(prev => ({ ...prev, workflowKeywordTriggerEnabled }));
+      setChanges(prev => ({ ...prev, 'Ultracode keyword': workflowKeywordTriggerEnabled }));
+    }
+  }] : []),
   // Global settings
   {
     id: 'autoCompactEnabled',
@@ -1271,6 +1304,12 @@ export function Config({
       autoUpdatesChannel: iu?.autoUpdatesChannel,
       minimumVersion: iu?.minimumVersion,
       language: iu?.language,
+      ...(feature('WORKFLOW_SCRIPTS') ? {
+        enableWorkflows: iu?.enableWorkflows,
+        disableWorkflows: iu?.disableWorkflows,
+        workflowSizeGuideline: iu?.workflowSizeGuideline,
+        workflowKeywordTriggerEnabled: iu?.workflowKeywordTriggerEnabled,
+      } : {}),
       ...(feature('TRANSCRIPT_CLASSIFIER') ? {
         useAutoModeDuringPlan: (iu as {
           useAutoModeDuringPlan?: boolean;
@@ -1291,6 +1330,7 @@ export function Config({
       }
     });
     // AppState: batch-restore all possibly-touched fields.
+    if (feature('WORKFLOW_SCRIPTS')) void refreshWorkflowCommands().catch(logError);
     const ia = initialAppState;
     setAppState(prev_23 => ({
       ...prev_23,

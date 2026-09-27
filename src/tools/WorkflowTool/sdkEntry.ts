@@ -62,7 +62,7 @@ export async function startBundledWorkflow(options:BundledWorkflowOptions,parent
   parent.abortController.signal.throwIfAborted()
   const compiled=compileWorkflowScript(approved.scriptBody)
   if(!compiled.ok)throw Error(compiled.error)
-  const runId=randomUUID(),taskId='workflow_'+runId
+  const runId='wf_'+randomUUID().slice(0,12),taskId='workflow_'+runId
   const lease=await createWorkflowRun({rootDirectory:join(dirname(getTranscriptPath()),getSessionId(),'workflow-runs'),runId,
     owner:{sessionId:getSessionId(),agentId:parent.agentId??'main'},approved,args:input.args,resumeFromRunId:options.resumeFromRunId})
   const run=launchWorkflowRun({taskId,lease,vmScript:compiled.vmScript,parent,canUseTool,registry,toolUseId,

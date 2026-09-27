@@ -63,7 +63,12 @@ import {
   isValidImagePaste,
 } from 'src/types/textInputTypes.js'
 import { randomUUID, type UUID } from 'crypto'
-import { getSettings_DEPRECATED } from './settings/settings.js'
+import { getInitialSettings, getSettings_DEPRECATED } from './settings/settings.js'
+import { getWorkflowReminders, type WorkflowPromptOrigin, type WorkflowReminder } from './workflowReminders.js'
+import { isWorkflowsEnabled } from './workflows.js'
+import { ultracodeIsActive } from './ultracodePolicy.js'
+import { resolveAppliedEffort } from './effort.js'
+import { currentWorkflowSize, initialWorkflowSize } from './workflowSize.js'
 import { getSnippetForTwoFileDiff } from 'src/tools/FileEditTool/utils.js'
 import type {
   ContentBlockParam,
@@ -687,6 +692,7 @@ export type Attachment =
       type: 'ultrathink_effort'
       level: 'high'
     }
+  | WorkflowReminder
   | {
       type: 'deferred_tools_delta'
       addedNames: string[]
@@ -752,7 +758,7 @@ export async function getAttachments(
   queuedCommands: QueuedCommand[],
   messages?: Message[],
   querySource?: QuerySource,
-  options?: { skipSkillDiscovery?: boolean },
+  options?: { skipSkillDiscovery?: boolean } & WorkflowPromptOrigin,
 ): Promise<Attachment[]> {
   if (
     isEnvTruthy(process.env.CLAUDE_CODE_DISABLE_ATTACHMENTS) ||
@@ -948,6 +954,17 @@ export async function getAttachments(
   // Attachments which are semantically only for the main conversation or don't have concurrency-safe implementations
   const mainThreadAttachments = isMainThread
     ? [
+        ...(feature('WORKFLOW_SCRIPTS') && !options?.skipSkillDiscovery
+          ? [maybe('workflow_reminders', async () => {
+              const enabled=isWorkflowsEnabled(),state=toolUseContext.getAppState()
+              const active=enabled&&state.ultracode===true&&ultracodeIsActive(state,enabled,
+                resolveAppliedEffort(toolUseContext.options.mainLoopModel,state.effortValue))
+              return getWorkflowReminders({...options,input,mainThread:true,enabled,active,
+                currentSize:currentWorkflowSize().size,initialSize:initialWorkflowSize(),
+                keywordEnabled:getInitialSettings().workflowKeywordTriggerEnabled!==false,messages:messages??[],
+                maintenanceTurns:Number(process.env.CLAUDE_CODE_JUNIPER_SUNDIAL??getFeatureValue_CACHED_MAY_BE_STALE('tengu_juniper_sundial',10))})
+            })]
+          : []),
         maybe('ide_selection', async () =>
           getSelectedLinesFromIDE(ideSelection, toolUseContext),
         ),
@@ -2967,7 +2984,7 @@ export async function* getAttachmentMessages(
   queuedCommands: QueuedCommand[],
   messages?: Message[],
   querySource?: QuerySource,
-  options?: { skipSkillDiscovery?: boolean },
+  options?: { skipSkillDiscovery?: boolean } & WorkflowPromptOrigin,
 ): AsyncGenerator<AttachmentMessage, void> {
   // TODO: Compute this upstream
   const attachments = await getAttachments(

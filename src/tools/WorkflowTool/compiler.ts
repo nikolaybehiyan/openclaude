@@ -4,7 +4,7 @@ import { Script } from 'node:vm'
 
 // Reserved by the 2.1.226 compiler. This module prepares a script; it does not
 // run it or provide a sandbox. Execution requires the complete host/VM membrane
-// and the runtime OS sandbox. WORKFLOW_SCRIPTS stays off until both qualify.
+// and the ordinary child tool permission and OS sandbox pipeline.
 const prefix = '__wRg$'
 type AST = Node & Record<string, any>
 
