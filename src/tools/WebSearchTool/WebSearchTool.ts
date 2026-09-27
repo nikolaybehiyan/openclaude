@@ -33,6 +33,7 @@ import {
   runSearch,
   getProviderMode,
   getAvailableProviders,
+  applyDomainFilters,
   type ProviderOutput,
 } from './providers/index.js'
 
@@ -352,6 +353,7 @@ function makeOutputFromCodexWebSearchResponse(
 
 export const __test = {
   makeOutputFromCodexWebSearchResponse,
+  makeOutputFromSearchResponse,
   buildEmptyAdapterResultHint,
   formatProviderOutputWithEmptyHint,
 }
@@ -419,9 +421,10 @@ async function runCodexWebSearch(
 
 function makeOutputFromSearchResponse(
   result: BetaContentBlock[],
-  query: string,
+  input: Input,
   durationSeconds: number,
 ): Output {
+  const { query } = input
   // The result is a sequence of these blocks:
   // - text to start -- always?
   // [
@@ -433,6 +436,12 @@ function makeOutputFromSearchResponse(
   const results: (SearchResult | string)[] = []
   let textAcc = ''
   let inText = true
+  // Some compatible native providers ignore domain constraints. Never return
+  // excluded sources (or a generated summary based on them) as filtered output.
+  const rejectedSources = result.some(block =>
+    block.type === 'web_search_tool_result' && Array.isArray(block.content) &&
+    applyDomainFilters(block.content, input).length !== block.content.length,
+  )
 
   for (const block of result) {
     if (block.type === 'server_tool_use') {
@@ -455,14 +464,15 @@ function makeOutputFromSearchResponse(
         continue
       }
       // Success case - add results to our collection
-      const hits = block.content.map(r => ({ title: r.title, url: r.url }))
+      const hits = applyDomainFilters(block.content, input)
+        .map(r => ({ title: r.title, url: r.url }))
       results.push({
         tool_use_id: block.tool_use_id,
         content: hits,
       })
     }
 
-    if (block.type === 'text') {
+    if (block.type === 'text' && !rejectedSources) {
       if (inText) {
         textAcc += block.text
       } else {
@@ -474,6 +484,13 @@ function makeOutputFromSearchResponse(
 
   if (textAcc.length) {
     results.push(textAcc.trim())
+  }
+  if (rejectedSources) {
+    results.push(
+      'The search provider returned sources outside the requested domain filters. ' +
+      'Those sources and the provider summary were discarded. Use only the remaining links; ' +
+      'if none remain, this search found no sources matching the requested filters.',
+    )
   }
 
   return {
@@ -757,6 +774,11 @@ export const WebSearchTool = buildTool({
       messages: [userMessage],
       systemPrompt: asSystemPrompt([
         'You are an assistant for performing a web search tool use',
+        `Current date: ${new Date().toLocaleDateString('en-CA')}.`,
+        'Use the query language and requested location to guide retrieval. ' +
+        'Report only facts supported by relevant search results. ' +
+        'If results do not answer the query, say so without guessing an answer or inventing reasons about indexing, unavailable forecasts, or the current date. ' +
+        'Do not substitute historical averages or estimates for current information.',
       ]),
       thinkingConfig: useHaiku
         ? { type: 'disabled' as const }
@@ -876,7 +898,7 @@ export const WebSearchTool = buildTool({
 
     const data = makeOutputFromSearchResponse(
       allContentBlocks,
-      query,
+      input,
       durationSeconds,
     )
     return { data }
