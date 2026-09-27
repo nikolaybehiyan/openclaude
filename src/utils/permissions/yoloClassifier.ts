@@ -28,6 +28,7 @@ import { errorMessage } from '../errors.js'
 import { lazySchema } from '../lazySchema.js'
 import { extractTextContent } from '../messages.js'
 import { resolveAntModel } from '../model/antModels.js'
+import { getDarbEffectiveNativeParameters } from '../model/darbModels.js'
 import { getMainLoopModel } from '../model/model.js'
 import { getAutoModeConfig } from '../settings/settings.js'
 import { sideQuery } from '../sideQuery.js'
@@ -750,7 +751,7 @@ function stripThinking(text: string): string {
  * Strips thinking content first to avoid matching tags inside reasoning.
  * Returns true for "yes" (should block), false for "no", null if unparseable.
  */
-function parseXmlBlock(text: string): boolean | null {
+export function parseXmlBlock(text: string): boolean | null {
   const matches = [
     ...stripThinking(text).matchAll(/<block>(yes|no)\b(<\/block>)?/gi),
   ]
@@ -816,11 +817,11 @@ function combineUsage(a: ClassifierUsage, b: ClassifierUsage): ClassifierUsage {
 }
 
 /**
- * Replace the tool_use output format instruction with XML format.
- * Finds the last line of the prompt ("Use the classify_result tool...")
- * and replaces it with XML output instructions.
+ * Attach the XML wire contract independently of the versioned policy text.
+ * Newer upstream prompts contain only policy and no tool-output instruction.
+ * Retain compatibility with older prompts that do contain that instruction.
  */
-function replaceOutputFormatWithXml(systemPrompt: string): string {
+export function replaceOutputFormatWithXml(systemPrompt: string): string {
   const toolUseLine =
     'Use the classify_result tool to report your classification.'
   const xmlFormat = [
@@ -835,7 +836,8 @@ function replaceOutputFormatWithXml(systemPrompt: string): string {
     'Do NOT include a <reason> tag when the action is allowed.',
     'Your ENTIRE response MUST begin with <block>. Do NOT output any analysis, reasoning, or commentary before <block>. No "Looking at..." or similar preamble.',
   ].join('\n')
-  return systemPrompt.replace(toolUseLine, xmlFormat)
+  const policy = systemPrompt.replace(toolUseLine, '').trimEnd()
+  return `${policy}\n\n${xmlFormat}`
 }
 
 /**
@@ -855,9 +857,21 @@ function replaceOutputFormatWithXml(systemPrompt: string): string {
  * Returns [disableThinking, headroom] — tuple instead of named object so
  * property-name strings don't survive minification into external builds.
  */
-function getClassifierThinkingConfig(
+export function getClassifierThinkingConfig(
   model: string,
+  nativeParameters = getDarbEffectiveNativeParameters(model),
 ): [false | undefined, number] {
+  if (
+    nativeParameters &&
+    !nativeParameters.thinking_types.includes('disabled') &&
+    nativeParameters.thinking_types.some(
+      type => type === 'enabled' || type === 'adaptive',
+    )
+  ) {
+    // The owner catalog declares reasoning-only models too. Let the owner
+    // select their supported default and leave room for the text verdict.
+    return [undefined, 2048]
+  }
   if (
     process.env.USER_TYPE === 'ant' &&
     resolveAntModel(model)?.alwaysOnThinking
