@@ -9,6 +9,7 @@ import {
   type ContextData,
 } from '../../utils/analyzeContext.js'
 import { formatTokens } from '../../utils/format.js'
+import { withLocalContextTokenCounts } from '../../utils/contextTokenCountScope.js'
 import { getMessagesAfterCompactBoundary } from '../../utils/messages.js'
 import { getSourceDisplayName } from '../../utils/settings/constants.js'
 import { plural } from '../../utils/stringUtils.js'
@@ -33,7 +34,11 @@ type CollectContextDataInput = {
 
 export async function collectContextData(
   context: CollectContextDataInput,
+  options?: { background?: boolean },
 ): Promise<ContextData> {
+  if (options?.background) {
+    return withLocalContextTokenCounts(() => collectContextData(context))
+  }
   const {
     messages,
     getAppState,

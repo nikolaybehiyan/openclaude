@@ -49,6 +49,7 @@ import type {
 import { toolToAPISchema } from './api.js'
 import { filterInjectedMemoryFiles, getMemoryFiles } from './claudemd.js'
 import { getContextWindowForModel } from './context.js'
+import { usesLocalContextTokenCounts } from './contextTokenCountScope.js'
 import { getCwd } from './cwd.js'
 import { logForDebugging } from './debug.js'
 import { isEnvTruthy } from './envUtils.js'
@@ -78,6 +79,18 @@ async function countTokensWithFallback(
   messages: Anthropic.Beta.Messages.BetaMessageParam[],
   tools: Anthropic.Beta.Messages.BetaToolUnion[],
 ): Promise<number | null> {
+  if (usesLocalContextTokenCounts()) {
+    // Categories are estimates; the report's total already uses actual usage
+    // from the last assistant response. Do not issue one count/inference call
+    // per section/tool just to refresh a background display.
+    const messageTokens = messages.length
+      ? roughTokenCountEstimation(jsonStringify(messages))
+      : 0
+    const toolTokens = tools.length
+      ? roughTokenCountEstimation(jsonStringify(tools)) + TOOL_TOKEN_COUNT_OVERHEAD
+      : 0
+    return messageTokens + toolTokens
+  }
   try {
     const result = await countMessagesTokensWithAPI(messages, tools)
     if (result !== null) {

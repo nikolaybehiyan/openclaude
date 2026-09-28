@@ -28,7 +28,8 @@ function harness() {
   const messages = [{ type: 'user', message: { role: 'user', content: 'first' } }]
   const state = { agentDefinitions: {} }
   let snapshot: unknown, snapshotState: unknown, calls = 0
-  const collect = async (context: { messages: unknown[]; getAppState: () => unknown }) => {
+  const collect = async (context: { messages: unknown[]; getAppState: () => unknown }, options: { background: boolean }) => {
+    expect(options).toEqual({ background: true })
     snapshot = context.messages
     snapshotState = context.getAppState()
     const response = await session.fetch((async () => {

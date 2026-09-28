@@ -3083,7 +3083,7 @@ function runHeadlessStreaming(
                   customSystemPrompt: options.systemPrompt,
                   appendSystemPrompt: options.appendSystemPrompt,
                 },
-              })
+              }, { background: true })
               sendControlResponseSuccess(message, { ...data })
             } catch (error) {
               sendControlResponseError(message, errorMessage(error))

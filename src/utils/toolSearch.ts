@@ -32,6 +32,7 @@ import {
 import { count } from './array.js'
 import { getMergedBetas } from './betas.js'
 import { getContextWindowForModel } from './context.js'
+import { usesLocalContextTokenCounts } from './contextTokenCountScope.js'
 import { logForDebugging } from './debug.js'
 import { isEnvDefinedFalsy, isEnvTruthy } from './envUtils.js'
 import {
@@ -145,10 +146,8 @@ const getDeferredToolTokenCount = memoize(
     }
   },
   (tools: Tools) =>
-    tools
-      .filter(t => isDeferredTool(t))
-      .map(t => t.name)
-      .join(','),
+    (usesLocalContextTokenCounts() ? 'local:' : 'api:') +
+    tools.filter(t => isDeferredTool(t)).map(t => t.name).join(','),
 )
 
 /**
