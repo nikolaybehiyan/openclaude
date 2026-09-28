@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../constants/figures.js';
 import { randomUUID } from 'crypto'
 import { basename } from 'path'
 import { useEffect, useMemo, useRef, useState } from 'react'
@@ -60,7 +61,7 @@ export function useDiffInIDE({
 
   const sha = useMemo(() => randomUUID().slice(0, 6), [])
   const tabName = useMemo(
-    () => `✻ [Darb] ${basename(filePath)} (${sha}) ⧉`,
+    () => `${DARB_SYMBOL} [Darb] ${basename(filePath)} (${sha}) ⧉`,
     [filePath, sha],
   )
 

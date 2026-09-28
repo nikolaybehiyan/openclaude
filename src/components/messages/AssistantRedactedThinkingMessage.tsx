@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../../constants/figures.js';
 import { c as _c } from "react-compiler-runtime";
 import React from 'react';
 import { Box, Text } from '../../ink.js';
@@ -13,7 +14,7 @@ export function AssistantRedactedThinkingMessage(t0) {
   const t2 = addMargin ? 1 : 0;
   let t3;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-    t3 = <Text dimColor={true} italic={true}>✻ Thinking…</Text>;
+    t3 = <Text dimColor={true} italic={true}>{DARB_SYMBOL} Thinking…</Text>;
     $[0] = t3;
   } else {
     t3 = $[0];

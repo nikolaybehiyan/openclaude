@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../../constants/figures.js';
 import { c as _c } from "react-compiler-runtime";
 import { Box, Text } from '../../ink.js';
 import { useShortcutDisplay } from '../../keybindings/useShortcutDisplay.js';
@@ -6,7 +7,7 @@ export function CompactBoundaryMessage() {
   const historyShortcut = useShortcutDisplay("app:toggleTranscript", "Global", "ctrl+o");
   let t0;
   if ($[0] !== historyShortcut) {
-    t0 = <Box marginY={1}><Text dimColor={true}>✻ Conversation compacted ({historyShortcut} for history)</Text></Box>;
+    t0 = <Box marginY={1}><Text dimColor={true}>{DARB_SYMBOL} Conversation compacted ({historyShortcut} for history)</Text></Box>;
     $[0] = historyShortcut;
     $[1] = t0;
   } else {

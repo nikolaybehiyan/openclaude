@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../../constants/figures.js';
 import { c as _c } from "react-compiler-runtime";
 import { useState } from 'react';
 import { Text } from '../../ink.js';
@@ -59,7 +60,7 @@ export function GuestPassesUpsell() {
   let t0;
   if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
     const reward = getCachedReferrerReward();
-    t0 = <Text dimColor={true}><Text color="claude">[✻]</Text> <Text color="claude">[✻]</Text>{" "}<Text color="claude">[✻]</Text> ·{" "}{reward ? `Share Darb and earn ${formatCreditAmount(reward)} of extra usage · /passes` : "3 guest passes at /passes"}</Text>;
+    t0 = <Text dimColor={true}><Text color="claude">[{DARB_SYMBOL}]</Text> <Text color="claude">[{DARB_SYMBOL}]</Text>{" "}<Text color="claude">[{DARB_SYMBOL}]</Text> ·{" "}{reward ? `Share Darb and earn ${formatCreditAmount(reward)} of extra usage · /passes` : "3 guest passes at /passes"}</Text>;
     $[0] = t0;
   } else {
     t0 = $[0];

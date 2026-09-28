@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../constants/figures.js';
 import { c as _c } from "react-compiler-runtime";
 import React from 'react';
 import { envDynamic } from 'src/utils/envDynamic.js';
@@ -63,7 +64,7 @@ export function IdeOnboardingDialog(t0) {
   const mentionShortcut = env.platform === "darwin" ? "Cmd+Option+K" : "Ctrl+Alt+K";
   let t5;
   if ($[7] === Symbol.for("react.memo_cache_sentinel")) {
-    t5 = <Text color="claude">✻ </Text>;
+    t5 = <Text color="claude">{DARB_SYMBOL} </Text>;
     $[7] = t5;
   } else {
     t5 = $[7];

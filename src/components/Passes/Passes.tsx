@@ -137,19 +137,19 @@ export function Passes({
     if (isRedeemed) {
       // Grayed out redeemed ticket with slashes
       return <Box key={pass.passNumber} flexDirection="column" marginRight={1}>
-          <Text dimColor>{'┌─────────╱'}</Text>
-          <Text dimColor>{` ) CC ${TEARDROP_ASTERISK} ┊╱`}</Text>
-          <Text dimColor>{'└───────╱'}</Text>
+          <Text dimColor>{'┌───────────╱'}</Text>
+          <Text dimColor>{` ) Darb ${TEARDROP_ASTERISK} ┊╱`}</Text>
+          <Text dimColor>{'└─────────╱'}</Text>
         </Box>;
     }
     return <Box key={pass.passNumber} flexDirection="column" marginRight={1}>
-        <Text>{'┌──────────┐'}</Text>
+        <Text>{'┌────────────┐'}</Text>
         <Text>
-          {' ) CC '}
+          {' ) Darb '}
           <Text color="claude">{TEARDROP_ASTERISK}</Text>
           {' ┊ ( '}
         </Text>
-        <Text>{'└──────────┘'}</Text>
+        <Text>{'└────────────┘'}</Text>
       </Box>;
   };
   return <Pane>

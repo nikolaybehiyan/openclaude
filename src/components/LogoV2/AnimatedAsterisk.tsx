@@ -1,9 +1,9 @@
 import * as React from 'react';
 import { useEffect, useRef, useState } from 'react';
-import { TEARDROP_ASTERISK } from '../../constants/figures.js';
+import { DARB_SYMBOL } from '../../constants/figures.js';
 import { Box, Text, useAnimationFrame } from '../../ink.js';
 import { getInitialSettings } from '../../utils/settings/settings.js';
-import { hueToRgb, toRGBColor } from '../Spinner/utils.js';
+import { hueToRgb, interpolateColor, toRGBColor } from '../Spinner/utils.js';
 const SWEEP_DURATION_MS = 1500;
 const SWEEP_COUNT = 2;
 const TOTAL_ANIMATION_MS = SWEEP_DURATION_MS * SWEEP_COUNT;
@@ -13,7 +13,7 @@ const SETTLED_GREY = toRGBColor({
   b: 153
 });
 export function AnimatedAsterisk({
-  char = TEARDROP_ASTERISK
+  char = DARB_SYMBOL
 }: {
   char?: string;
 }): React.ReactNode {
@@ -24,7 +24,7 @@ export function AnimatedAsterisk({
   // and causes keyboard freeze on CMD/PowerShell (issues #228, #205).
   const [done, setDone] = useState(reducedMotion || process.platform === 'win32');
   // useAnimationFrame's clock is shared — capture our start offset so the
-  // sweep always begins at hue 0 regardless of when we mount.
+  // highlight always begins at its base brightness when we mount.
   const startTimeRef = useRef<number | null>(null);
   // Wire the ref so useAnimationFrame's viewport-pause kicks in: if the
   // user submits a message before the sweep finishes, the clock stops
@@ -45,7 +45,11 @@ export function AnimatedAsterisk({
   }
   const elapsed = time - startTimeRef.current;
   const hue = elapsed / SWEEP_DURATION_MS * 360 % 360;
+  const color = char === DARB_SYMBOL
+    ? interpolateColor({r: 193, g: 95, b: 60}, {r: 242, g: 164, b: 124},
+        (1 - Math.cos(elapsed / SWEEP_DURATION_MS * 2 * Math.PI)) / 2)
+    : hueToRgb(hue);
   return <Box ref={ref}>
-      <Text color={toRGBColor(hueToRgb(hue))}>{char}</Text>
+      <Text color={toRGBColor(color)}>{char}</Text>
     </Box>;
 }

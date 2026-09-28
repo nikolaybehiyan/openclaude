@@ -3,7 +3,10 @@ import { env } from '../utils/env.js'
 // The former is better vertically aligned, but isn't usually supported on Windows/Linux
 export const BLACK_CIRCLE = env.platform === 'darwin' ? '⏺' : '●'
 export const BULLET_OPERATOR = '∙'
-export const TEARDROP_ASTERISK = '✻'
+// Portable Darb mark: one terminal cell, no private-use font dependency.
+export const DARB_SYMBOL = '⬡'
+// Retain the existing import contract for status and message components.
+export const TEARDROP_ASTERISK = DARB_SYMBOL
 export const UP_ARROW = '\u2191' // ↑ - used for opus 1m merge notice
 export const DOWN_ARROW = '\u2193' // ↓ - used for scroll hint
 export const LIGHTNING_BOLT = '↯' // \u21af - used for fast mode indicator

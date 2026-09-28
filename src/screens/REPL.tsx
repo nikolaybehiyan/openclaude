@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../constants/figures.js';
 import { restoreGoalFromTranscript } from '../utils/goal.js';
 import { c as _c } from "react-compiler-runtime";
 // biome-ignore-all assist/source/organizeImports: internal-only import markers must not be reordered
@@ -484,7 +485,7 @@ function TranscriptSearchBar({
   </Box>;
 }
 const TITLE_ANIMATION_FRAMES = ['⠂', '⠐'];
-const TITLE_STATIC_PREFIX = '✳';
+const TITLE_STATIC_PREFIX = DARB_SYMBOL;
 const TITLE_ANIMATION_INTERVAL_MS = 960;
 
 /**

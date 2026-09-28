@@ -1,3 +1,4 @@
+import { DARB_SYMBOL } from '../../constants/figures.js';
 import figures from 'figures';
 import { homedir } from 'os';
 import * as React from 'react';
@@ -86,7 +87,7 @@ export function createGuestPassesFeed(): FeedConfig {
     customContent: {
       content: <>
           <Box marginY={1}>
-            <Text color="claude">[✻] [✻] [✻]</Text>
+            <Text color="claude">[{DARB_SYMBOL}] [{DARB_SYMBOL}] [{DARB_SYMBOL}]</Text>
           </Box>
           <Text dimColor>{subtitle}</Text>
         </>,

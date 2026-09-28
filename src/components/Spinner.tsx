@@ -21,8 +21,9 @@ import type { Task } from '../utils/tasks.js';
 import { useAppState } from '../state/AppState.js';
 import { useTerminalSize } from '../hooks/useTerminalSize.js';
 import { stringWidth } from '../ink/stringWidth.js';
-import { getDefaultCharacters, type SpinnerMode } from './Spinner/index.js';
+import { type SpinnerMode } from './Spinner/index.js';
 import { SpinnerAnimationRow } from './Spinner/SpinnerAnimationRow.js';
+import { SpinnerGlyph } from './Spinner/SpinnerGlyph.js';
 import { useSettings } from '../hooks/useSettings.js';
 import { isInProcessTeammateTask } from '../tasks/InProcessTeammateTask/types.js';
 import { isBackgroundTask } from '../tasks/types.js';
@@ -37,8 +38,6 @@ import { TeammateSpinnerTree } from './Spinner/TeammateSpinnerTree.js';
 import { useAnimationFrame } from '../ink.js';
 import { getGlobalConfig } from '../utils/config.js';
 export type { SpinnerMode } from './Spinner/index.js';
-const DEFAULT_CHARACTERS = getDefaultCharacters();
-const SPINNER_FRAMES = [...DEFAULT_CHARACTERS, ...[...DEFAULT_CHARACTERS].reverse()];
 type Props = {
   mode: SpinnerMode;
   loadingStartTimeRef: React.RefObject<number>;
@@ -505,48 +504,12 @@ function _temp7(s) {
   return s.remoteConnectionStatus;
 }
 export function Spinner() {
-  const $ = _c(8);
   const settings = useSettings();
   const reducedMotion = settings.prefersReducedMotion ?? false;
   const [ref, time] = useAnimationFrame(reducedMotion ? null : 120);
-  if (reducedMotion) {
-    let t0;
-    if ($[0] === Symbol.for("react.memo_cache_sentinel")) {
-      t0 = <Text color="text">●</Text>;
-      $[0] = t0;
-    } else {
-      t0 = $[0];
-    }
-    let t1;
-    if ($[1] !== ref) {
-      t1 = <Box ref={ref} flexWrap="wrap" height={1} width={2}>{t0}</Box>;
-      $[1] = ref;
-      $[2] = t1;
-    } else {
-      t1 = $[2];
-    }
-    return t1;
-  }
-  const frame = Math.floor(time / 120) % SPINNER_FRAMES.length;
-  const t0 = SPINNER_FRAMES[frame];
-  let t1;
-  if ($[3] !== t0) {
-    t1 = <Text color="text">{t0}</Text>;
-    $[3] = t0;
-    $[4] = t1;
-  } else {
-    t1 = $[4];
-  }
-  let t2;
-  if ($[5] !== ref || $[6] !== t1) {
-    t2 = <Box ref={ref} flexWrap="wrap" height={1} width={2}>{t1}</Box>;
-    $[5] = ref;
-    $[6] = t1;
-    $[7] = t2;
-  } else {
-    t2 = $[7];
-  }
-  return t2;
+  return <Box ref={ref}>
+    <SpinnerGlyph frame={Math.floor(time / 120)} messageColor="claude" reducedMotion={reducedMotion} />
+  </Box>;
 }
 function findNextPendingTask(tasks: Task[] | undefined): Task | undefined {
   if (!tasks) {
